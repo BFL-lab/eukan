@@ -1,0 +1,959 @@
+# phmmer :: search a protein sequence against a protein database
+# HMMER 3.4 (Aug 2023); http://hmmer.org/
+# Copyright (C) 2023 Howard Hughes Medical Institute.
+# Freely distributed under the BSD open source license.
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# query sequence file:             test.faa
+# target sequence database:        /share/unsupported/databases/uniprot_sprot/uniprot_sprot.faa
+# output directed to file:         phmmer.out
+# prefer accessions over names:    yes
+# show alignments in output:       no
+# max ASCII text line length:      unlimited
+# sequence reporting threshold:    E-value <= 0.1
+# number of worker threads:        40
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Query:       mRNA2929  [L=494]
+Scores for complete sequences (score includes all domains):
+   --- full sequence ---   --- best 1 domain ---    -#dom-
+    E-value  score  bias    E-value  score  bias    exp  N  Sequence Description
+    ------- ------ -----    ------- ------ -----   ---- --  -------- -----------
+   6.5e-160  537.7  13.2   8.4e-160  537.4  13.2    1.0  1  Q869V1    Metal transporter nramp1 homolog
+   1.1e-150  507.4  17.7   1.3e-150  507.0  17.7    1.0  1  Q10Q65    Metal transporter Nramp2
+   3.4e-149  502.4  18.9   4.3e-149  502.0  18.9    1.0  1  Q9SNV9    Metal transporter Nramp3
+   1.3e-148  500.4  15.3   1.7e-148  500.1  15.3    1.0  1  Q2QN30    Metal transporter Nramp6
+   7.7e-147  494.6  17.3   9.4e-147  494.3  17.3    1.0  1  Q9FN18    Metal transporter Nramp4
+   1.7e-145  490.2  17.1   2.2e-145  489.8  17.1    1.0  1  Q9C6B2    Metal transporter Nramp2
+     2e-143  483.3  18.6   1.2e-104  355.5   2.4    2.0  2  P49282    Natural resistance-associated macrophage protein 2
+   4.3e-143  482.3  20.1   1.3e-104  355.4   3.4    2.0  2  P49281    Natural resistance-associated macrophage protein 2
+   5.1e-143  482.0  17.6   6.3e-104  353.1   1.7    2.0  2  O54902    Natural resistance-associated macrophage protein 2
+   6.2e-141  475.1  18.5   2.8e-103  351.0   4.6    2.0  2  P41251    Natural resistance-associated macrophage protein 1
+   2.9e-139  469.7  19.5   3.8e-139  469.3  19.5    1.0  1  Q9SN36    Metal transporter Nramp5
+   3.9e-138  465.9  20.9   9.5e-101  342.7   5.1    2.0  2  Q9XT74    Natural resistance-associated macrophage protein 1
+   1.6e-137  463.9  18.7   6.6e-102  346.5   4.4    2.0  2  P49279    Natural resistance-associated macrophage protein 1
+   3.2e-137  462.9  19.7     3e-100  341.0   4.3    2.0  2  O77741    Natural resistance-associated macrophage protein 1
+   2.4e-136  460.0  20.6   2.8e-100  341.1   5.6    2.0  2  P56436    Natural resistance-associated macrophage protein 1
+   4.3e-136  459.2  21.5   5.7e-100  340.1   4.4    2.0  2  P51027    Natural resistance-associated macrophage protein 1
+   8.4e-136  458.2  20.7   3.5e-100  340.8   5.5    2.0  2  Q27946    Natural resistance-associated macrophage protein 1
+   9.3e-136  458.1  20.3   2.5e-100  341.3   5.3    2.0  2  P49280    Natural resistance-associated macrophage protein 1
+   3.2e-135  456.3  20.7    1.4e-99  338.8   5.5    2.0  2  Q95102    Natural resistance-associated macrophage protein 1
+   4.9e-135  455.7  20.3   2.4e-100  341.3   5.5    2.0  2  Q27981    Natural resistance-associated macrophage protein 1
+   1.3e-133  451.0  20.3   1.9e-100  341.6   5.2    2.0  2  P49283    Protein Malvolio
+   1.5e-129  437.6  17.1    1.8e-93  318.7   2.3    2.0  2  Q21434    NRAMP-like transporter smf-1
+     2e-128  433.9  20.6    1.9e-89  305.4   3.6    2.0  2  Q95XG8    NRAMP-like transporter smf-3
+   9.7e-125  421.8  19.5    5.8e-90  307.1   5.1    2.0  2  Q21433    NRAMP-like transporter smf-2
+   5.6e-117  396.2  18.6    3.1e-80  275.0   3.9    2.0  2  P70553    Natural resistance-associated macrophage protein 1
+   2.1e-102  348.1  17.8   2.9e-102  347.7  17.8    1.0  1  Q653V6    Metal transporter Nramp3
+    4.5e-98  333.8  17.4    5.8e-98  333.5  17.4    1.0  1  Q9S9N8    Metal transporter Nramp6
+    7.3e-98  333.1  17.8    9.6e-98  332.7  17.8    1.0  1  Q8H4H5    Metal transporter Nramp5
+      1e-95  326.0  17.2    1.3e-95  325.7  17.2    1.0  1  Q9SAH8    Metal transporter Nramp1
+    9.7e-95  322.8  18.7    1.2e-94  322.5  18.7    1.0  1  Q0D7E4    Metal transporter Nramp1
+    7.8e-88  300.1  16.0    9.4e-88  299.8  16.0    1.0  1  Q6ZG85    Metal transporter NRAT1
+    4.6e-84  287.6  19.0    6.1e-84  287.2  19.0    1.0  1  Q553K4    Natural resistance-associated macrophage protein 2 homolog
+    3.8e-81  278.0  18.6    4.7e-81  277.7  18.6    1.0  1  B3W6P3    Divalent metal cation transporter MntH
+    4.1e-81  277.9  18.7    5.1e-81  277.6  18.7    1.0  1  Q03D26    Divalent metal cation transporter MntH
+    1.3e-80  276.3  19.0    1.6e-80  276.0  19.0    1.0  1  Q38UX8    Divalent metal cation transporter MntH
+    2.2e-80  275.5  17.5    2.9e-80  275.1  17.5    1.0  1  A5IRZ2    Divalent metal cation transporter MntH
+    2.2e-80  275.5  17.5    2.9e-80  275.1  17.5    1.0  1  A6QFW1    Divalent metal cation transporter MntH
+    2.2e-80  275.5  17.5    2.9e-80  275.1  17.5    1.0  1  A6U0S3    Divalent metal cation transporter MntH
+    2.2e-80  275.5  17.5    2.9e-80  275.1  17.5    1.0  1  Q2FHX5    Divalent metal cation transporter MntH
+    2.2e-80  275.5  17.5    2.9e-80  275.1  17.5    1.0  1  Q2G2G3    Divalent metal cation transporter MntH
+    2.2e-80  275.5  17.5    2.9e-80  275.1  17.5    1.0  1  Q5HGX9    Divalent metal cation transporter MntH
+    2.2e-80  275.5  17.5    2.9e-80  275.1  17.5    1.0  1  Q6GAA9    Divalent metal cation transporter MntH
+    2.2e-80  275.5  17.5    2.9e-80  275.1  17.5    1.0  1  Q7A166    Divalent metal cation transporter MntH
+    2.2e-80  275.5  17.5    2.9e-80  275.1  17.5    1.0  1  Q99UZ7    Divalent metal cation transporter MntH
+    3.8e-80  274.7  17.4      5e-80  274.3  17.4    1.0  1  A7X111    Divalent metal cation transporter MntH
+    3.8e-80  274.7  17.4      5e-80  274.3  17.4    1.0  1  Q931T9    Divalent metal cation transporter MntH
+    5.8e-80  274.1  18.9    6.9e-80  273.9  18.9    1.0  1  Q92BT1    Divalent metal cation transporter MntH
+    6.2e-80  274.0  17.2      8e-80  273.7  17.2    1.0  1  Q2YX69    Divalent metal cation transporter MntH
+    6.7e-80  273.9  16.7    8.4e-80  273.6  16.7    1.0  1  Q4L5B9    Divalent metal cation transporter MntH
+    8.5e-80  273.6  19.2      1e-79  273.3  19.2    1.0  1  A0AIM7    Divalent metal cation transporter MntH
+      2e-79  272.3  19.2    2.4e-79  272.1  19.2    1.0  1  B8DE85    Divalent metal cation transporter MntH
+      2e-79  272.3  19.2    2.4e-79  272.1  19.2    1.0  1  C1L2Y0    Divalent metal cation transporter MntH
+      2e-79  272.3  19.2    2.4e-79  272.1  19.2    1.0  1  Q71ZP6    Divalent metal cation transporter MntH
+      2e-79  272.3  19.2    2.4e-79  272.1  19.2    1.0  1  Q8Y773    Divalent metal cation transporter MntH
+    3.1e-79  271.7  20.3      4e-79  271.3  20.3    1.0  1  Q03DK0    Divalent metal cation transporter MntH
+    8.5e-79  270.3  18.2    1.1e-78  269.9  18.2    1.0  1  Q98I99    Divalent metal cation transporter MntH
+    1.7e-78  269.3  21.3    2.2e-78  268.9  21.3    1.0  1  Q8GH68    Divalent metal cation transporter MntH
+    4.7e-78  267.8  18.6    6.2e-78  267.4  18.6    1.0  1  Q5HQ64    Divalent metal cation transporter MntH
+    6.5e-78  267.4  18.6    8.4e-78  267.0  18.6    1.0  1  Q8CPM6    Divalent metal cation transporter MntH
+    1.3e-77  266.3  19.7    1.8e-77  265.9  19.7    1.0  1  Q9RPF2    Divalent metal cation transporter MntH 2
+    2.3e-77  265.6  20.6      3e-77  265.2  20.6    1.0  1  Q03TH5    Divalent metal cation transporter MntH
+    4.5e-77  264.6  20.7    5.7e-77  264.2  20.7    1.0  1  Q49WM9    Divalent metal cation transporter MntH
+    9.8e-77  263.5  19.9    1.3e-76  263.1  19.9    1.0  1  Q8ZSB0    Divalent metal cation transporter MntH
+    1.1e-76  263.3  16.5    1.5e-76  262.9  16.5    1.0  1  Q6GHY0    Divalent metal cation transporter MntH
+    5.5e-76  261.0  20.0    7.2e-76  260.6  20.0    1.0  1  Q89K67    Divalent metal cation transporter MntH
+    1.8e-75  259.3  18.9    2.3e-75  259.0  18.9    1.0  1  Q93V04    Divalent metal cation transporter MntH
+    1.2e-74  256.5  15.2    1.5e-74  256.3  15.2    1.0  1  Q8XSF6    Divalent metal cation transporter MntH
+    8.9e-74  253.7  17.2    1.1e-73  253.4  17.2    1.0  1  Q9RPF3    Divalent metal cation transporter MntH 1
+    2.9e-73  252.0  16.3    3.8e-73  251.7  16.3    1.0  1  P65544    Divalent metal cation transporter MntH
+    2.9e-73  252.0  16.3    3.8e-73  251.7  16.3    1.0  1  P65545    Divalent metal cation transporter MntH
+      7e-72  247.5  23.4    8.4e-72  247.2  23.4    1.0  1  Q8P8R8    Divalent metal cation transporter MntH
+    1.5e-71  246.4  21.8    1.9e-71  246.0  21.8    1.0  1  Q8PKX1    Divalent metal cation transporter MntH
+    6.4e-71  244.3  20.1    8.5e-71  243.9  20.1    1.0  1  Q5QN13    Metal transporter Nramp4
+    1.5e-70  243.1  19.8    1.7e-70  242.9  19.8    1.0  1  Q8UEM1    Divalent metal cation transporter MntH
+    9.9e-69  237.1  20.1    1.2e-68  236.8  20.1    1.0  1  Q9PEL3    Divalent metal cation transporter MntH
+    1.3e-68  236.7  18.4    1.6e-68  236.4  18.4    1.0  1  Q0T2A8    Divalent metal cation transporter MntH
+    1.6e-68  236.4  18.1    2.1e-68  236.0  18.1    1.0  1  A8A2P6    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  A1ADR7    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  A7ZPK2    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  B1IX71    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  B1LMI9    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  B1X9R3    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  B2TWY8    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  B5YZU5    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  B6I6U2    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  B7LCE3    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  B7LL85    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  B7M6R1    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  B7MH51    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  B7MY49    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  B7N5Z2    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  B7NPS9    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  C4ZVS8    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  P0A769    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  P0A770    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  P0A771    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  Q0TF69    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  Q1R8X4    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  Q31Y80    Divalent metal cation transporter MntH
+    1.7e-68  236.3  18.3    2.2e-68  236.0  18.3    1.0  1  Q3YZE0    Divalent metal cation transporter MntH
+    1.8e-68  236.2  19.6    2.2e-68  235.9  19.6    1.0  1  Q87EJ9    Divalent metal cation transporter MntH
+    2.6e-68  235.7  18.1    3.3e-68  235.3  18.1    1.0  1  B7UGA0    Divalent metal cation transporter MntH
+    4.2e-68  235.0  18.5    5.3e-68  234.7  18.5    1.0  1  Q32DF6    Divalent metal cation transporter MntH
+      1e-67  233.7  17.5    1.4e-67  233.3  17.5    1.0  1  C6D9J9    Divalent metal cation transporter MntH
+    8.7e-67  230.7  13.4    1.1e-66  230.3  13.4    1.1  1  Q0B8F7    Divalent metal cation transporter MntH
+    1.1e-66  230.4  18.6    1.2e-66  230.2  18.6    1.0  1  P96593    Divalent metal cation transporter MntH
+    1.8e-66  229.6  18.5    2.4e-66  229.2  18.5    1.0  1  B5R3U1    Divalent metal cation transporter MntH
+    1.8e-66  229.6  18.5    2.4e-66  229.2  18.5    1.0  1  B5RCN6    Divalent metal cation transporter MntH
+      4e-66  228.5  18.4    5.4e-66  228.1  18.4    1.0  1  B4TQE4    Divalent metal cation transporter MntH
+      4e-66  228.5  18.4    5.4e-66  228.1  18.4    1.0  1  B5BB80    Divalent metal cation transporter MntH
+      4e-66  228.5  18.4    5.4e-66  228.1  18.4    1.0  1  Q5PNF0    Divalent metal cation transporter MntH
+      4e-66  228.5  18.4    5.4e-66  228.1  18.4    1.0  1  Q8Z4X5    Divalent metal cation transporter MntH
+    5.5e-66  228.0  18.4    7.4e-66  227.6  18.4    1.0  1  C0PZC8    Divalent metal cation transporter MntH
+    5.5e-66  228.0  18.4    7.4e-66  227.6  18.4    1.0  1  Q57LU5    Divalent metal cation transporter MntH
+    5.5e-66  228.0  18.4    7.4e-66  227.6  18.4    1.0  1  Q9RPF4    Divalent metal cation transporter MntH
+    7.4e-66  227.6  19.4    9.7e-66  227.2  19.4    1.0  1  A4WD10    Divalent metal cation transporter MntH
+    2.4e-65  225.9  19.3    2.9e-65  225.7  19.3    1.0  1  A4TMF6    Divalent metal cation transporter MntH
+    2.4e-65  225.9  19.3    2.9e-65  225.7  19.3    1.0  1  A7FGC8    Divalent metal cation transporter MntH
+    2.4e-65  225.9  19.3    2.9e-65  225.7  19.3    1.0  1  B1JFZ6    Divalent metal cation transporter MntH
+    2.4e-65  225.9  19.3    2.9e-65  225.7  19.3    1.0  1  B2K911    Divalent metal cation transporter MntH
+    2.4e-65  225.9  19.3    2.9e-65  225.7  19.3    1.0  1  Q1C5Y6    Divalent metal cation transporter MntH
+    2.4e-65  225.9  19.3    2.9e-65  225.7  19.3    1.0  1  Q1CJV0    Divalent metal cation transporter MntH
+    2.4e-65  225.9  19.3    2.9e-65  225.7  19.3    1.0  1  Q668N2    Divalent metal cation transporter MntH
+    2.4e-65  225.9  19.3    2.9e-65  225.7  19.3    1.0  1  Q8ZCK2    Divalent metal cation transporter MntH
+    2.8e-65  225.7  19.1    3.5e-65  225.4  19.1    1.0  1  A8ADJ8    Divalent metal cation transporter MntH
+    1.8e-64  223.1  17.3      2e-64  222.9  17.3    1.0  1  A7N307    Divalent metal cation transporter MntH
+    2.5e-64  222.6  17.2    2.7e-64  222.4  17.2    1.0  1  A0KG66    Divalent metal cation transporter MntH
+    2.6e-64  222.5  19.4    3.2e-64  222.2  19.4    1.0  1  A5G348    Divalent metal cation transporter MntH
+    3.8e-64  222.0  18.2    4.6e-64  221.7  18.2    1.0  1  Q1QZ83    Divalent metal cation transporter MntH
+    5.6e-64  221.4  17.2    6.9e-64  221.1  17.2    1.0  1  Q0BW85    Divalent metal cation transporter MntH
+    1.4e-63  220.1  17.9    1.9e-63  219.7  17.9    1.0  1  B2VDY7    Divalent metal cation transporter MntH
+    6.3e-63  217.9  18.2    8.1e-63  217.6  18.2    1.0  1  A6TC38    Divalent metal cation transporter MntH
+    9.2e-63  217.4  17.9    1.1e-62  217.1  17.9    1.0  1  A7MP48    Divalent metal cation transporter MntH
+    1.2e-62  217.0  17.9    1.6e-62  216.7  17.9    1.0  1  B5XVU3    Divalent metal cation transporter MntH
+    1.5e-62  216.7  19.6    1.8e-62  216.4  19.6    1.0  1  A1JLC3    Divalent metal cation transporter MntH
+      3e-62  215.7  19.0      4e-62  215.3  19.0    1.0  1  Q9RTP8    Divalent metal cation transporter MntH
+    1.4e-61  213.5  19.8    1.8e-61  213.1  19.8    1.0  1  A1WR47    Divalent metal cation transporter MntH
+    5.5e-60  208.3  21.7    6.5e-60  208.0  21.7    1.0  1  Q492G8    Divalent metal cation transporter MntH
+    9.5e-58  200.9  18.3    1.1e-57  200.6  18.3    1.0  1  Q97TN5    Divalent metal cation transporter MntH
+    2.7e-56  196.1   5.4    3.2e-37  133.2   1.9    2.1  2  P38925    Manganese transporter SMF1
+    2.6e-53  186.3  17.6    3.4e-53  185.9  17.6    1.0  1  Q8R7S2    Divalent metal cation transporter MntH
+    4.3e-53  185.5  14.5    6.1e-52  181.7  14.5    2.0  1  Q10177    Manganese transporter pdt1
+    2.2e-52  183.2  14.5    2.9e-52  182.8  14.5    1.0  1  P9WIZ4    Divalent metal cation transporter MntH
+    2.2e-52  183.2  14.5    2.9e-52  182.8  14.5    1.0  1  P9WIZ5    Divalent metal cation transporter MntH
+    6.7e-52  181.6  14.0    9.2e-52  181.1  14.0    1.1  1  O69443    Divalent metal cation transporter MntH
+    1.6e-48  170.5   8.6    8.4e-33  118.6   1.8    2.2  2  P38778    Manganese transporter SMF2
+    9.7e-47  164.6  12.2    1.5e-46  164.0  12.2    1.1  1  Q12078    Iron transporter SMF3
+    1.5e-44  157.3  16.6    1.8e-44  157.1  16.6    1.0  1  Q50103    Divalent metal cation transporter MntH
+    2.8e-25   93.8  19.3    4.1e-25   93.3  19.3    1.1  1  Q9S814    Ethylene-insensitive protein 2
+    1.6e-23   88.0  18.3    2.4e-23   87.4  18.3    1.1  1  Q0D8I9    Protein ETHYLENE-INSENSITIVE 2
+
+
+Domain annotation for each sequence:
+>> Q869V1  Metal transporter nramp1 homolog
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  537.4  13.2  2.2e-163  8.4e-160      22     475 ..      62     513 ..      38     521 .. 0.95
+
+>> Q10Q65  Metal transporter Nramp2
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  507.0  17.7  3.5e-154  1.3e-150      28     469 ..      64     510 ..      42     523 .. 0.95
+
+>> Q9SNV9  Metal transporter Nramp3
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  502.0  18.9  1.1e-152  4.3e-149      13     465 ..      36     492 ..      26     497 .. 0.94
+
+>> Q2QN30  Metal transporter Nramp6
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  500.1  15.3  4.5e-152  1.7e-148       9     474 ..      60     532 ..      52     539 .. 0.92
+
+>> Q9FN18  Metal transporter Nramp4
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  494.3  17.3  2.5e-150  9.4e-147      14     465 ..      33     488 ..      21     511 .. 0.92
+
+>> Q9C6B2  Metal transporter Nramp2
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  489.8  17.1  5.7e-149  2.2e-145      15     465 ..      47     504 ..      38     509 .. 0.95
+
+>> P49282  Natural resistance-associated macrophage protein 2
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  355.5   2.4  3.2e-108  1.2e-104      15     288 ..      52     327 ..      44     338 .. 0.95
+   2 !  133.6   8.5   6.4e-41   2.4e-37     280     465 ..     342     526 ..     336     529 .. 0.91
+
+>> P49281  Natural resistance-associated macrophage protein 2
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  355.4   3.4  3.4e-108  1.3e-104      22     290 ..      58     329 ..      48     339 .. 0.96
+   2 !  132.7   8.8   1.2e-40   4.4e-37     288     465 ..     350     526 ..     337     529 .. 0.91
+
+>> O54902  Natural resistance-associated macrophage protein 2
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  353.1   1.7  1.7e-107  6.3e-104      15     289 ..      52     328 ..      44     339 .. 0.96
+   2 !  134.3   8.4   3.8e-41   1.4e-37     280     465 ..     342     526 ..     336     529 .. 0.92
+
+>> P41251  Natural resistance-associated macrophage protein 1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  351.0   4.6  7.4e-107  2.8e-103      16     293 ..      38     317 ..      32     326 .. 0.96
+   2 !  130.2   5.9   6.7e-40   2.5e-36     279     465 ..     327     512 ..     321     521 .. 0.90
+
+>> Q9SN36  Metal transporter Nramp5
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  469.3  19.5  9.9e-143  3.8e-139      29     465 ..      65     506 ..      48     519 .. 0.95
+
+>> Q9XT74  Natural resistance-associated macrophage protein 1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  342.7   5.1  2.5e-104  9.5e-101      16     291 ..      38     315 ..      31     329 .. 0.94
+   2 !  129.3   7.8   1.3e-39   4.7e-36     291     465 ..     339     512 ..     324     524 .. 0.89
+
+>> P49279  Natural resistance-associated macrophage protein 1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  346.5   4.4  1.7e-105  6.6e-102      16     291 ..      41     318 ..      30     330 .. 0.94
+   2 !  123.4   6.4   7.7e-38   2.9e-34     280     464 ..     331     514 ..     326     524 .. 0.88
+
+>> O77741  Natural resistance-associated macrophage protein 1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  341.0   4.3  7.9e-104    3e-100      16     292 ..      38     316 ..      35     331 .. 0.95
+   2 !  127.8   7.6   3.7e-39   1.4e-35     285     465 ..     333     512 ..     323     519 .. 0.91
+
+>> P56436  Natural resistance-associated macrophage protein 1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  341.1   5.6  7.4e-104  2.8e-100      16     292 ..      38     316 ..      35     328 .. 0.95
+   2 !  124.9   7.0   2.7e-38     1e-34     289     464 ..     337     511 ..     323     515 .. 0.89
+
+>> P51027  Natural resistance-associated macrophage protein 1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  340.1   4.4  1.5e-103  5.7e-100      22     290 ..      51     322 ..      41     330 .. 0.95
+   2 !  125.3   9.0     2e-38   7.7e-35     277     465 ..     333     520 ..     323     535 .. 0.89
+
+>> Q27946  Natural resistance-associated macrophage protein 1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  340.8   5.5  9.2e-104  3.5e-100      17     291 ..      39     315 ..      35     328 .. 0.95
+   2 !  123.5   7.3   7.4e-38   2.8e-34     289     464 ..     337     511 ..     322     515 .. 0.90
+
+>> P49280  Natural resistance-associated macrophage protein 1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  341.3   5.3  6.5e-104  2.5e-100      16     292 ..      38     316 ..      35     331 .. 0.95
+   2 !  122.7   7.3   1.2e-37   4.7e-34     289     464 ..     337     511 ..     319     518 .. 0.90
+
+>> Q95102  Natural resistance-associated macrophage protein 1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  338.8   5.5  3.7e-103   1.4e-99      16     292 ..      38     316 ..      35     329 .. 0.95
+   2 !  123.6   7.2   6.7e-38   2.6e-34     289     464 ..     337     511 ..     323     515 .. 0.90
+
+>> Q27981  Natural resistance-associated macrophage protein 1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  341.3   5.5  6.2e-104  2.4e-100      16     291 ..      38     315 ..      35     329 .. 0.95
+   2 !  120.5   6.9   5.9e-37   2.3e-33     289     464 ..     337     511 ..     322     515 .. 0.89
+
+>> P49283  Protein Malvolio
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  341.6   5.2  5.1e-104  1.9e-100      27     294 ..      70     340 ..      52     355 .. 0.93
+   2 !  115.1   7.4   2.5e-35   9.6e-32     293     466 ..     367     540 ..     352     556 .. 0.90
+
+>> Q21434  NRAMP-like transporter smf-1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  318.7   2.3   4.7e-97   1.8e-93      11     293 ..      32     318 ..      24     330 .. 0.94
+   2 !  124.8   7.1     3e-38   1.1e-34     286     466 ..     335     517 ..     326     533 .. 0.92
+
+>> Q95XG8  NRAMP-like transporter smf-3
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  305.4   3.6   5.1e-93   1.9e-89      25     290 ..      35     303 ..      25     321 .. 0.96
+   2 !  134.3   9.2   3.9e-41   1.5e-37     282     465 ..     323     508 ..     315     513 .. 0.95
+
+>> Q21433  NRAMP-like transporter smf-2
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  307.1   5.1   1.5e-93   5.8e-90      26     291 ..      35     303 ..      17     315 .. 0.94
+   2 !  120.7   6.4   5.2e-37     2e-33     290     466 ..     326     504 ..     314     508 .. 0.93
+
+>> P70553  Natural resistance-associated macrophage protein 1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  275.0   3.9   8.2e-84   3.1e-80      66     293 ..      46     276 ..      40     284 .. 0.95
+   2 !  127.0   6.8   6.6e-39   2.5e-35     280     465 ..     287     471 ..     282     480 .. 0.90
+
+>> Q653V6  Metal transporter Nramp3
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  347.7  17.8  7.5e-106  2.9e-102      30     465 ..      46     488 ..      31     501 .. 0.90
+
+>> Q9S9N8  Metal transporter Nramp6
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  333.5  17.4  1.5e-101   5.8e-98      30     465 ..      34     476 ..      18     493 .. 0.90
+
+>> Q8H4H5  Metal transporter Nramp5
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  332.7  17.8  2.5e-101   9.6e-98      24     464 ..      30     481 ..      19     507 .. 0.88
+
+>> Q9SAH8  Metal transporter Nramp1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  325.7  17.2   3.5e-99   1.3e-95      30     465 ..      42     484 ..      27     508 .. 0.88
+
+>> Q0D7E4  Metal transporter Nramp1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  322.5  18.7   3.3e-98   1.2e-94      29     463 ..      30     470 ..      15     492 .. 0.91
+
+>> Q6ZG85  Metal transporter NRAT1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  299.8  16.0   2.5e-91   9.4e-88      30     462 ..      47     485 ..      17     510 .. 0.86
+
+>> Q553K4  Natural resistance-associated macrophage protein 2 homolog
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  287.2  19.0   1.6e-87   6.1e-84      27     447 ..     143     562 ..     123     580 .. 0.89
+
+>> B3W6P3  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  277.7  18.6   1.2e-84   4.7e-81      29     434 ..      38     452 ..      14     457 .. 0.90
+
+>> Q03D26  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  277.6  18.7   1.4e-84   5.1e-81      30     434 ..      39     452 ..      15     457 .. 0.90
+
+>> Q38UX8  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  276.0  19.0   4.1e-84   1.6e-80      23     436 ..      32     454 ..      13     457 .. 0.91
+
+>> A5IRZ2  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  275.1  17.5   7.6e-84   2.9e-80      25     433 ..      24     442 ..       8     448 .. 0.89
+
+>> A6QFW1  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  275.1  17.5   7.6e-84   2.9e-80      25     433 ..      24     442 ..       8     448 .. 0.89
+
+>> A6U0S3  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  275.1  17.5   7.6e-84   2.9e-80      25     433 ..      24     442 ..       8     448 .. 0.89
+
+>> Q2FHX5  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  275.1  17.5   7.6e-84   2.9e-80      25     433 ..      24     442 ..       8     448 .. 0.89
+
+>> Q2G2G3  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  275.1  17.5   7.6e-84   2.9e-80      25     433 ..      24     442 ..       8     448 .. 0.89
+
+>> Q5HGX9  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  275.1  17.5   7.6e-84   2.9e-80      25     433 ..      24     442 ..       8     448 .. 0.89
+
+>> Q6GAA9  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  275.1  17.5   7.6e-84   2.9e-80      25     433 ..      24     442 ..       8     448 .. 0.89
+
+>> Q7A166  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  275.1  17.5   7.6e-84   2.9e-80      25     433 ..      24     442 ..       8     448 .. 0.89
+
+>> Q99UZ7  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  275.1  17.5   7.6e-84   2.9e-80      25     433 ..      24     442 ..       8     448 .. 0.89
+
+>> A7X111  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  274.3  17.4   1.3e-83     5e-80      25     433 ..      24     442 ..       8     448 .. 0.89
+
+>> Q931T9  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  274.3  17.4   1.3e-83     5e-80      25     433 ..      24     442 ..       8     448 .. 0.89
+
+>> Q92BT1  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  273.9  18.9   1.8e-83   6.9e-80      30     432 ..      37     441 ..      21     448 .] 0.90
+
+>> Q2YX69  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  273.7  17.2   2.1e-83     8e-80      25     433 ..      24     442 ..       8     448 .. 0.89
+
+>> Q4L5B9  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  273.6  16.7   2.2e-83   8.4e-80      30     433 ..      27     440 ..       6     445 .. 0.90
+
+>> A0AIM7  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  273.3  19.2   2.7e-83     1e-79      30     434 ..      37     443 ..      21     448 .] 0.90
+
+>> B8DE85  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  272.1  19.2   6.4e-83   2.4e-79      30     432 ..      37     441 ..      21     448 .] 0.90
+
+>> C1L2Y0  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  272.1  19.2   6.4e-83   2.4e-79      30     432 ..      37     441 ..      21     448 .] 0.90
+
+>> Q71ZP6  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  272.1  19.2   6.4e-83   2.4e-79      30     432 ..      37     441 ..      21     448 .] 0.90
+
+>> Q8Y773  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  272.1  19.2   6.4e-83   2.4e-79      30     432 ..      37     441 ..      21     448 .] 0.90
+
+>> Q03DK0  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  271.3  20.3   1.1e-82     4e-79      28     433 ..      26     440 ..       3     445 .. 0.89
+
+>> Q98I99  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  269.9  18.2   2.9e-82   1.1e-78      31     434 ..      42     448 ..      20     452 .. 0.93
+
+>> Q8GH68  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  268.9  21.3   5.8e-82   2.2e-78      30     436 ..      45     460 ..      28     463 .. 0.91
+
+>> Q5HQ64  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  267.4  18.6   1.6e-81   6.2e-78      30     432 ..      34     446 ..      24     452 .. 0.90
+
+>> Q8CPM6  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  267.0  18.6   2.2e-81   8.4e-78      30     432 ..      34     446 ..      24     452 .. 0.90
+
+>> Q9RPF2  Divalent metal cation transporter MntH 2
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  265.9  19.7   4.8e-81   1.8e-77      31     436 ..      29     436 ..      20     437 .. 0.94
+
+>> Q03TH5  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  265.2  20.6   7.9e-81     3e-77      30     433 ..      40     452 ..      26     457 .. 0.91
+
+>> Q49WM9  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  264.2  20.7   1.5e-80   5.7e-77      32     432 ..      29     439 ..      11     445 .. 0.88
+
+>> Q8ZSB0  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  263.1  19.9   3.3e-80   1.3e-76      30     432 ..      25     429 ..      12     439 .. 0.92
+
+>> Q6GHY0  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  262.9  16.5   3.9e-80   1.5e-76      25     433 ..      24     442 ..       8     448 .. 0.89
+
+>> Q89K67  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  260.6  20.0   1.9e-79   7.2e-76      30     434 ..      40     446 ..      26     449 .. 0.92
+
+>> Q93V04  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  259.0  18.9     6e-79   2.3e-75      29     436 ..      44     460 ..      23     463 .. 0.91
+
+>> Q8XSF6  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  256.3  15.2   3.9e-78   1.5e-74      28     435 ..      30     439 ..      19     442 .] 0.89
+
+>> Q9RPF3  Divalent metal cation transporter MntH 1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  253.4  17.2     3e-77   1.1e-73      31     432 ..      31     434 ..      20     438 .. 0.92
+
+>> P65544  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  251.7  16.3   9.9e-77   3.8e-73      32     436 ..      45     451 ..      38     455 .. 0.92
+
+>> P65545  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  251.7  16.3   9.9e-77   3.8e-73      32     436 ..      45     451 ..      38     455 .. 0.92
+
+>> Q8P8R8  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  247.2  23.4   2.2e-75   8.4e-72      30     436 ..      34     442 ..      24     444 .] 0.93
+
+>> Q8PKX1  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  246.0  21.8   5.1e-75   1.9e-71      30     434 ..      34     440 ..      20     443 .. 0.93
+
+>> Q5QN13  Metal transporter Nramp4
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  243.9  20.1   2.2e-74   8.5e-71      28     464 ..      66     506 ..      60     518 .. 0.88
+
+>> Q8UEM1  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  242.9  19.8   4.6e-74   1.7e-70      30     436 ..      52     460 ..      34     461 .] 0.93
+
+>> Q9PEL3  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.8  20.1   3.2e-72   1.2e-68      17     437 ..      42     464 ..      25     469 .. 0.91
+
+>> Q0T2A8  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.4  18.4   4.3e-72   1.6e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> A8A2P6  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.1   5.4e-72   2.1e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> A1ADR7  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> A7ZPK2  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> B1IX71  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> B1LMI9  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> B1X9R3  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> B2TWY8  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> B5YZU5  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> B6I6U2  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> B7LCE3  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> B7LL85  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> B7M6R1  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> B7MH51  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> B7MY49  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> B7N5Z2  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> B7NPS9  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> C4ZVS8  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> P0A769  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> P0A770  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> P0A771  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> Q0TF69  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> Q1R8X4  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> Q31Y80  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> Q3YZE0  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  236.0  18.3   5.7e-72   2.2e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> Q87EJ9  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  235.9  19.6   5.8e-72   2.2e-68      17     437 ..      42     464 ..      25     469 .. 0.91
+
+>> B7UGA0  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  235.3  18.1   8.7e-72   3.3e-68      34     432 ..      18     405 ..       8     411 .. 0.90
+
+>> Q32DF6  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  234.7  18.5   1.4e-71   5.3e-68      34     432 ..      18     405 ..       8     411 .. 0.91
+
+>> C6D9J9  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  233.3  17.5   3.6e-71   1.4e-67      36     435 ..      20     408 ..       6     411 .. 0.91
+
+>> Q0B8F7  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  230.3  13.4   2.9e-70   1.1e-66      27     432 ..      39     436 ..      25     440 .. 0.91
+
+>> P96593  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  230.2  18.6   3.2e-70   1.2e-66      20     434 ..      16     422 ..       5     425 .] 0.89
+
+>> B5R3U1  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  229.2  18.5   6.3e-70   2.4e-66      35     433 ..      19     406 ..       9     411 .. 0.90
+
+>> B5RCN6  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  229.2  18.5   6.3e-70   2.4e-66      35     433 ..      19     406 ..       9     411 .. 0.90
+
+>> B4TQE4  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  228.1  18.4   1.4e-69   5.4e-66      35     433 ..      19     406 ..       9     411 .. 0.90
+
+>> B5BB80  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  228.1  18.4   1.4e-69   5.4e-66      35     433 ..      19     406 ..       9     411 .. 0.90
+
+>> Q5PNF0  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  228.1  18.4   1.4e-69   5.4e-66      35     433 ..      19     406 ..       9     411 .. 0.90
+
+>> Q8Z4X5  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  228.1  18.4   1.4e-69   5.4e-66      35     433 ..      19     406 ..       9     411 .. 0.90
+
+>> C0PZC8  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  227.6  18.4   1.9e-69   7.4e-66      35     433 ..      19     406 ..       9     411 .. 0.90
+
+>> Q57LU5  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  227.6  18.4   1.9e-69   7.4e-66      35     433 ..      19     406 ..       9     411 .. 0.90
+
+>> Q9RPF4  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  227.6  18.4   1.9e-69   7.4e-66      35     433 ..      19     406 ..       9     411 .. 0.90
+
+>> A4WD10  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  227.2  19.4   2.6e-69   9.7e-66      32     432 ..      16     405 ..       8     410 .. 0.90
+
+>> A4TMF6  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  225.7  19.3   7.6e-69   2.9e-65      36     432 ..      20     405 ..       6     409 .] 0.91
+
+>> A7FGC8  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  225.7  19.3   7.6e-69   2.9e-65      36     432 ..      20     405 ..       6     409 .] 0.91
+
+>> B1JFZ6  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  225.7  19.3   7.6e-69   2.9e-65      36     432 ..      20     405 ..       6     409 .] 0.91
+
+>> B2K911  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  225.7  19.3   7.6e-69   2.9e-65      36     432 ..      20     405 ..       6     409 .] 0.91
+
+>> Q1C5Y6  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  225.7  19.3   7.6e-69   2.9e-65      36     432 ..      20     405 ..       6     409 .] 0.91
+
+>> Q1CJV0  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  225.7  19.3   7.6e-69   2.9e-65      36     432 ..      20     405 ..       6     409 .] 0.91
+
+>> Q668N2  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  225.7  19.3   7.6e-69   2.9e-65      36     432 ..      20     405 ..       6     409 .] 0.91
+
+>> Q8ZCK2  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  225.7  19.3   7.6e-69   2.9e-65      36     432 ..      20     405 ..       6     409 .] 0.91
+
+>> A8ADJ8  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  225.4  19.1   9.3e-69   3.5e-65      35     432 ..      19     405 ..       7     411 .. 0.90
+
+>> A7N307  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  222.9  17.3   5.3e-68     2e-64      32     433 ..      28     419 ..       5     423 .] 0.90
+
+>> A0KG66  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  222.4  17.2   7.2e-68   2.7e-64      25     432 ..       6     403 ..       1     407 [] 0.92
+
+>> A5G348  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  222.2  19.4   8.3e-68   3.2e-64      29     441 ..      26     430 ..      12     433 .] 0.88
+
+>> Q1QZ83  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  221.7  18.2   1.2e-67   4.6e-64      29     432 ..      30     424 ..      11     430 .. 0.91
+
+>> Q0BW85  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  221.1  17.2   1.8e-67   6.9e-64      16     441 ..      20     438 ..      15     443 .. 0.91
+
+>> B2VDY7  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  219.7  17.9     5e-67   1.9e-63      35     432 ..      19     406 ..       8     412 .. 0.90
+
+>> A6TC38  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  217.6  18.2   2.1e-66   8.1e-63      35     432 ..      19     405 ..       7     411 .. 0.91
+
+>> A7MP48  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  217.1  17.9     3e-66   1.1e-62      35     432 ..      19     405 ..       8     411 .. 0.91
+
+>> B5XVU3  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  216.7  17.9   4.1e-66   1.6e-62      35     432 ..      19     405 ..       7     411 .. 0.91
+
+>> A1JLC3  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  216.4  19.6   4.9e-66   1.8e-62      36     433 ..      20     406 ..      10     409 .] 0.91
+
+>> Q9RTP8  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  215.3  19.0   1.1e-65     4e-62      32     434 ..      38     432 ..      31     435 .. 0.93
+
+>> A1WR47  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  213.1  19.8   4.8e-65   1.8e-61      32     436 ..      34     430 ..      19     437 .. 0.88
+
+>> Q492G8  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  208.0  21.7   1.7e-63   6.5e-60      35     433 ..      19     407 ..       8     411 .] 0.89
+
+>> Q97TN5  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  200.6  18.3     3e-61   1.1e-57      32     432 ..      31     423 ..      16     431 .] 0.90
+
+>> P38925  Manganese transporter SMF1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  133.2   1.9   8.4e-41   3.2e-37      32     243 ..      74     293 ..      61     303 .. 0.87
+   2 !   64.2   0.1     7e-20   2.6e-16     249     404 ..     333     490 ..     320     495 .. 0.87
+
+>> Q8R7S2  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  185.9  17.6   8.9e-57   3.4e-53      31     421 ..      20     402 ..      14     417 .. 0.87
+
+>> Q10177  Manganese transporter pdt1
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  181.7  14.5   1.6e-55   6.1e-52      32     404 ..      69     466 ..      60     471 .. 0.84
+
+>> P9WIZ4  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  182.8  14.5   7.5e-56   2.9e-52      23     432 ..      21     422 ..      11     427 .. 0.88
+
+>> P9WIZ5  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  182.8  14.5   7.5e-56   2.9e-52      23     432 ..      21     422 ..      11     427 .. 0.88
+
+>> O69443  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  181.1  14.0   2.4e-55   9.2e-52      23     432 ..     277     678 ..     266     683 .. 0.88
+
+>> P38778  Manganese transporter SMF2
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  118.6   1.8   2.2e-36   8.4e-33      28     240 ..      51     269 ..      36     282 .. 0.87
+   2 !   55.6   0.7   2.8e-17   1.1e-13     248     404 ..     299     458 ..     286     468 .. 0.86
+
+>> Q12078  Iron transporter SMF3
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  164.0  12.2   3.9e-50   1.5e-46      32     404 ..       9     402 ..       4     406 .. 0.78
+
+>> Q50103  Divalent metal cation transporter MntH
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  157.1  16.6   4.7e-48   1.8e-44      31     433 ..      27     421 ..      16     426 .] 0.86
+
+>> Q9S814  Ethylene-insensitive protein 2
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !   93.3  19.3   1.1e-28   4.1e-25      39     436 ..      23     417 ..      11     446 .. 0.81
+
+>> Q0D8I9  Protein ETHYLENE-INSENSITIVE 2
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !   87.4  18.3   6.3e-27   2.4e-23      34     470 ..      27     469 ..       8     478 .. 0.82
+
+
+
+Internal pipeline statistics summary:
+-------------------------------------
+Query model(s):                            1  (494 nodes)
+Target sequences:                     568744  (205548017 residues searched)
+Passed MSV filter:                     15574  (0.0273831); expected 11374.9 (0.02)
+Passed bias filter:                     9486  (0.0166789); expected 11374.9 (0.02)
+Passed Vit filter:                       680  (0.00119562); expected 568.7 (0.001)
+Passed Fwd filter:                       152  (0.000267256); expected 5.7 (1e-05)
+Initial search space (Z):             568744  [actual number of targets]
+Domain search space  (domZ):             150  [number of targets reported over threshold]
+# CPU time: 11.30u 0.34s 00:00:11.64 Elapsed: 00:00:10.35
+# Mc/sec: 9805.95
+//
+[ok]

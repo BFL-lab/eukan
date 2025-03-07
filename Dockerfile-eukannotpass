@@ -1,0 +1,18 @@
+FROM annot-base
+
+ARG USER_ID
+ARG GROUP_ID
+
+# fitild (compiled with g++-4.7 since code is old)
+COPY fitild.tar.gz /opt
+RUN tar zxvf /opt/fitild.tar.gz -C /opt/ && cat /opt/fitild/table/IldModel*.txt > /opt/spaln-Ver.2.4.2/table/IldModel.txt
+ENV PATH="/opt/fitild/bin:${PATH}"
+
+# copy over in-house pipeline
+COPY eukannotpass.tar.gz /opt
+RUN tar zxvf /opt/eukannotpass.tar.gz -C /opt/
+ENV PATH="/opt/eukannotpass:${PATH}"
+
+RUN chown -R $USER_ID:$GROUP_ID /opt/spaln-Ver.2.4.2 /opt/fitild
+
+SHELL ["/bin/bash", "-c"]

@@ -1,0 +1,14 @@
+C1	eukannotpass	gene	8346	9520	.	+	.	ID=XCEEV_00006;Name=XCEEV_00006;locus_tag=XCEEV_00006
+C1	eukannotpass	mRNA	8346	9520	.	+	.	ID=XCEEV_00006.mRNA.1;Parent=XCEEV_00006;Name=XCEEV_00006.mRNA.1;locus_tag=XCEEV_00006.mRNA.1
+C1	eukannotpass	CDS	8346	9024	.	+	0	ID=XCEEV_00006.mRNA.1:CDS:1;Parent=XCEEV_00006.mRNA.1;locus_tag=XCEEV_00006.mRNA.1:CDS:1
+C1	eukannotpass	CDS	9186	9520	.	+	1	ID=XCEEV_00006.mRNA.1:CDS:2;Parent=XCEEV_00006.mRNA.1;locus_tag=XCEEV_00006.mRNA.1:CDS:2
+C1	eukannotpass	exon	8346	9024	.	+	.	ID=XCEEV_00006.mRNA.1:exon:1;Parent=XCEEV_00006.mRNA.1;locus_tag=XCEEV_00006.mRNA.1:exon:1
+C1	eukannotpass	exon	9186	9520	.	+	.	ID=XCEEV_00006.mRNA.1:exon:2;Parent=XCEEV_00006.mRNA.1;locus_tag=XCEEV_00006.mRNA.1:exon:2
+C1	eukannotpass	gene	119154	119907	.	-	.	ID=XCEEV_00044;Name=XCEEV_00044;locus_tag=XCEEV_00044
+C1	eukannotpass	mRNA	119154	119907	.	-	.	ID=XCEEV_00044.mRNA.1;Parent=XCEEV_00044;Name=XCEEV_00044.mRNA.1;locus_tag=XCEEV_00044.mRNA.1
+C1	eukannotpass	CDS	119868	119907	.	-	0	ID=XCEEV_00044.mRNA.1:CDS:1;Parent=XCEEV_00044.mRNA.1;locus_tag=XCEEV_00044.mRNA.1:CDS:1
+C1	eukannotpass	CDS	119649	119752	.	-	1	ID=XCEEV_00044.mRNA.1:CDS:2;Parent=XCEEV_00044.mRNA.1;locus_tag=XCEEV_00044.mRNA.1:CDS:2
+C1	eukannotpass	CDS	119154	119507	.	-	0	ID=XCEEV_00044.mRNA.1:CDS:3;Parent=XCEEV_00044.mRNA.1;locus_tag=XCEEV_00044.mRNA.1:CDS:3
+C1	eukannotpass	exon	119868	119907	.	-	.	ID=XCEEV_00044.mRNA.1:exon:1;Parent=XCEEV_00044.mRNA.1;locus_tag=XCEEV_00044.mRNA.1:exon:1
+C1	eukannotpass	exon	119649	119752	.	-	.	ID=XCEEV_00044.mRNA.1:exon:2;Parent=XCEEV_00044.mRNA.1;locus_tag=XCEEV_00044.mRNA.1:exon:2
+C1	eukannotpass	exon	119154	119507	.	-	.	ID=XCEEV_00044.mRNA.1:exon:3;Parent=XCEEV_00044.mRNA.1;locus_tag=XCEEV_00044.mRNA.1:exon:3

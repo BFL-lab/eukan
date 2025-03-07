@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+
+import sys
+import os
+import argparse
+import multiprocessing
+from src.routines import Routines
+
+
+def main():
+    """
+    Parse command line options
+    """
+    parser = argparse.ArgumentParser(
+        description="Annotates a genome.",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        '--genome', '-g', help="REQUIRED. Make sure there are \
+        no lower-case letters in the sequences since the pipeline \
+        soft-masks the genome by converting upper-case nucleotides in \
+        repetitive regions to lower-case", required=True,
+        metavar='genome.fasta')
+    parser.add_argument(
+        '--proteins', '-p', nargs='+', type=str,
+        help="REQUIRED. >=1 protein fasta files, separated by spaces",
+        required=True)
+    parser.add_argument(
+        '--transcriptsFasta', '-tf', help="assembled transcripts fasta",
+        metavar='transcriptassembly.fasta')
+    parser.add_argument(
+        '--transcriptsGFF', '-tg', help="assembled transcripts gff file",
+        metavar='transcriptassembly.gff3')
+    parser.add_argument(
+        '--rnaseq_hints', '-r', help="gff hints generated from RNA-Seq",
+        metavar='hints.gff')
+    parser.add_argument(
+        '--existing_augustus', help="use existing augustus species\
+            parameters",
+        metavar='species')
+    parser.add_argument(
+        '--strand_specific_transcripts', default=False,
+        action='store_true',
+        help="specify that transcripts are alignment oriented")
+    parser.add_argument(
+        '--numcpu', '-n', default=multiprocessing.cpu_count(),
+        help="number of CPUs to use, default is MAX", metavar='N')
+    parser.add_argument(
+        '--weights', nargs='+', type=int,
+        help="define weights for each evidence source in the following order: \
+        protein alignments, gene predictions, transcript assembly (if \
+        present), e.g. --weights 2 1 5, or --weights 2 1. Default is 1 2, \
+        and 10 if transcript assembly is available", default=[2, 1, 3],
+        metavar='x y [z]')
+    parser.add_argument(
+        '--code', '-C', default='11',
+        help="genetic code to use, as defined at \
+        https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi#SG27")
+    parser.add_argument(
+        '--utrs', help='path to PASA sqlite DB to add UTRs')
+    parser.add_argument(
+        '--fungus', default=False,
+        action='store_true', help="target genome is of a fungus")
+    parser.add_argument(
+        '--protist', default=False,
+        action='store_true', help="target genome is of a protist")
+    parser.add_argument(
+        '--animal', default=False,
+        action='store_true', help="target genome is of an animal")
+    parser.add_argument(
+        '--plant', default=False,
+        action='store_true', help="target genome is of a plant")
+    opts = parser.parse_args()
+
+    """
+    Run the pipeline using the command line options
+    """
+    pipeline = Routines(opts)
+    ev = {'prot': [os.path.abspath(f) for f in opts.proteins]}
+
+    if opts.transcriptsFasta and opts.transcriptsGFF and opts.rnaseq_hints:
+        ev['transcriptsFasta'] = os.path.abspath(opts.transcriptsFasta)
+        ev['transcriptsGFF'] = os.path.abspath(opts.transcriptsGFF)
+        ev['rnaseq_hints'] = os.path.abspath(opts.rnaseq_hints)
+        ev['transcriptORFs'] = pipeline.find_orfs(ev['transcriptsGFF'])
+
+        ev['genemark'] = pipeline.run_genemark(ev['rnaseq_hints'])
+        ev['spaln'] = pipeline.align_proteins(
+            ev['genemark'], ev['prot'], '%s/genemark/introns.gff' % os.getcwd())
+        ev['augustus'] = pipeline.run_augustus(
+            ev['genemark'], ev['spaln'], ev['transcriptORFs'])
+
+        if opts.fungus:
+            ev['codingquarry'] = pipeline.run_codingquarry(ev['transcriptsGFF'])
+            ev['snap'] = pipeline.run_snap(
+                ev['augustus'], ev['spaln'], ev['transcriptORFs'])
+            pipeline.build_consensus_models(
+                ev['spaln'], ev['augustus'], ev['snap'], ev['codingquarry'],
+                ev['transcriptsGFF'])
+        else:
+            pipeline.build_consensus_models(
+                ev['spaln'], ev['augustus'], ev['transcriptsGFF'])
+
+    else:
+        ev['genemark'] = pipeline.run_genemark()
+        ev['spaln'] = pipeline.align_proteins(ev['genemark'], ev['prot'])
+        ev['augustus'] = pipeline.run_augustus(ev['genemark'], ev['spaln'])
+
+        if opts.fungus or opts.protist:
+            ev['codingquarry'] = pipeline.run_codingquarry(ev['augustus'])
+            ev['snap'] = pipeline.run_snap(ev['augustus'], ev['spaln'])
+            pipeline.build_consensus_models(
+                ev['spaln'], ev['augustus'], ev['snap'], ev['codingquarry'])
+        else:
+            pipeline.build_consensus_models(
+                ev['spaln'], ev['augustus'], ev['snap'], ev['genemark'])
+
+    print('Done.')
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('Interrupted')
+        try:
+            sys.exit(0)
+        except SystemExit:
+            os._exit(0)

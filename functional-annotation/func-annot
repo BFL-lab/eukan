@@ -1,0 +1,228 @@
+#!/usr/bin/env python3
+
+import argparse
+import gffutils
+import os
+import subprocess
+import sys
+import multiprocessing
+from Bio import SearchIO
+from Bio import SeqIO
+from multiprocessing import Pool
+
+
+def add_func_info(gff3_features, phmmer_results, hmmscan_results):
+    for f in gff3_features.features_of_type(['mRNA', 'CDS']):
+        f.attributes['locus_tag'] = f.attributes['ID']
+        if f.featuretype == "mRNA":
+            if f.attributes['ID'][0] in phmmer_results or f.attributes['Parent'][0] in phmmer_results:
+                f.attributes['product'] = [v['description'] if v['evalue'] <= 1e-2 else "hypothetical protein" for k, v in phmmer_results[f.attributes['ID'][0]].items()]
+                f.attributes['inference'] = ["similar to AA sequence:UniProtKB:%s" % k for k, v in phmmer_results[f.attributes['ID'][0]].items() if v['evalue'] <= 1e-2]
+            else:
+                f.attributes['product'] = ['hypothetical protein']
+            if f.attributes['ID'][0] in hmmscan_results:
+                if 'inference' not in f.attributes:
+                    f.attributes['inference'] = ["protein motif:PFAM:%s" % k for k in hmmscan_results[f.attributes['ID'][0]]]
+                else:
+                    f.attributes['inference'] = f.attributes['inference'] + ["protein motif:PFAM:%s" % k for k in hmmscan_results[f.attributes['ID'][0]]]
+        else:
+            if f.attributes['Parent'][0] in phmmer_results:
+                f.attributes['product'] = [v['description'] for k, v in phmmer_results[f.attributes['Parent'][0]].items()]
+                f.attributes['inference'] = ["similar to AA sequence:UniProtKB:%s" % k for k in phmmer_results[f.attributes['Parent'][0]]]
+            else:
+                f.attributes['product'] = ['hypothetical protein']
+            if f.attributes['Parent'][0] in hmmscan_results:
+                if 'inference' not in f.attributes:
+                    f.attributes['inference'] = ["protein motif:PFAM:%s" % k for k in hmmscan_results[f.attributes['Parent'][0]]]
+                else:
+                    f.attributes['inference'] = f.attributes['inference'] + ["protein motif:PFAM:%s" % k for k in hmmscan_results[f.attributes['Parent'][0]]]
+        yield(f)
+
+
+def featuredb2gff3_file(featuredb, out):
+    with open(out, 'w') as fout:
+        for gene in featuredb.features_of_type('gene', order_by=('seqid', 'start')):
+            fout.write('%s\n' % str(gene))
+            for mRNA in featuredb.children(gene, featuretype='mRNA', order_by='start'):
+                fout.write('%s\n' % str(mRNA))
+                for gchild in ['exon', 'CDS']:
+                    for f in featuredb.children(mRNA, featuretype=gchild, order_by='start'):
+                        fout.write('%s\n' % str(f))
+
+
+def run_command(cmd):
+    subprocess.run(cmd, shell=False)
+
+
+def main():
+    """
+    Parse command line options
+    """
+    example_text = '''examples:
+        # just attach functional information to an input faa file from UniProt and Pfam databases
+        func-annot -p input.faa
+
+        # change the e-value cutoff to 1e-5
+        func-annot -p input.faa --evalue 1e-5
+        # by default, best hits with e-values >1e-2 (and <=1e-1 by default, if not changed) are reported as follows:
+        # >seqid1 Q2NW63: hypothetical protein [RNA-binding protein Hfq] (0.028) ;; PF15476.9: Histone deacetylase complex subunit SAP25 [marginal domain hit] (0.0099)
+
+        # optionally add functional information to a gff3 from which the input sequences were derived
+        # the resulting output gff3 will be stripped of non-essential property fields to attach information from the UniProt and Pfam databases
+        # hits with e-values >=1e-2 are ignored
+        func-annot -p input.faa --gff3 input.gff3
+    '''
+    parser = argparse.ArgumentParser(
+        description="Runs phmmer with UniProt DB and hmmscan with Pfam against a protein sequence multifasta, and creates a new multifasta with functional information in the headers. Optionally add this functional information to a gff3.",
+        epilog=example_text,
+        #formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    requiredNamed = parser.add_argument_group('required arguments')
+    requiredNamed.add_argument('--proteins', '-p', type=str,
+        help="Amino acid sequences in fasta format.", required=True)
+    parser.add_argument(
+        '--uniprot', help="UniProt-SwissProt database, formatted according to db-fetch.py (default db: /share/unsupported/databases/uniprot_sprot/uniprot_sprot.faa",
+        default='/share/unsupported/databases/uniprot_sprot/uniprot_sprot.faa',
+        required=False,
+        metavar='uniprot_sprot.faa')
+    parser.add_argument(
+        '--pfam', help="Pfam HMM database (default db: /share/unsupported/databases/Pfam/35.0/Pfam-A.hmm)",
+        default='/share/unsupported/databases/Pfam/35.0/Pfam-A.hmm',
+        required=False,
+        metavar='Pfam-A.hmm')
+    parser.add_argument(
+        '--gff3', help="Optionally, annotate the bare GFF3 file (that corresponds to the input protein sequences) with which add functional information to (default: none)",
+        required=False,
+        metavar='gene_models.gff3')
+    parser.add_argument(
+        '--numcpu', '-n', default=multiprocessing.cpu_count(),
+        required=False,
+        help="number of CPUs to use, default is MAX", metavar='N')
+    parser.add_argument(
+        '--evalue', '-e', default="1e-1",
+        required=False,
+        help="E-value cutoff to use in phmmer and hmmscan searches. If the default is used, then hits with e-values between 1e-1 and 1e-3 are reported as marginal", metavar='Me-N')
+    parser.add_argument('--version', action='version', version='%(prog)s 1.0.0')
+    opts = parser.parse_args()
+
+    """
+    Run the pipeline using the command line options
+    """
+    seqs = opts.proteins
+
+    commands = [
+        ['nice', '-19', 'hmmscan', '--cpu', str(opts.numcpu), '-E', opts.evalue,
+            '-o', 'hmmscan.out', '--noali', '--notextw', '--acc', opts.pfam, seqs],
+        ['nice', '-19', 'phmmer', '--cpu', str(opts.numcpu), '-E', opts.evalue,
+            '-o', 'phmmer.out', '--noali', '--notextw', '--acc', seqs, opts.uniprot]
+    ]
+
+    # run both phmmer and hmmscan concurrently
+    pool = Pool()
+    try:
+        pool.map(run_command, commands)
+    except:
+        print("couldn't successfully run hmmscan and phmmer")
+
+    # parse the hmmscan results and build a dict on ID containing hits
+    hmmscan_out = "hmmscan.out"
+    hmmscan_res = dict()
+    try:
+        for q in SearchIO.parse(hmmscan_out, "hmmer3-text"):
+            index = 0
+            for t in q:
+                for hsp in t:
+                    if index == 0:
+                        if hsp.query_id in hmmscan_res:
+                            hmmscan_res[hsp.query_id].update([(hsp.hit_id, {"description": hsp.hit_description, "evalue": t.evalue})])
+                        else:
+                            hmmscan_res[hsp.query_id] = dict()
+                            hmmscan_res[hsp.query_id].update([(hsp.hit_id, {"description": hsp.hit_description, "evalue": t.evalue})])
+                        hsp_keep_range = hsp.query_range
+                    else:
+                        if hsp_keep_range[1] < hsp.query_range[0] and hsp.domain_index == 1:
+                            if hsp.query_id in hmmscan_res:
+                                hmmscan_res[hsp.query_id].update([(hsp.hit_id, {"description": hsp.hit_description, "evalue": t.evalue})])
+                            else:
+                                hmmscan_res[hsp.query_id] = dict()
+                                hmmscan_res[hsp.query_id].update([(hsp.hit_id, {"description": hsp.hit_description, "evalue": t.evalue})])
+                            hsp_keep_range = hsp.query_range
+                    index += 1
+    except:
+        print("Something went wrong with hmmscan, could not open and parse output file")
+
+    # parse the phmmer results and build a dict on ID containing hits
+    phmmer_out = "phmmer.out"
+    phmmer_res = dict()
+    try:
+        for q in SearchIO.parse(phmmer_out, "hmmer3-text"):
+            index = 0
+            for t in q:
+                for hsp in t:
+                    if index == 0:
+                        phmmer_res[hsp.query_id] = {hsp.hit_id: {"description": hsp.hit_description, "evalue": t.evalue}}
+                    else:
+                        break
+                    index += 1
+    except:
+        print("Something went wrong with phmmer, could not open and parse output file")
+
+    # add parsed phmmer+hmmscan results to fasta file for internal use
+    #phmmer_res_inhouse[hsp.query_id] = "%s: %s (%s) " % (hsp.hit_id, hsp.hit_description, t.evalue)
+    recs = SeqIO.to_dict(SeqIO.parse(seqs, "fasta"))
+    phmmer_reformatted = phmmer_res
+    hmmscan_reformatted = hmmscan_res
+    for k, v in phmmer_reformatted.items():
+        for inner_k in v:
+            if v[inner_k]['evalue'] >= 1e-3:
+                v[inner_k]['description'] = 'hypothetical protein [%s]' % (v[inner_k]['description'])
+    for k, v in hmmscan_reformatted.items():
+        for inner_k in v:
+            if v[inner_k]['evalue'] >= 1e-3:
+                v[inner_k]['description'] = '%s [marginal domain hit]' % (v[inner_k]['description'])
+    phmmer_reformatted = {k: " ;; ".join(f"{inner_k}: {inner_v['description']} ({inner_v['evalue']})" for inner_k, inner_v in v.items()) for k, v in phmmer_reformatted.items()}
+    hmmscan_reformatted = {k: " ;; ".join(f"{inner_k}: {inner_v['description']} ({inner_v['evalue']})" for inner_k, inner_v in v.items()) for k, v in hmmscan_reformatted.items()}
+    for key in recs:
+        if key in phmmer_reformatted and key in hmmscan_reformatted:
+            recs[key].description = "%s ;; length=%s ;; %s" % (phmmer_reformatted[key], len(recs[key].seq), hmmscan_reformatted[key])
+        elif key in phmmer_res:
+            recs[key].description = "%s ;; length=%s" % (phmmer_reformatted[key], len(recs[key].seq))
+        elif key in hmmscan_res:
+            recs[key].description = "hypothetical protein ;; length=%s ;; %s" % (len(recs[key].seq), hmmscan_reformatted[key])
+        else:
+            recs[key].description = 'hypothetical protein ;; length=%s' % len(recs[key].seq)
+
+    output_fn = seqs.split('.')
+    output_fn[-1] = "mod.%s" %output_fn[-1]
+    with open('.'.join(output_fn), "w") as output_handle:
+        for rec in recs:
+            SeqIO.write(recs[rec], output_handle, "fasta")
+
+    # if the gff3 option was activated
+    if opts.gff3:
+        in_gff3_fn = opts.gff3
+        hmmscan_filt = {
+            key1: {
+                key2: value2 for key2, value2 in value1.items() if value2['evalue'] <= 1e-2
+            }
+            for key1, value1 in hmmscan_res.items()
+                if any(value2['evalue'] <= 1e-2 for value2 in value1.values())
+            }
+        gff3 = gffutils.create_db(in_gff3_fn, ":memory:", verbose=False)
+        gff3.update(add_func_info(gff3, phmmer_res, hmmscan_filt), merge_strategy='replace')
+        out_gff3_fn = in_gff3_fn.split('.')
+        out_gff3_fn[-1] = "mod.%s" % out_gff3_fn[-1]
+        featuredb2gff3_file(gff3, '.'.join(out_gff3_fn))
+
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('Interrupted')
+        try:
+            sys.exit(0)
+        except SystemExit:
+            os._exit(0)

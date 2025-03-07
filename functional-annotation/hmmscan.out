@@ -1,0 +1,46 @@
+# hmmscan :: search sequence(s) against a profile database
+# HMMER 3.4 (Aug 2023); http://hmmer.org/
+# Copyright (C) 2023 Howard Hughes Medical Institute.
+# Freely distributed under the BSD open source license.
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# query sequence file:             test.faa
+# target HMM database:             /share/unsupported/databases/Pfam/35.0/Pfam-A.hmm
+# output directed to file:         hmmscan.out
+# prefer accessions over names:    yes
+# show alignments in output:       no
+# max ASCII text line length:      unlimited
+# profile reporting threshold:     E-value <= 0.1
+# multithread parallelization:     40 workers
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Query:       mRNA2929  [L=494]
+Scores for complete sequence (score includes all domains):
+   --- full sequence ---   --- best 1 domain ---    -#dom-
+    E-value  score  bias    E-value  score  bias    exp  N  Model      Description
+    ------- ------ -----    ------- ------ -----   ---- --  --------   -----------
+   5.4e-122  407.4  14.9   5.4e-122  407.4  14.9    1.8  2  PF01566.21  Natural resistance-associated macrophage protein
+
+
+Domain annotation for each model:
+>> PF01566.21  Natural resistance-associated macrophage protein
+   #    score  bias  c-Evalue  i-Evalue hmmfrom  hmm to    alifrom  ali to    envfrom  env to     acc
+ ---   ------ ----- --------- --------- ------- -------    ------- -------    ------- -------    ----
+   1 !  407.4  14.9  2.7e-126  5.4e-122       2     358 ..      55     410 ..      54     411 .. 0.97
+   2 ?   -0.3   1.1     0.023   4.6e+02      59     105 ..     418     465 ..     409     479 .. 0.60
+
+
+
+Internal pipeline statistics summary:
+-------------------------------------
+Query sequence(s):                         1  (494 residues searched)
+Target model(s):                       19632  (3329936 nodes)
+Passed MSV filter:                       802  (0.0408517); expected 392.6 (0.02)
+Passed bias filter:                      373  (0.0189996); expected 392.6 (0.02)
+Passed Vit filter:                        21  (0.00106968); expected 19.6 (0.001)
+Passed Fwd filter:                         2  (0.000101874); expected 0.2 (1e-05)
+Initial search space (Z):              19632  [actual number of targets]
+Domain search space  (domZ):               1  [number of targets reported over threshold]
+# CPU time: 0.54u 0.23s 00:00:00.77 Elapsed: 00:00:03.55
+# Mc/sec: 463.32
+//
+[ok]

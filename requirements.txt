@@ -1,0 +1,4 @@
+gffutils==0.10.1
+pybedtools==0.8.0
+biopython==1.6.2
+pandas==1.0.4

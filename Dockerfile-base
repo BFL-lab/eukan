@@ -1,0 +1,252 @@
+# adapated parts from https://github.com/chrishah/maker-docker and https://github.com/Gaius-Augustus/Augustus/blob/master/Dockerfile
+
+FROM ubuntu:18.04 AS base
+
+# install required packages
+RUN apt-get --fix-missing update
+RUN DEBIAN_FRONTEND="noninteractive" apt-get -y install tzdata
+RUN apt-get install -y sudo build-essential wget autoconf unzip language-pack-en git default-jre \
+	libgsl-dev libboost-all-dev libsuitesparse-dev liblpsolve55-dev \
+	libsqlite3-dev libmysql++-dev \
+	libboost-iostreams-dev zlib1g-dev \
+	libbamtools-dev bamtools bc \
+	libbz2-dev liblzma-dev \
+	libncurses5-dev apt-utils \
+	libssl-dev libcurl3-dev \
+	python3-biopython \
+	sqlite libdbd-sqlite3 libdbi-perl libgd-perl \
+	python-numpy python3-numpy \
+	cmake perl bioperl python3 python3-pip \
+	exonerate ncbi-blast+ \
+	ncbi-blast+-legacy cdbfasta \
+	python-biopython python-pip python-gtk2 liblbfgs-dev libgsl-dev \
+	python3-pandas python-pandas parallel \
+	libopenmpi-dev openmpi-bin openmpi-common \
+	&& ln -s /usr/lib/x86_64-linux-gnu/libgsl.so /usr/lib/x86_64-linux-gnu/libgsl.so.0
+
+ARG USER_ID
+ARG GROUP_ID
+
+RUN addgroup --gid $GROUP_ID user
+RUN adduser --disabled-password --gecos '' --uid $USER_ID --gid $GROUP_ID user
+
+WORKDIR /opt
+
+# build htslib
+RUN wget https://github.com/samtools/htslib/releases/download/1.11/htslib-1.11.tar.bz2 && tar jxvf htslib-1.11.tar.bz2 -C /opt/ && mv /opt/htslib-1.11 /opt/htslib
+WORKDIR "/opt/htslib"
+RUN autoheader && autoconf && ./configure && make -j$(lscpu | awk '$1=="CPU(s):"{print $2/2}') && make install
+# build bcftools
+RUN wget https://github.com/samtools/bcftools/releases/download/1.11/bcftools-1.11.tar.bz2 && tar jxvf bcftools-1.11.tar.bz2 -C /opt/ && mv /opt/bcftools-1.11 /opt/bcftools
+WORKDIR "/opt/bcftools"
+RUN autoheader && autoconf && ./configure && make -j$(lscpu | awk '$1=="CPU(s):"{print $2/2}') && make install
+# build samtools
+RUN wget https://github.com/samtools/samtools/releases/download/1.11/samtools-1.11.tar.bz2 && tar jxvf samtools-1.11.tar.bz2 -C /opt/ && mv /opt/samtools-1.11 /opt/samtools
+WORKDIR "/opt/samtools"
+RUN autoheader && autoconf -Wno-syntax && ./configure && make -j$(lscpu | awk '$1=="CPU(s):"{print $2/2}') && make install
+ENV TOOLDIR="/opt"
+
+# build augustus
+WORKDIR "/opt"
+RUN git clone https://github.com/Gaius-Augustus/Augustus
+RUN cd Augustus && git checkout 0e2e3114b0cade36e9b68398f1cdcb6bf5bdabe1 && sed -i '/TOOLDIR=/ s/\$(HOME)/opt/' /opt/Augustus/auxprogs/bam2wig/Makefile
+COPY eukka.MPEW.RM.cfg /opt/Augustus/config/extrinsic/
+WORKDIR "/opt/Augustus/"
+RUN make -j$(lscpu | awk '$1=="CPU(s):"{print $2/2}') && make install
+ENV PATH="/opt/Augustus/bin:${PATH}"
+ENV PATH="/opt/Augustus/scripts:${PATH}"
+ENV AUGUSTUS_CONFIG_PATH /opt/Augustus/config
+
+# build snap
+WORKDIR "/opt"
+RUN git clone https://github.com/KorfLab/SNAP
+WORKDIR "/opt/SNAP"
+RUN make -j$(lscpu | awk '$1=="CPU(s):"{print $2/2}')
+ENV PATH="/opt/SNAP:${PATH}"
+ENV ZOE="/opt/SNAP/Zoe"
+
+#install perl modules
+RUN cpan YAML && \
+		cpan FindBin && \
+		cpan MCE::Mutex && \
+		cpan threads && \
+		cpan Widget::formater && \
+		cpan Thread::Queue && \
+		cpan File::HomeDir && \
+		cpan Math::Utils && \
+		cpan Data::Dumper && \
+        cpan Hash::Merge && \
+		cpan ISHIGAKI/DBD-SQLite-1.64.tar.gz && \
+		cpan forks && \
+		cpan forks::shared && \
+		cpan File::Which && \
+		cpan Perl::Unsafe::Signals && \
+		cpan Bit::Vector && \
+		cpan Inline::C && \
+		cpan IO::All && \
+		cpan IO::Prompt && \
+		cpan Text::Soundex && \
+        cpan Logger::Simple && \
+        cpan Parallel::ForkManager
+
+# build codingquarry
+RUN wget https://master.dl.sourceforge.net/project/codingquarry/CodingQuarry_v2.0.tar.gz && tar zxvf CodingQuarry_v2.0.tar.gz -C /opt/
+WORKDIR "/opt/CodingQuarry_v2.0"
+RUN make -j$(lscpu | awk '$1=="CPU(s):"{print $2/2}')
+ENV PATH="/opt/CodingQuarry_v2.0:${PATH}"
+ENV QUARRY_PATH="/opt/CodingQuarry_v2.0/QuarryFiles"
+
+# add blast executables to location expected by repeatmodeler
+RUN for f in $(find /usr/bin/ -name '*blast*'); do ln -s $f /usr/local/bin/; done
+RUN mkdir /opt/trf && cd /opt/trf
+RUN wget https://github.com/Benson-Genomics-Lab/TRF/releases/download/v4.09.1/trf409.linux64 && mv trf*.linux64 trf && chmod +x trf
+ENV PATH="/opt/trf:${PATH}"
+
+# install repeatscout
+# install nseg (for repeatscout)
+WORKDIR "/opt"
+RUN mkdir nseg && cd nseg && wget ftp://ftp.ncbi.nih.gov/pub/seg/nseg/* && make
+ENV PATH="/opt/nseg:${PATH}"
+# now install repeatscout
+RUN wget http://bix.ucsd.edu/repeatscout/RepeatScout-1.0.5.tar.gz && tar -xvf RepeatScout-1.0.5.tar.gz -C /opt
+WORKDIR "/opt/RepeatScout-1"
+RUN make
+ENV PATH="/opt/RepeatScout-1:${PATH}"
+
+# Install RMBlast (Repeatmasker expects makeblastdb and blastx in the same location as rmblastn)
+RUN wget ftp://ftp.ncbi.nlm.nih.gov/blast/executables/rmblast/2.2.28/ncbi-rmblastn-2.2.28-x64-linux.tar.gz && tar -xzvf ncbi-rmblastn-2.2.28-x64-linux.tar.gz -C /opt
+ENV PATH="/opt/ncbi-rmblastn-2.2.28/bin:${PATH}"
+    
+# Install RepeatMasker
+RUN wget http://www.repeatmasker.org/RepeatMasker-open-4-0-7.tar.gz && tar -xzvf RepeatMasker-open-4-0-7.tar.gz -C /opt
+RUN perl -0p -e 's/\/usr\/local\/hmmer/\/usr\/bin/g;' \
+	-e 's/\/usr\/local\/rmblast/\/opt\/rmblastn\/bin/g;' \
+    -e 's/DEFAULT_SEARCH_ENGINE = "crossmatch"/DEFAULT_SEARCH_ENGINE = "ncbi"/g;' \
+    -e 's/TRF_PRGM = ""/TRF_PRGM = "\/opt\/trf"/g;' /opt/RepeatMasker/RepeatMaskerConfig.tmpl > /opt/RepeatMasker/RepeatMaskerConfig.pm
+
+ENV PATH="/opt/RepeatMasker:${PATH}"
+
+# Fix RepeatMasker's hard-coded shebang lines to look for env perl
+WORKDIR "/opt/RepeatMasker"
+RUN perl -i -0pe 's/^#\!.*perl.*/#\!\/usr\/bin\/env perl/g' \
+	RepeatMasker \
+    DateRepeats \
+    ProcessRepeats \
+    RepeatProteinMask \
+    DupMasker \
+    util/queryRepeatDatabase.pl \
+    util/queryTaxonomyDatabase.pl \
+    util/rmOutToGFF3.pl \
+    util/rmToUCSCTables.pl
+
+#./rebuild contains code for rebuilding the Repbase Master library that I have extracted from the main RepeatMasker script, normally this is done when running RepeatMasker
+#for the first time, but MAKER complains, so I build it first
+#ADD to_include/rebuild /opt/RepeatMasker-open-4-0-7
+#RUN chmod a+x /opt/RepeatMasker-open-4-0-7/rebuild
+
+RUN python3 -m pip install gffutils==0.10.1 pybedtools==0.8.0 pandas==1.0.4
+
+
+# install genemark
+COPY gmes_linux_64.tar.gz /opt
+COPY gm_key_64.gz /opt
+RUN tar zxvf /opt/gmes_linux_64.tar.gz -C /opt
+RUN gunzip /opt/gm_key_64.gz -c > /home/user/.gm_key
+ENV PATH="/opt/gmes_linux_64:${PATH}"
+
+# install diamond
+RUN wget https://github.com/bbuchfink/diamond/releases/download/v2.0.4/diamond-linux64.tar.gz && tar zvxf diamond-linux64.tar.gz -C /usr/local/bin
+
+# install hmmer
+RUN wget http://eddylab.org/software/hmmer/hmmer-3.3.1.tar.gz && tar zxvf hmmer-3.3.1.tar.gz -C /opt
+WORKDIR "/opt/hmmer-3.3.1"
+RUN ./configure && make -j$(lscpu | awk '$1=="CPU(s):"{print $2/2}') && make install
+
+# trinity (installed before gmap given conflict in except.h)
+RUN wget https://github.com/trinityrnaseq/trinityrnaseq/releases/download/v2.11.0/trinityrnaseq-v2.11.0.FULL.tar.gz && tar zxvf trinityrnaseq-v2.11.0.FULL.tar.gz -C /opt
+WORKDIR "/opt/trinityrnaseq-v2.11.0"
+RUN make -j$(lscpu | awk '$1=="CPU(s):"{print $2/2}')
+RUN make plugins
+ENV TRINITY_HOME="/opt/trinityrnaseq-v2.11.0"
+ENV PATH="/opt/trinityrnaseq-v2.11.0:${PATH}"
+
+# install blat for pasa
+RUN wget http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/blat/blat -O /usr/local/bin/blat && chmod +x /usr/local/bin/blat
+# install evidencemodeler
+RUN wget https://github.com/EVidenceModeler/EVidenceModeler/archive/v1.1.1.tar.gz && tar zxvf v1.1.1.tar.gz -C /opt
+ENV PERL5LIB="/opt/EVidenceModeler-1.1.1/PerlLib:${PERL5LIB}"
+ENV PATH="/opt/EVidenceModeler-1.1.1/EvmUtils:${PATH}"
+ENV PATH="/opt/EVidenceModeler-1.1.1/EvmUtils/misc:${PATH}"
+ENV EVM_HOME="/opt/EVidenceModeler-1.1.1"
+
+# jellyfish
+RUN wget https://github.com/gmarcais/Jellyfish/releases/download/v2.3.0/jellyfish-2.3.0.tar.gz && tar zxvf jellyfish-2.3.0.tar.gz -C /opt
+WORKDIR "/opt/jellyfish-2.3.0/"
+RUN ./configure && make && make install
+
+# install gsnap/gmap for pasa
+RUN wget http://research-pub.gene.com/gmap/src/gmap-gsnap-2017-11-15.tar.gz && tar xzvf gmap-gsnap-2017-11-15.tar.gz -C /opt
+WORKDIR "/opt/gmap-2017-11-15"
+RUN ./configure && make -j$(lscpu | awk '$1=="CPU(s):"{print $2/2}') && make install
+# install fasta3 for pasa
+RUN wget https://github.com/wrpearson/fasta36/releases/download/fasta-v36.3.8g/fasta-36.3.8g-linux64.tar.gz && tar zxvf fasta-36.3.8g-linux64.tar.gz -C /opt
+WORKDIR "/opt/fasta-36.3.8g/src"
+RUN make -f ../make/Makefile.linux_sse2 all && cp ../bin/fasta36 ../bin/fasta
+ENV PATH="/opt/fasta-36.3.8g/bin:${PATH}"
+
+# pasapipeline v2.4.1
+RUN wget https://github.com/PASApipeline/PASApipeline/releases/download/pasa-v2.4.1/PASApipeline.v2.4.1.FULL.tar.gz && tar zxvf PASApipeline.v2.4.1.FULL.tar.gz -C /opt
+WORKDIR "/opt/PASApipeline.v2.4.1/"
+RUN make -j$(lscpu | awk '$1=="CPU(s):"{print $2/2}')
+ENV PASAHOME /opt/PASApipeline.v2.4.1
+ENV PATH="/opt/PASApipeline.v2.4.1:${PATH}"
+ENV PATH="/opt/PASApipeline.v2.4.1/bin:${PATH}"
+ENV PATH="/opt/PASApipeline.v2.4.1/misc_utilities:${PATH}"
+ENV PATH="/opt/PASApipeline.v2.4.1/scripts:${PATH}"
+COPY annotCompare.config /opt/PASApipeline.v2.4.1/
+COPY alignAssembly.config /opt/PASApipeline.v2.4.1/
+
+# STAR
+RUN wget https://github.com/alexdobin/STAR/archive/2.7.6a.tar.gz && tar zxvf 2.7.6a.tar.gz -C /opt
+ENV PATH="/opt/STAR-2.7.6a/bin/Linux_x86_64_static:${PATH}"
+
+# bowtie
+RUN wget https://sourceforge.net/projects/bowtie-bio/files/bowtie2/2.4.2/bowtie2-2.4.2-linux-x86_64.zip && unzip -d /opt bowtie2-2.4.2-linux-x86_64.zip
+ENV PATH="/opt/bowtie2-2.4.2-linux-x86_64:${PATH}"
+
+# salmon
+RUN wget https://github.com/COMBINE-lab/salmon/releases/download/v1.3.0/salmon-1.3.0_linux_x86_64.tar.gz && tar zxvf salmon-1.3.0_linux_x86_64.tar.gz -C /opt
+ENV PATH="/opt/salmon-latest_linux_x86_64/bin:${PATH}"
+
+# copy over transcriptome assembly script
+COPY transcriptome_assembly.sh /usr/bin/
+
+# spaln
+RUN wget https://github.com/ogotoh/spaln/archive/Ver.2.4.2.tar.gz && tar zxvf Ver.2.4.2.tar.gz -C /opt && cd /opt/spaln-Ver.2.4.2/src && ./configure && make && make install
+ENV PATH="/opt/spaln-Ver.2.4.2/bin:${PATH}"
+ENV PATH="/opt/spaln-Ver.2.4.2/seqdb:${PATH}"
+ENV ALN_TAB="/opt/spaln-Ver.2.4.2/table"
+ENV ALN_DBS="/opt/spaln-Ver.2.4.2/seqdb"
+
+# genomethreader
+RUN wget https://genomethreader.org/distributions/gth-1.7.1-Linux_x86_64-64bit.tar.gz && tar zxvf gth-1.7.1-Linux_x86_64-64bit.tar.gz -C /opt
+ENV PATH="/opt/gth-1.7.1-Linux_x86_64-64bit/bin:${PATH}"
+
+# install transdecoder
+RUN wget https://github.com/TransDecoder/TransDecoder/archive/TransDecoder-v5.5.0.tar.gz && tar zxvf TransDecoder-v5.5.0.tar.gz -C /opt
+ENV PATH="/opt/TransDecoder-TransDecoder-v5.5.0:${PATH}"
+ENV PATH="/opt/TransDecoder-TransDecoder-v5.5.0/util:${PATH}"
+
+RUN sed -i '38 i\    \$_ =~ s\/ evidence\(\.\*\)\$\/\/\;' $(which filterGenesIn_mRNAname.pl)
+RUN sed -i '736s/)/, encoding="utf-8")/' /opt/Augustus/scripts/fix_in_frame_stop_codon_genes.py
+RUN chmod +x /opt/PASApipeline.v2.4.1/bin/*
+
+# install mmseqs2
+RUN wget https://github.com/soedinglab/MMseqs2/releases/download/12-113e3/MMseqs2-Linux-SSE2.tar.gz && tar zxvf MMseqs2-Linux-SSE2.tar.gz -C /opt
+ENV PATH="/opt/mmseqs/bin:${PATH}"
+
+COPY zff2augustus_gbk.pl /usr/local/bin/
+
+RUN chown -R $USER_ID:$GROUP_ID /opt
+
+SHELL ["/bin/bash", "-c"]

@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+
+import argparse
+import gffutils
+from Bio import SeqIO
+from Bio.Data import CodonTable
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
+
+
+def gff3_to_fasta(gff3, genome, extract_to = 'protein', ncbi_gen_code = 1):
+    """
+    Fetch CDS coordinates from mRNA features and then extract the corresponding
+    sequence from the assembly
+
+    extract_to is either protein or transcript
+    ncbi_gen_code is integer for genetic code table
+    """
+    gff3db = gffutils.create_db(gff3, ':memory:')
+    contigs = SeqIO.to_dict(SeqIO.parse(genome, 'fasta'))
+    for f in gff3db.features_of_type('mRNA'):
+        seq = []
+        children = gff3db.children(f, featuretype = 'CDS', order_by='start')
+        for child in children:
+            seq.append(contigs[child.chrom][child.start-1:child.end].seq)
+        if seq:
+            seq_concat = Seq("".join([str(cds) for cds in seq]))
+            if f.strand == "-":
+                seq_concat = seq_concat.reverse_complement()
+            seq_to_print = SeqRecord(seq_concat, description = "", id = f.id)
+            if extract_to == 'protein':
+                trans = seq_to_print.translate(table = CodonTable.unambiguous_dna_by_id[ncbi_gen_code])
+                trans.id = f.id
+                trans.description = ""
+                print(trans.format('fasta'))
+            else:
+                print(seq_to_print.format('fasta'))
+
+
+def main():
+    """
+    Parse command line options
+    """
+    example_text = '''examples:
+        gff3toseq -g genome.fna -i genes.gff3 -o protein -c 1
+    '''
+    parser = argparse.ArgumentParser(
+        description="Extracts either cDNA or amino acid sequences from a gff3 file.",
+        epilog=example_text,
+        #formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    requiredNamed = parser.add_argument_group('required arguments')
+    requiredNamed.add_argument('--genome', '-g', type=str,
+        help="Genome assembly in fasta format.", required=True)
+    requiredNamed.add_argument('--gff3', '-i', type=str,
+        help="GFF3 file whose seqids correspond with those in the assembly.", required=True)
+    parser.add_argument(
+        '--output', '-o', help="Output format, either protein or cDNA",
+        default='protein',
+        required=False,
+        metavar='protein')
+    parser.add_argument(
+        '--code', '-c', help="Genetic code translation table",
+        default=1,
+        required=False,
+        metavar='code')
+    parser.add_argument('--version', action='version', version='%(prog)s 1.0.0')
+    opts = parser.parse_args()
+
+    """
+    Run the pipeline using the command line options
+    """
+
+    gff3_to_fasta(opts.gff3, opts.genome, opts.output, opts.code)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('Interrupted')
+        try:
+            sys.exit(0)
+        except SystemExit:
+            os._exit(0)
