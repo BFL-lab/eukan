@@ -1,6 +1,7 @@
 .ipython
 gm_key_64.gz
 gmes_linux_64.tar.gz
+*.swp
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

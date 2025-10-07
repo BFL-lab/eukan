@@ -1,61 +1,95 @@
-# eukan
+# eukan: Eukaryotic Genome Annotation Pipeline
 
-A eukaryotic genome annotation pipeline for less well-studied organisms
+A comprehensive annotation pipeline tailored for eukaryotic genomes, particularly those from less well-studied organisms. The pipeline integrates evidence-based gene prediction, homology mapping, and functional annotation to produce genome annotations that can be easily passed to downstream submission tools.
+
+## Features
+
+- **Genome Annotation**: Combines ab initio gene prediction with homology-based evidence to annotate protein-coding genes in eukaryotic genomes.
+- **Evidence Integration**: Incorporates protein alignments, transcript assemblies, and RNA-seq hints for accurate gene models.
+- **Transcript Assembly**: Preprocesses RNA-seq data into transcript assemblies for improved annotation accuracy.
+- **Functional Annotation**: Annotates predicted proteins with functional information from UniProt-SwissProt and Pfam databases.
+- **Flexible Configuration**: Supports various kingdoms (fungus, protist, animal, plant) and custom genetic codes.
+- **Docker Deployment**: Simplifies installation and usage through containerization.
 
 ## Installation
 
-Installation is best handled in docker.
+The pipeline requires Docker for isolated and reproducible execution. Before building the image, obtain a license for GeneMark-ES/ET/EP+ from [topaz.gatech.edu/GeneMark/license_download.cgi](topaz.gatech.edu/GeneMark/license_download.cgi).
 
-First requires a license to run GeneMark-ES/ET/EP+ from topaz.gatech.edu/GeneMark/license_download.cgi
+### Building the Docker Image
 
-```
+```bash
+git clone https://github.com/BFL-lab/eukan.git
+cd eukan
 docker build -t eukan -f Dockerfile .
 ```
 
-## Running
+### Dependencies
 
-Use the helper shell script to run the container.
+- Docker
+- GeneMark-ES/ET/EP+ license
+- For functional annotation: HMMER suite, Python 3 with biopython and other dependencies
+
+## Usage
+
+### Genome Annotation
+
+Use the provided `annot-docker` script as a wrapper to run the pipeline inside the Docker container.
+
+```bash
+# Display help
+./annot-docker eukan -h
+```
+
+#### Basic Command
+
+```bash
+./annot-docker eukan --genome genome.fasta --proteins protein1.faa protein2.faa
+```
+
+#### Full Usage
 
 ```
-bash annot-docker eukan -h
-
 usage: eukan [-h] --genome genome.fasta --proteins PROTEINS [PROTEINS ...] [--transcriptsFasta transcriptassembly.fasta] [--transcriptsGFF transcriptassembly.gff3] [--rnaseq_hints hints.gff] [--existing_augustus species]
                     [--strand_specific_transcripts] [--numcpu N] [--weights x y [z] [x y [z] ...]] [--code CODE] [--utrs UTRS] [--fungus] [--protist] [--animal] [--plant]
 
-Annotates a genome.
+Annotates a eukaryotic genome.
+
+required arguments:
+  --genome genome.fasta       REQUIRED. Genome sequence in Fasta format. Ensure no lower-case nucleotides; the pipeline soft-masks repeats by converting to lower-case.
+  --proteins PROTEINS [PROTEINS ...]
+                               REQUIRED. One or more protein sequence Fasta files, separated by spaces.
 
 optional arguments:
-  -h, --help            show this help message and exit
-  --genome genome.fasta, -g genome.fasta
-                        REQUIRED. Make sure there are no lower-case letters in the sequences since the pipeline soft-masks the genome by converting upper-case nucleotides in repetitive regions to lower-case
-  --proteins PROTEINS [PROTEINS ...], -p PROTEINS [PROTEINS ...]
-                        REQUIRED. >=1 protein fasta files, separated by spaces
-  --transcriptsFasta transcriptassembly.fasta, -tf transcriptassembly.fasta
-                        assembled transcripts fasta
-  --transcriptsGFF transcriptassembly.gff3, -tg transcriptassembly.gff3
-                        assembled transcripts gff file
-  --rnaseq_hints hints.gff, -r hints.gff
-                        gff hints generated from RNA-Seq
-  --existing_augustus species
-                        use existing augustus species parameters
+  --transcriptsFasta transcriptassembly.fasta
+                               Assembled transcripts in Fasta format.
+  --transcriptsGFF transcriptassembly.gff3
+                               Assembled transcripts in GFF3 format.
+  --rnaseq_hints hints.gff      GFF hints file generated from RNA-seq alignment.
+  --existing_augustus species   Use pre-trained AUGUSTUS species parameters.
   --strand_specific_transcripts
-                        specify that transcripts are alignment oriented
-  --numcpu N, -n N      number of CPUs to use, default is MAX
+                               Specify that assembled transcripts are strand-oriented.
+  --numcpu N                    Number of CPU threads to use (default: all available).
   --weights x y [z] [x y [z] ...]
-                        define weights for each evidence source in the following order: protein alignments, gene predictions, transcript assembly (if present), e.g. --weights 2 1 5, or --weights 2 1. Default is 1 2, and 10 if transcript
-                        assembly is available
-  --code CODE, -C CODE  genetic code to use, as defined at https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi#SG27
-  --utrs UTRS           path to PASA sqlite DB to add UTRs
-  --fungus              target genome is of a fungus
-  --protist             target genome is of a protist
-  --animal              target genome is of an animal
-  --plant               target genome is of a plant
-
+                               Weights for scoring evidence sources: protein alignments, gene predictors, transcript assembly (if provided).
+                               Default: 1 2, plus 10 if transcript assembly is included.
+  --code CODE                  Genetic code (see NCBI taxonomy utils).
+  --utrs UTRS                  PASA SQLite database path for adding UTRs.
+  --fungus                     Tune parameters for fungal genomes.
+  --protist                    Tune parameters for protist genomes.
+  --animal                     Tune parameters for animal genomes.
+  --plant                      Tune parameters for plant genomes.
 ```
 
-### Data prep
+### Transcriptome Assembly
 
-Data needs to be prepared prior to running Eukan. Use the `transcriptome_assembly.sh` script to prepare RNA-Seq read libraries:
+Prepare RNA-seq data for input using the `transcriptome_assembly.sh` script. This handles read mapping, assembly, and alignment to produce input files for the main pipeline.
+
+```bash
+# Display help
+transcriptome_assembly.sh -h
+```
+
+#### Usage
 
 ```
 Usage: transcriptome_assembly.sh [OPTIONS] <ARGS>
@@ -71,8 +105,8 @@ Usage: transcriptome_assembly.sh [OPTIONS] <ARGS>
         [-M] <max intron length> # default 5000
         [-g] <genome fasta>
         [-p] <phred quality score (33 for MISEQ, 64 for HISEQ)> # default 33
-        [-n] <number of CPUs> # default is MAX
-        [-S] <specificy strand-specific assembly, either RF or FR> # default off, i.e. unstranded
+        [-n] <number of CPUs> # default MAX
+        [-S] <specify strand-specific assembly, either RF or FR> # default off
         [-A] <switch on read mapping>
         [-E] <switch to extract reads>
         [-T] <switch on Trinity assembly>
@@ -80,8 +114,74 @@ Usage: transcriptome_assembly.sh [OPTIONS] <ARGS>
         [-P] <switch on PASA alignment>
         [-c] <genetic code according to ncbi table>
         [-h] Display this help message
-        [-j] switch on jaccard clipping (for gene-dense orgnanisms and high coverage data)
+        [-j] switch on jaccard clipping (for gene-dense organisms and high coverage data)
         [-t] <EndToEnd/Local> # default Local
 ```
 
-The pipeline starts by mapping reads to the genome, then runs the transcriptome assembly routine, then creates a non-redundant assembly by aligning the resulting transcripts to the genome.
+#### Example
+
+```bash
+# Assembled paired-end reads with Trinity
+transcriptome_assembly.sh -l left_reads.fastq -r right_reads.fastq -g genome.fasta -M 10000 -S RF -A -T -P
+```
+
+The pipeline integrates genome mapping, de novo assembly (Trinity), followed by PASA alignment for evidence integration.
+
+## Functional Annotation
+
+The `functional-annotation` directory contains scripts to add functional information to predicted proteins using similarity searches against UniProt-SwissProt and Pfam databases.
+
+### Prerequisites
+
+1. **Databases**: Prepare UniProt-SwissProt and Pfam databases (or use defaults if available).
+2. **Dependencies**: Install HMMER, Python 3, and required packages:
+   - Python packages: `biopython`, `requests`, `gffutils` (see `requirements.txt`)
+
+   ```bash
+   cd functional-annotation
+   pip install -r requirements.txt
+   ```
+
+3. **Get Databases**: Use `db-fetch.py` to download and format the latest databases:
+
+   ```bash
+   python db-fetch.py
+   ```
+
+   This will download:
+   - `uniprot_sprot.faa`: UniProt-SwissProt protein sequences
+   - `Pfam-A.hmm`: Pfam HMM profiles (pressed for hmmscan)
+
+### Running Functional Annotation
+
+The `func-annot` script runs `phmmer` against UniProt and `hmmscan` against Pfam to annotate protein sequences. Results are appended to Fasta headers or GFF3 attributes.
+
+#### Usage
+
+```bash
+func-annot --proteins input.faa [--uniprot uniprot_sprot.faa] [--pfam Pfam-A.hmm] [--gff3 input.gff3] [--numcpu N] [--evalue 1e-5]
+```
+
+#### Full Arguments
+
+- `--proteins PROTEINS, -p PROTEINS`: Amino acid sequences in Fasta format (required).
+- `--uniprot uniprot_sprot.faa`: UniProt-SwissProt database (default: `/share/unsupported/databases/uniprot_sprot/uniprot_sprot.faa`).
+- `--pfam Pfam-A.hmm`: Pfam HMM database (default: `/share/unsupported/databases/Pfam/35.0/Pfam-A.hmm`).
+- `--gff3 gene_models.gff3`: Optional GFF3 file to annotate with functional information.
+- `--numcpu N, -n N`: Number of CPUs (default: all).
+- `--evalue Me-N, -e Me-N`: E-value cutoff (default: 1e-1; marginal hits: 1e-3 to 1e-1).
+
+#### Output
+
+- Annotated Fasta: `input.mod.faa` with functional descriptions in headers.
+- Optional: `input.mod.gff3` with added `product` and `inference` attributes.
+
+#### Examples
+
+```bash
+# Run functional annotation pipeline and append information to fasta headers
+func-annot -p input.faa
+
+# Append functional info to Fasta headers from stricter e-values, and update corresponding gff3 feature column with annotations that can be read by table2asn
+func-annot -p input.faa --evalue 1e-5 --gff3 input.gff3
+```
