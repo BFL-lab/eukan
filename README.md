@@ -42,8 +42,13 @@ Use the provided `annot-docker` script as a wrapper to run the pipeline inside t
 
 #### Basic Command
 
+Assuming that a transcriptome assembly (`transcriptome_assembly.sh`, see below)
+using the upstream script was used to reconstruct transcripts from RNA-Seq
+reads, aligned to the genome, along with the hints file the script generates on
+RNA-Seq coverage, transcript alignments and intron coordinates.
+
 ```bash
-./annot-docker eukan --genome genome.fasta --proteins protein1.faa protein2.faa
+./annot-docker eukannotpass -g genome.fasta -p uniprot_sprot.fasta -tf nr_transcripts.fasta -tg nr_transcripts.gff3 -r hints_rnaseq.gff --utrs pasa.sqlite --protist
 ```
 
 #### Full Usage
