@@ -1,192 +1,414 @@
 # eukan: Eukaryotic Genome Annotation Pipeline
 
-A comprehensive annotation pipeline tailored for eukaryotic genomes, particularly those from less well-studied organisms. The pipeline integrates evidence-based gene prediction, homology mapping, and functional annotation to produce genome annotations that can be easily passed to downstream submission tools.
-
-## Features
-
-- **Genome Annotation**: Combines ab initio gene prediction with homology-based evidence to annotate protein-coding genes in eukaryotic genomes.
-- **Evidence Integration**: Incorporates protein alignments, transcript assemblies, and RNA-seq hints for accurate gene models.
-- **Transcript Assembly**: Preprocesses RNA-seq data into transcript assemblies for improved annotation accuracy.
-- **Functional Annotation**: Annotates predicted proteins with functional information from UniProt-SwissProt and Pfam databases.
-- **Flexible Configuration**: Supports various kingdoms (fungus, protist, animal, plant) and custom genetic codes.
-- **Docker Deployment**: Simplifies installation and usage through containerization.
+A comprehensive annotation pipeline tailored for eukaryotic genomes, particularly those from less well-studied organisms.
 
 ## Installation
 
-The pipeline requires Docker for isolated and reproducible execution. Before building the image, obtain a license for GeneMark-ES/ET/EP+ from [topaz.gatech.edu/GeneMark/license_download.cgi](topaz.gatech.edu/GeneMark/license_download.cgi).
+Currently, Eukan installation is only supported via Docker and Conda.
 
-### Building the Docker Image
+### Docker
+
+The Docker image installs all external tools via conda (from the same `environment.yml` used for local installs), then builds fitild from source and optionally includes GeneMark.
 
 ```bash
 git clone https://github.com/BFL-lab/eukan.git
 cd eukan
-docker build -t eukan -f Dockerfile .
+docker build -t eukan -f docker/Dockerfile .
+```
+
+To include **GeneMark** ([license required](https://topaz.gatech.edu/GeneMark/license_download.cgi)), place `gmes_linux_64*.tar.gz` and `gm_key_64.gz` in the project root before building. If omitted, the build will succeed but `eukan check` will report GeneMark as missing.
+
+A separate **development image** adds test tooling (NCBI datasets CLI, procps):
+
+```bash
+docker build -t eukan-dev -f docker/Dockerfile.dev .
+```
+
+### Conda
+
+Installs all external tools via bioconda and eukan itself via pip, in one step:
+
+```bash
+git clone https://github.com/BFL-lab/eukan.git
+cd eukan
+conda env create -f environment.yml
+conda activate eukan
+
+# Set env vars that bioconda packages don't configure automatically
+mkdir -p $CONDA_PREFIX/etc/conda/activate.d
+cp conda-activate.sh $CONDA_PREFIX/etc/conda/activate.d/eukan.sh
+conda deactivate && conda activate eukan
+
+eukan check
+```
+
+The `environment.yml` is auto-generated from `tools.toml`. To regenerate after modifying tool versions: `eukan dev generate-env`.
+
+Two tools require manual installation after creating the environment. A helper script handles both:
+
+```bash
+# Download GeneMark (license required) from:
+#   https://topaz.gatech.edu/GeneMark/license_download.cgi
+# Place gmes_linux_64*.tar.gz and gm_key_64.gz in the current directory, then:
+./scripts/install-extras.sh
+
+# Or point to a GeneMark archive elsewhere:
+./scripts/install-extras.sh --genemark-tar /path/to/gmes_linux_64_4.tar.gz
+```
+
+`eukan check` will tell you exactly what's missing and how to install it.
+
+### Local development
+
+Requires Python >= 3.10 and [Poetry](https://python-poetry.org/). External tools must be installed separately (via conda or Docker):
+
+```bash
+poetry install
+poetry run eukan --help
 ```
 
 ### Dependencies
 
-- Docker
-- GeneMark-ES/ET/EP+ license
-- For functional annotation: HMMER suite, Python 3 with biopython and other dependencies
+**Python** (managed by Poetry): click, gffutils, biopython, pandas, requests, pydantic-settings.
+
+**External tools** (via Docker image or conda): AUGUSTUS, SNAP, CodingQuarry, spaln, GenomeThreader, EVidenceModeler, PASA, Trinity, STAR, samtools, BLAT, jellyfish, GMAP/GSNAP, fasta36, TRF.
+
+**Manual install**:
+- GeneMark-ES/ET/EP+:  [license required](https://topaz.gatech.edu/GeneMark/license_download.cgi)
+- fitild:  [github.com/ogotoh/fitild](https://github.com/ogotoh/fitild) (only needed for spaln-based protein alignment)
 
 ## Usage
 
-### Genome Annotation
+### Docker
 
-Use the provided `annot-docker` script as a wrapper to run the pipeline inside the Docker container.
+Use `eukan-docker` as a wrapper to run any subcommand inside the Docker container. It bind-mounts the current directory and runs as your user:
 
-```bash
-# Display help
-./annot-docker eukan -h
-```
-
-#### Basic Command
-
-Assuming that a transcriptome assembly (`transcriptome_assembly.sh`, see below)
-using the upstream script was used to reconstruct transcripts from RNA-Seq
-reads, aligned to the genome, along with the hints file the script generates on
-RNA-Seq coverage, transcript alignments and intron coordinates.
+The typical workflow runs each subcommand from the same working directory, so later steps auto-discover outputs from earlier ones:
 
 ```bash
-./annot-docker eukannotpass -g genome.fasta -p uniprot_sprot.fasta -tf nr_transcripts.fasta -tg nr_transcripts.gff3 -r hints_rnaseq.gff --utrs pasa.sqlite --protist
+# 1. Download reference databases
+./eukan-docker db-fetch
+
+# 2. Assemble transcriptome from RNA-seq reads (optional but recommended)
+./eukan-docker assemble \
+    -g genome.fasta \
+    -l left_reads.fastq -r right_reads.fastq \
+    -S RF --kingdom protist
+
+# 3. Annotate:  auto-discovers assembly outputs + databases from steps above
+./eukan-docker annotate -g genome.fasta -p proteins.fasta --kingdom protist
+
+# 4. Functional annotation:  auto-discovers predicted proteins + databases
+./eukan-docker func-annot
+
+# Extract sequences from GFF3
+./eukan-docker gff3toseq -g genome.fasta -i genes.gff3 -o protein
 ```
 
-#### Full Usage
+Each auto-discovered input can be overridden explicitly (see subcommand docs below).
 
-```
-usage: eukan [-h] --genome genome.fasta --proteins PROTEINS [PROTEINS ...] [--transcriptsFasta transcriptassembly.fasta] [--transcriptsGFF transcriptassembly.gff3] [--rnaseq_hints hints.gff] [--existing_augustus species]
-                    [--strand_specific_transcripts] [--numcpu N] [--weights x y [z] [x y [z] ...]] [--code CODE] [--utrs UTRS] [--fungus] [--protist] [--animal] [--plant]
-
-Annotates a eukaryotic genome.
-
-required arguments:
-  --genome genome.fasta       REQUIRED. Genome sequence in Fasta format. Ensure no lower-case nucleotides; the pipeline soft-masks repeats by converting to lower-case.
-  --proteins PROTEINS [PROTEINS ...]
-                               REQUIRED. One or more protein sequence Fasta files, separated by spaces.
-
-optional arguments:
-  --transcriptsFasta transcriptassembly.fasta
-                               Assembled transcripts in Fasta format.
-  --transcriptsGFF transcriptassembly.gff3
-                               Assembled transcripts in GFF3 format.
-  --rnaseq_hints hints.gff      GFF hints file generated from RNA-seq alignment.
-  --existing_augustus species   Use pre-trained AUGUSTUS species parameters.
-  --strand_specific_transcripts
-                               Specify that assembled transcripts are strand-oriented.
-  --numcpu N                    Number of CPU threads to use (default: all available).
-  --weights x y [z] [x y [z] ...]
-                               Weights for scoring evidence sources: protein alignments, gene predictors, transcript assembly (if provided).
-                               Default: 1 2, plus 10 if transcript assembly is included.
-  --code CODE                  Genetic code (see NCBI taxonomy utils).
-  --utrs UTRS                  PASA SQLite database path for adding UTRs.
-  --fungus                     Tune parameters for fungal genomes.
-  --protist                    Tune parameters for protist genomes.
-  --animal                     Tune parameters for animal genomes.
-  --plant                      Tune parameters for plant genomes.
-```
-
-### Transcriptome Assembly
-
-Prepare RNA-seq data for input using the `transcriptome_assembly.sh` script. This handles read mapping, assembly, and alignment to produce input files for the main pipeline.
+Set `EUKAN_IMAGE` to use a custom image name (default: `eukan`):
 
 ```bash
-# Display help
-transcriptome_assembly.sh -h
+EUKAN_IMAGE=myregistry/eukan:latest ./eukan-docker annotate ...
 ```
 
-#### Usage
-
-```
-Usage: transcriptome_assembly.sh [OPTIONS] <ARGS>
-
-        [OPTIONS] and corresponding <ARGS> are:
-
-        Either paired-end:
-                [-l] <left reads>
-                [-r] <right reads>
-        or single-end:
-                [-s] <single-end reads>
-        [-m] <min intron length> # default 20
-        [-M] <max intron length> # default 5000
-        [-g] <genome fasta>
-        [-p] <phred quality score (33 for MISEQ, 64 for HISEQ)> # default 33
-        [-n] <number of CPUs> # default MAX
-        [-S] <specify strand-specific assembly, either RF or FR> # default off
-        [-A] <switch on read mapping>
-        [-E] <switch to extract reads>
-        [-T] <switch on Trinity assembly>
-        [-e] <switch on StringTie assembly>
-        [-P] <switch on PASA alignment>
-        [-c] <genetic code according to ncbi table>
-        [-h] Display this help message
-        [-j] switch on jaccard clipping (for gene-dense organisms and high coverage data)
-        [-t] <EndToEnd/Local> # default Local
-```
-
-#### Example
+### Local (development)
 
 ```bash
-# Assembled paired-end reads with Trinity
-transcriptome_assembly.sh -l left_reads.fastq -r right_reads.fastq -g genome.fasta -M 10000 -S RF -A -T -P
+poetry run eukan annotate -g genome.fasta -p proteins.fasta --kingdom fungus
+poetry run eukan assemble -g genome.fasta -l left.fq -r right.fq -S RF
 ```
 
-The pipeline integrates genome mapping, de novo assembly (Trinity), followed by PASA alignment for evidence integration.
+## Subcommands
 
-## Functional Annotation
+### `eukan annotate`
 
-The `functional-annotation` directory contains scripts to add functional information to predicted proteins using similarity searches against UniProt-SwissProt and Pfam databases.
+Run the genome annotation pipeline. When run in the same directory as `eukan assemble`, transcript evidence (FASTA, GFF3, RNA-seq hints), strand-specificity, and a PASA database for UTR addition are discovered automatically.
 
-### Prerequisites
+```
+Usage: eukan annotate [OPTIONS]
 
-1. **Databases**: Prepare UniProt-SwissProt and Pfam databases (or use defaults if available).
-2. **Dependencies**: Install HMMER, Python 3, and required packages:
-   - Python packages: `biopython`, `requests`, `gffutils` (see `requirements.txt`)
+Required input:
+  -g, --genome PATH               Genome FASTA (no lower-case; pipeline soft-masks repeats). [required]
+  -p, --proteins PATH             One or more protein FASTA files. [required]
 
-   ```bash
-   cd functional-annotation
-   pip install -r requirements.txt
-   ```
+Pipeline parameters:
+  -k, --kingdom [fungus|protist|animal|plant]
+                                   Target organism kingdom.
+  -n, --numcpu INTEGER             Number of CPU threads. [default: all]
+  --existing-augustus TEXT          Use pre-trained AUGUSTUS species parameters.
+  -w, --weights INTEGER            Weights: protein, gene predictions, transcripts. [default: 2 1 3]
+  -C, --code INTEGER               NCBI genetic code table number. [default: 11]
 
-3. **Get Databases**: Use `db-fetch.py` to download and format the latest databases:
+Override options:
+  -tf, --transcripts-fasta PATH   Override auto-discovered transcript FASTA.
+  -tg, --transcripts-gff PATH     Override auto-discovered transcript GFF3.
+  -r, --rnaseq-hints PATH         Override auto-discovered RNA-seq hints GFF.
+  --strand-specific                Transcripts are strand-oriented.
+  --utrs PATH                      PASA SQLite database for UTR addition.
+```
 
-   ```bash
-   python db-fetch.py
-   ```
+### `eukan assemble`
 
-   This will download:
-   - `uniprot_sprot.faa`: UniProt-SwissProt protein sequences
-   - `Pfam-A.hmm`: Pfam HMM profiles (pressed for hmmscan)
+Assemble transcriptome from RNA-seq reads for use with `eukan annotate`. Provide either paired-end reads (`--left` and `--right`) or single-end reads (`--single`).
 
-### Running Functional Annotation
+```
+Usage: eukan assemble [OPTIONS]
 
-The `func-annot` script runs `phmmer` against UniProt and `hmmscan` against Pfam to annotate protein sequences. Results are appended to Fasta headers or GFF3 attributes.
+Required input:
+  -g, --genome PATH               Genome FASTA. [required]
+  -l, --left PATH                 Left paired-end reads.
+  -r, --right PATH                Right paired-end reads.
+  -s, --single PATH               Single-end reads.
 
-#### Usage
+Pipeline parameters:
+  -n, --numcpu INTEGER             Number of CPUs. [default: all]
+  -S, --strand-specific [RF|FR|R|F]
+                                   Strand-specific library type (RF/FR for paired, R/F for single).
+  -t, --align-mode [EndToEnd|Local] STAR alignment mode. [default: Local]
+  --splice-boundary INTEGER        PASA splice boundary stringency. Set to 0 for non-canonical
+                                   splice sites (e.g., protists). [default: 3]
+  -c, --genetic-code [1|6|10|12]   Genetic code for PASA. [default: 1]
+  -m, --min-intron INTEGER         Min intron length. [default: 20]
+  -M, --max-intron INTEGER         Max intron length. [default: 5000]
+  --phred [33|64]                  Phred quality score. [default: 33]
+  -j, --jaccard-clip               Enable jaccard clipping.
+  -f, --force                      Re-run steps even if outputs exist.
+
+Advanced options:
+  -A, --map-reads                  Run STAR read mapping.
+  -T, --run-trinity                Run Trinity assembly.
+  -P, --run-pasa                   Run PASA alignment.
+```
+
+The pipeline runs STAR mapping, genome-guided + de novo Trinity assembly, and PASA alignment. If no step flags (`-A`, `-T`, `-P`) are given, all steps run.
+
+### `eukan func-annot`
+
+Add functional annotations (UniProt + Pfam) to proteins. When run after `eukan annotate` and `eukan db-fetch`, the predicted protein sequences, UniProt, and Pfam databases are discovered automatically.
+
+```
+Usage: eukan func-annot [OPTIONS]
+
+Pipeline parameters:
+  -n, --numcpu INTEGER   Number of CPUs. [default: all]
+  -e, --evalue TEXT      E-value cutoff. [default: 1e-1]
+
+Override options:
+  -p, --proteins PATH    Amino acid sequences FASTA.
+  --uniprot PATH         UniProt-SwissProt database FASTA.
+  --pfam PATH            Pfam HMM database.
+  --gff3 PATH            GFF3 file to annotate with functional info.
+```
+
+Runs phmmer against UniProt and hmmscan against Pfam (via pyhmmer). Produces:
+- `input.mod.faa`: annotated FASTA with functional descriptions in headers.
+- `input.mod.gff3`: (if `--gff3` provided) GFF3 with `product` and `inference` attributes.
+
+Hits with e-values between 1e-3 and the cutoff are reported as marginal.
+
+### `eukan gff3toseq`
+
+Extract protein or cDNA sequences from a GFF3 + genome.
+
+```
+Usage: eukan gff3toseq [OPTIONS]
+
+Options:
+  -g, --genome PATH           Genome FASTA. [required]
+  -i, --gff3 PATH             GFF3 with gene models. [required]
+  -o, --output [protein|cdna] Output type. [default: protein]
+  -c, --code INTEGER          Genetic code table. [default: 1]
+```
+
+### `eukan db-fetch`
+
+Download reference databases (UniProt, Pfam).
+
+```
+Usage: eukan db-fetch [OPTIONS]
+
+Options:
+  -o, --output-dir PATH   Directory to download into. [default: databases]
+  -f, --force             Re-download even if databases are up to date.
+  -d, --database [uniprot|pfam]
+                          Specific database(s) to fetch. If omitted, fetch all.
+```
+
+Downloads and prepares:
+- `uniprot_sprot.faa`:  UniProt-SwissProt protein sequences (converted from XML).
+- `Pfam-A.hmm`:  Pfam HMM profiles (decompressed and pressed for hmmscan).
+
+### `eukan compare`
+
+Compare predicted gene models against a reference or previous annotation to assess annotation quality. Reports gene-level classification (exact, inexact, missing, merged, fragmented, novel), subfeature-level metrics (mRNA, CDS, intron), and overlap-based sensitivity/specificity/F1 scores.
+
+```
+Usage: eukan compare [OPTIONS]
+
+Required input:
+  -r, --reference PATH    Reference GFF3 file.
+  -p, --predicted PATH    Predicted GFF3 file to evaluate.
+
+Output options:
+  -o, --output-file PATH  Write per-feature details to a TSV file.
+```
+
+The classification system and metrics are further described in the paper referenced in [Citation](#citation). Gene-level classifications:
+- **exact**: prediction coordinates match reference exactly.
+- **inexact**: prediction overlaps a single reference with boundary differences.
+- **missing**: reference gene with no overlapping prediction (false negative).
+- **merged**: prediction spans 2+ reference genes.
+- **fragmented**: 2+ predictions each cover a single reference gene.
+- **novel**: prediction with no reference overlap (possibly false positive).
+
+For matched features, reports overlap-based sensitivity (overlap / reference length), specificity (overlap / prediction length), and F1 score. Boundary differences (5' and 3') are reported for inexact matches.
 
 ```bash
-func-annot --proteins input.faa [--uniprot uniprot_sprot.faa] [--pfam Pfam-A.hmm] [--gff3 input.gff3] [--numcpu N] [--evalue 1e-5]
+# Basic comparison
+eukan compare -r reference.gff3 -p predicted.gff3
+
+# With per-feature TSV output
+eukan compare -r reference.gff3 -p predicted.gff3 -o details.tsv
 ```
 
-#### Full Arguments
+### `eukan check`
 
-- `--proteins PROTEINS, -p PROTEINS`: Amino acid sequences in Fasta format (required).
-- `--uniprot uniprot_sprot.faa`: UniProt-SwissProt database (default: `/share/unsupported/databases/uniprot_sprot/uniprot_sprot.faa`).
-- `--pfam Pfam-A.hmm`: Pfam HMM database (default: `/share/unsupported/databases/Pfam/35.0/Pfam-A.hmm`).
-- `--gff3 gene_models.gff3`: Optional GFF3 file to annotate with functional information.
-- `--numcpu N, -n N`: Number of CPUs (default: all).
-- `--evalue Me-N, -e Me-N`: E-value cutoff (default: 1e-1; marginal hits: 1e-3 to 1e-1).
+Verify Python dependencies, external tools, and databases.
 
-#### Output
+```
+Usage: eukan check [OPTIONS]
 
-- Annotated Fasta: `input.mod.faa` with functional descriptions in headers.
-- Optional: `input.mod.gff3` with added `product` and `inference` attributes.
+Options:
+  --for [annotate|assemble|func-annot|db-fetch]
+      Only check tools needed by these subcommands. If omitted, check all.
+  --db-dir PATH   Database directory to check. [default: databases]
+```
 
-#### Examples
+Checks Python dependencies, probes each external tool with a version/help command, and verifies database integrity. Exits 0 if all checks pass, 1 if any fail.
 
 ```bash
-# Run functional annotation pipeline and append information to fasta headers
-func-annot -p input.faa
+# Check everything
+eukan check
 
-# Append functional info to Fasta headers from stricter e-values, and update corresponding gff3 feature column with annotations that can be read by table2asn
-func-annot -p input.faa --evalue 1e-5 --gff3 input.gff3
+# Check only what's needed for annotation
+eukan check --for annotate
+
+# Check multiple subcommands
+eukan check --for annotate --for assemble
 ```
+
+Example output:
+```
+Checked 14 external tools:
+
+  12 tools OK:
+    ✓ samtools                       samtools 1.20
+    ✓ AUGUSTUS                        AUGUSTUS (3.5.0)
+    ...
+
+  2 tools MISSING or BROKEN:
+    ✗ CodingQuarry                   `CodingQuarry` not found on PATH; $QUARRY_PATH not set
+      used by: annotate
+    ✗ fitild                         `fitild` not found on PATH
+      used by: annotate
+```
+
+## Pipeline Overview
+
+The annotation pipeline (`eukan annotate`) runs the following steps:
+
+1. **ORF finding**:  Identify ORFs in transcript assemblies (if provided).
+2. **GeneMark**:  Ab initio gene prediction (ES mode, or ET mode if RNA-seq intron hints are available with >= 150 introns).
+3. **Protein alignment**:  Spliced alignment via spaln (intron-rich genomes, > 25% introns/gene) or GenomeThreader (intron-poor).
+4. **AUGUSTUS**:  Train species-specific parameters from concordant GeneMark/protein models, then predict genes using protein + RNA-seq hints.
+5. **SNAP**:  Train and predict (all kingdoms). **CodingQuarry** also runs for fungus/protist genomes.
+6. **EVidenceModeler**:  Build weighted consensus gene models from all evidence sources.
+7. **PASA UTRs**:  Add UTR annotations and model alternative splicing from the transcriptome database.
+8. **Final output**:  Assign sequential locus tags and correct CDS phases. Non-overlapping transcript ORFs not captured by EVM are patched into the final model set.
+
+Output: `final.gff3` in the working directory.
+
+## Testing
+
+### Unit tests
+
+```bash
+poetry run pytest tests/ -v
+```
+
+Unit tests cover GFF3 parsing/serialization, genomic interval operations, ORF finding, configuration validation, run manifest tracking, database integrity checks, and CLI wiring. They run without external tools or network access.
+
+### Pipeline integration test
+
+A development CLI at `tests/run_pipeline.py` drives a full end-to-end pipeline run using _S. pombe_ chromosome III as the test organism.
+
+#### Prerequisites
+
+- All external tools installed (Docker or conda environment; verify with `eukan check`)
+- [NCBI datasets CLI](https://www.ncbi.nlm.nih.gov/datasets/docs/v2/command-line-tools/) and [SRA Toolkit](https://github.com/ncbi/sra-tools/wiki/01.-Downloading-SRA-Toolkit) on PATH (for downloading test data)
+
+When using Docker, build and use the dev image (`eukan-dev`) which includes the NCBI datasets CLI:
+
+```bash
+docker build -t eukan-dev -f docker/Dockerfile.dev .
+```
+
+#### 1. Download test data
+
+```bash
+python tests/run_pipeline.py setup-test-data [-o tests/data]
+```
+
+Downloads from NCBI:
+- **Genome**: _S. pombe_ chromosome III (`NC_003424.3`, ~2.5 Mbp)
+- **Proteins**: 10 close neighbor proteomes via `datasets`
+- **RNA-seq**: 5 SRA paired-end runs via `prefetch` + `fasterq-dump`
+
+Accession lists live in `tests/data/*.txt` and are never deleted by cleanup. Downloads are idempotent.
+
+#### 2. Run the pipeline
+
+```bash
+# Full run: assembly + annotation (default kingdom: fungus)
+python tests/run_pipeline.py test-pipeline --kingdom fungus -n 8
+
+# Protein-only: skip transcriptome assembly
+python tests/run_pipeline.py test-pipeline --protein-only -n 8
+
+# Custom directories
+python tests/run_pipeline.py test-pipeline -d tests/data -w tests/pipeline-run
+```
+
+The test pipeline runs:
+1. **Transcriptome assembly**: STAR read mapping, Trinity (genome-guided + de novo), PASA alignment
+2. **Genome annotation**:  GeneMark, protein alignment (spaln/gth), AUGUSTUS, SNAP, EVM consensus
+
+If assembly fails, it falls back to protein-only annotation automatically.
+
+Output lands in `tests/pipeline-run/` with subdirectories for assembly and annotation. View run details with `eukan status -d tests/pipeline-run/annotation`.
+
+#### 3. Clean up
+
+```bash
+# Remove pipeline outputs only
+python tests/run_pipeline.py clean-test-data
+
+# Remove outputs + downloaded data (genome, proteins, reads)
+python tests/run_pipeline.py clean-test-data --all
+```
+
+All three subcommands accept `-h` for detailed help.
+
+## Citation
+
+If you use eukan, please cite:
+
+> Sarrasin M, Burger G, Lang BF. Eukan: a fully automated nuclear genome annotation pipeline for less studied and divergent eukaryotes. *NAR Genomics and Bioinformatics*. 2026 Mar;8(1):lqag003. doi:[10.1093/nargab/lqag003](https://doi.org/10.1093/nargab/lqag003)
+
+A [CITATION.cff](CITATION.cff) file is included for automated citation tools.
+
+## License
+
+See [LICENSE.md](LICENSE.md).

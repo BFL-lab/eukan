@@ -1,0 +1,26 @@
+# Ignore everything by default, then whitelist what the build needs
+*
+
+# Build essentials
+!environment.yml
+!pyproject.toml
+!poetry.lock
+!README.md
+!eukan/
+!tests/
+!tools.toml
+!configs/
+!docker/
+
+# GeneMark (optional, user-provided)
+!gmes_linux_64*.tar.gz
+!gm_key_64.gz
+
+tests/data/genome.fasta
+tests/data/proteins.faa
+tests/data/*.fastq
+tests/data/*.fastq.gz
+tests/data/*.sra
+tests/data/neighbor_proteomes.zip
+tests/data/_proteome_extract/
+tests/pipeline-run

@@ -1,0 +1,60 @@
+# Auto-generated from tools.toml — do not edit manually.
+# Regenerate with: eukan dev generate-env
+#
+# Tools requiring manual installation:
+#   - genemark: Requires a license from https://topaz.gatech.edu/GeneMark/license_download.cgi
+#   - fitild: Build from source: git clone https://github.com/ogotoh/fitild && cd fitild/src && ./configure && make
+#
+# Tools bundled with parent packages (no separate install):
+#   - makdbs: bundled with parent package
+#   - cdbfasta: bundled with parent package
+#   - seqclean: bundled with parent package
+#   - jellyfish: bundled with parent package
+#   - gff2gbSmallDNA.pl: bundled with parent package
+#   - optimize_augustus.pl: bundled with parent package
+#   - bam2wig: bundled with parent package
+
+name: eukan
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Python
+  - python>=3.10,<3.13
+
+  # External tools
+  - augustus>=3.5
+  - codingquarry>=2.0
+  - evidencemodeler>=2.1
+  - fasta3
+  - genomethreader>=1.7
+  - gmap>=2024
+  - pasa>=2.5
+  - samtools>=1.20
+  - snap
+  - spaln>=3.0
+  - star>=2.7
+  - trf>=4.09
+  - trinity>=2.15
+  - ucsc-blat
+
+  # Build dependencies (needed to compile fitild from source)
+  - gsl
+  - liblbfgs
+
+  # Perl (needed by AUGUSTUS, PASA, EVM, GeneMark helper scripts)
+  - perl
+  - perl-bioperl
+  - perl-dbd-sqlite
+  - perl-yaml
+  - perl-hash-merge
+  - perl-mce
+  - perl-parallel-forkmanager
+
+  # eukan + Python dependencies (installed via pip for version consistency)
+  - pip
+  - pip:
+    - .
+

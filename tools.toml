@@ -1,0 +1,190 @@
+# External tool dependencies for eukan.
+#
+# Single source of truth — consumed by:
+#   - eukan check         (verifies tools are installed)
+#   - eukan.infra.environ (configures conda env vars at runtime)
+#   - environment.yml     (regenerate with: eukan dev generate-env)
+#   - docker/Dockerfile   (ARG versions should match min_version here)
+#
+# Fields:
+#   binary          = executable name on PATH
+#   version_cmd     = command to probe the tool (exit 0 or output = success)
+#   required_by     = which eukan subcommands need this tool
+#   conda_package   = bioconda/conda-forge package name (omit if not available)
+#   min_version     = minimum version for conda pin (omit for unpinned)
+#   env_var         = environment variable that must be set (optional)
+#   install_hint    = shown by `eukan check` when the tool is missing (optional)
+#
+# Conda environment fields (read by eukan.infra.environ):
+#   conda_env_path  = path relative to $CONDA_PREFIX that resolves env_var
+#   conda_path_dirs = directories to prepend to PATH (relative to $CONDA_PREFIX)
+#   conda_lib_dirs  = directories to prepend to LD_LIBRARY_PATH, subprocess-only
+#                     (relative to $CONDA_PREFIX; kept out of the parent process
+#                     to avoid breaking system tools like git)
+
+[augustus]
+binary = "augustus"
+version_cmd = ["augustus", "--version"]
+required_by = ["annotate"]
+conda_package = "augustus"
+min_version = "3.5"
+env_var = "AUGUSTUS_CONFIG_PATH"
+conda_env_path = "config"
+
+[snap]
+binary = "snap"
+version_cmd = ["snap"]
+required_by = ["annotate"]
+conda_package = "snap"
+env_var = "ZOE"
+conda_env_path = "share/snap"
+
+[codingquarry]
+binary = "CodingQuarry"
+version_cmd = ["CodingQuarry", "-h"]
+required_by = ["annotate"]
+conda_package = "codingquarry"
+min_version = "2.0"
+env_var = "QUARRY_PATH"
+
+[genemark]
+binary = "gmes_petap.pl"
+version_cmd = ["gmes_petap.pl"]
+required_by = ["annotate"]
+install_hint = "Requires a license from https://topaz.gatech.edu/GeneMark/license_download.cgi"
+conda_path_dirs = ["opt/genemark"]
+
+[samtools]
+binary = "samtools"
+version_cmd = ["samtools", "--version"]
+required_by = ["annotate", "assemble"]
+conda_package = "samtools"
+min_version = "1.20"
+
+[star]
+binary = "STAR"
+version_cmd = ["STAR", "--version"]
+required_by = ["assemble"]
+conda_package = "star"
+min_version = "2.7"
+
+[spaln]
+binary = "spaln"
+version_cmd = ["spaln", "-h"]
+required_by = ["annotate"]
+conda_package = "spaln"
+min_version = "3.0"
+conda_env_vars = [
+    { var = "ALN_TAB", path = "share/spaln/table" },
+    { var = "ALN_DBS", path = "share/spaln/seqdb" },
+]
+
+[makdbs]
+binary = "makdbs"
+version_cmd = ["makdbs", "-h"]
+required_by = ["annotate"]
+# installed by spaln package
+
+[fitild]
+binary = "fitild"
+version_cmd = ["fitild"]
+required_by = ["annotate"]
+install_hint = "Build from source: git clone https://github.com/ogotoh/fitild && cd fitild/src && ./configure && make"
+conda_path_dirs = ["opt/fitild/src"]
+conda_lib_dirs = ["lib"]
+
+[evidencemodeler]
+binary = "partition_EVM_inputs.pl"
+version_cmd = ["partition_EVM_inputs.pl"]
+required_by = ["annotate"]
+conda_package = "evidencemodeler"
+min_version = "2.1"
+env_var = "EVM_HOME"
+conda_path_dirs = ["bin/EvmUtils", "bin/EvmUtils/misc"]
+
+[cdbfasta]
+binary = "cdbfasta"
+version_cmd = ["cdbfasta", "-v"]
+required_by = ["annotate"]
+# bundled with PASA
+
+[trinity]
+binary = "Trinity"
+version_cmd = ["Trinity", "--version"]
+required_by = ["assemble"]
+conda_package = "trinity"
+min_version = "2.15"
+env_var = "TRINITY_HOME"
+
+[pasa]
+binary = "Launch_PASA_pipeline.pl"
+version_cmd = ["Launch_PASA_pipeline.pl", "--version"]
+required_by = ["annotate", "assemble"]
+conda_package = "pasa"
+min_version = "2.5"
+env_var = "PASAHOME"
+
+[blat]
+binary = "blat"
+version_cmd = ["blat"]
+required_by = ["assemble"]
+conda_package = "ucsc-blat"
+
+[gmap]
+binary = "gmap"
+version_cmd = ["gmap", "--version"]
+required_by = ["assemble"]
+conda_package = "gmap"
+min_version = "2024"
+
+[seqclean]
+binary = "seqclean"
+version_cmd = ["seqclean", "-h"]
+required_by = ["assemble"]
+# bundled with PASA
+
+[genomethreader]
+binary = "gth"
+version_cmd = ["gth", "-version"]
+required_by = ["annotate"]
+conda_package = "genomethreader"
+min_version = "1.7"
+
+[jellyfish]
+binary = "jellyfish"
+version_cmd = ["jellyfish", "--version"]
+required_by = ["assemble"]
+# jellyfish is a Trinity dependency — Trinity's conda package pulls it in.
+# Don't pin a conda_package here to avoid conflicts with the unrelated
+# Python 'jellyfish' package on defaults channel.
+
+[fasta3]
+binary = "fasta36"
+version_cmd = ["fasta36"]
+required_by = ["assemble"]
+conda_package = "fasta3"
+
+[trf]
+binary = "trf"
+version_cmd = ["trf", "-v"]
+required_by = ["annotate"]
+conda_package = "trf"
+min_version = "4.09"
+
+[gff2gbSmallDNA]
+binary = "gff2gbSmallDNA.pl"
+version_cmd = ["gff2gbSmallDNA.pl"]
+required_by = ["annotate"]
+# bundled with AUGUSTUS
+
+[optimize_augustus]
+binary = "optimize_augustus.pl"
+version_cmd = ["optimize_augustus.pl"]
+required_by = ["annotate"]
+# bundled with AUGUSTUS
+
+[bam2wig]
+binary = "bam2wig"
+version_cmd = ["bam2wig"]
+required_by = ["assemble"]
+# bundled with AUGUSTUS

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+IMAGE="${EUKAN_IMAGE:-eukan}"
+WORKDIR="$(realpath .)"
+
+# Allocate TTY only when attached to a terminal
+TTY_ARGS=()
+[[ -t 0 ]] && TTY_ARGS+=(-i)
+[[ -t 1 ]] && TTY_ARGS+=(-t)
+
+exec docker run --rm \
+    "${TTY_ARGS[@]}" \
+    --user "$(id -u):$(id -g)" \
+    --workdir "$WORKDIR" \
+    --mount "type=bind,source=${WORKDIR},target=${WORKDIR}" \
+    -e TZ="${TZ:-UTC}" \
+    "$IMAGE" \
+    "$@"

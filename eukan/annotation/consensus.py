@@ -1,0 +1,98 @@
+"""Final consensus model building: EVM + optional PASA UTRs + prettification."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import gffutils
+
+from eukan.annotation.evm import run_evm
+from eukan.gff import intersecter as gffintersecter
+from eukan.gff import parser as gffparser
+from eukan.infra.runner import run_cmd
+from eukan.infra.steps import step_dir
+from eukan.infra.logging import get_logger
+from eukan.settings import PipelineConfig
+
+log = get_logger(__name__)
+
+
+def add_utrs_from_pasa(config: PipelineConfig, sdir: Path, pasa_db: Path) -> None:
+    """Add UTRs and model alternative splicing from a PASA database."""
+    pasa_db_resolved = pasa_db.resolve()
+
+    with open(sdir / "alignAssembly.config", "w") as f:
+        f.write(f"DATABASE={pasa_db_resolved}\n")
+        f.write("validate_alignments_in_db.dbi:--MIN_PERCENT_ALIGNED=95\n")
+        f.write("validate_alignments_in_db.dbi:--MIN_AVG_PER_ID=95\n")
+        f.write("subcluster_builder.dbi:-m=50\n")
+
+    with open(sdir / "annotCompare.config", "w") as f:
+        f.write(f"DATABASE={pasa_db_resolved}\n")
+
+    run_cmd(
+        [
+            "Load_Current_Gene_Annotations.dbi",
+            "-c", "alignAssembly.config",
+            "-g", str(config.genome),
+            "-P", "consensus_models.gff3",
+        ],
+        cwd=sdir,
+    )
+
+    gc_args = config.genetic_code_obj.pasa_flag
+
+    run_cmd(
+        [
+            "Launch_PASA_pipeline.pl",
+            "-c", "annotCompare.config",
+            "-A", "-g", str(config.genome),
+            "--CPU", str(config.num_cpu),
+            "-t", str(config.transcripts_fasta),
+        ]
+        + gc_args,
+        cwd=sdir,
+    )
+
+
+def build_consensus_models(config: PipelineConfig, *evidence: Path) -> Path:
+    """Build final consensus models from all predictions using EVM."""
+    sdir = step_dir(config.work_dir, "evm_consensus_models")
+    log.info("Building consensus gene models...")
+
+    run_evm(config, list(evidence))
+
+    if config.utrs_db:
+        add_utrs_from_pasa(config, sdir, config.utrs_db)
+
+    pasa_outputs = sorted(sdir.glob("*gene_structures_post_PASA_updates.*.gff3"))
+    consensus_path = pasa_outputs[0] if pasa_outputs else sdir / "consensus_models.gff3"
+
+    # Format the final GFF3
+    consdb = gffutils.create_db(
+        str(consensus_path), ":memory:", merge_strategy="create_unique",
+    )
+
+    # Patch in transcript ORFs that don't overlap consensus models
+    orf_path = config.work_dir / "orf_finder" / "transcript_orfs.gff3"
+    if orf_path.exists():
+        orf_db = gffutils.create_db(str(orf_path), ":memory:")
+        missing = gffintersecter.find_nonoverlapping_genes(orf_db, consdb)
+        all_features = list(consdb.all_features()) + missing
+        consdb = gffutils.create_db(
+            all_features, ":memory:",
+            merge_strategy="merge", from_string=True,
+        )
+
+    consdb.dialect["order"].append("locus_tag")
+    consdb = gffutils.create_db(
+        gffparser.fix_CDS_phases(consdb), ":memory:", merge_strategy="merge",
+    )
+    prettified = gffparser.prettify_gff3(consdb, config.shortname)
+
+    final_path = config.work_dir / "final.gff3"
+    with open(final_path, "w") as outfile:
+        for feature in prettified:
+            outfile.write(f"{feature}\n")
+
+    return final_path

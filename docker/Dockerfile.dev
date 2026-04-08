@@ -1,0 +1,25 @@
+# Development image — extends the main eukan image with test tooling.
+#
+# Build:  docker build -t eukan-dev -f docker/Dockerfile.dev .
+# Usage:  docker run --rm ... --entrypoint python eukan-dev tests/run_pipeline.py setup-test-data
+
+FROM eukan
+
+# Test suite
+COPY tests/ /opt/eukan/tests/
+
+# Debugging and test utilities
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    procps curl unzip ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    # NCBI datasets CLI (standalone binary)
+    && curl -fsSL -o /usr/local/bin/datasets \
+       https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/linux-amd64/datasets \
+    && chmod +x /usr/local/bin/datasets \
+    # SRA Toolkit (prefetch + fasterq-dump for RNA-seq test data)
+    && curl -fsSL -o /tmp/sratoolkit.tar.gz \
+       https://ftp-trace.ncbi.nlm.nih.gov/sra/sdk/3.4.1/sratoolkit.3.4.1-ubuntu64.tar.gz \
+    && tar zxf /tmp/sratoolkit.tar.gz -C /opt/ \
+    && ln -s /opt/sratoolkit.*/bin/prefetch /usr/local/bin/ \
+    && ln -s /opt/sratoolkit.*/bin/fasterq-dump /usr/local/bin/ \
+    && rm /tmp/sratoolkit.tar.gz

@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file and the preferred citation below."
+title: Eukan
+type: software
+version: 0.2.0
+license: GPL-3.0-only
+repository-code: https://github.com/BFL-lab/eukan
+authors:
+  - family-names: Sarrasin
+    given-names: M
+  - family-names: Burger
+    given-names: G
+  - family-names: Lang
+    given-names: B F
+preferred-citation:
+  type: article
+  title: "Eukan: a fully automated nuclear genome annotation pipeline for less studied and divergent eukaryotes"
+  authors:
+    - family-names: Sarrasin
+      given-names: M
+    - family-names: Burger
+      given-names: G
+    - family-names: Lang
+      given-names: B F
+  journal: NAR Genomics and Bioinformatics
+  volume: 8
+  issue: 1
+  article-no: lqag003
+  doi: 10.1093/nargab/lqag003
+  year: 2026
+  month: 3

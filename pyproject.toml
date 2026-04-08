@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "eukan"
+version = "0.2.0"
+description = "Eukaryotic genome annotation pipeline"
+authors = ["BFL-lab"]
+license = "GPL-3.0-only"
+readme = "README.md"
+packages = [{include = "eukan"}]
+
+[tool.poetry.scripts]
+eukan = "eukan.cli:cli"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<4.0"
+click = ">=8.1"
+gffutils = ">=0.12"
+biopython = ">=1.83"
+pandas = ">=2.0"
+requests = ">=2.31"
+pydantic-settings = "^2.13.1"
+pyhmmer = "^0.12.0"
+click-option-group = ">=0.5.6"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
