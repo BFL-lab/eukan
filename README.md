@@ -33,13 +33,15 @@ git clone https://github.com/BFL-lab/eukan.git
 cd eukan
 conda env create -f environment.yml
 conda activate eukan
+eukan check
+```
 
-# Set env vars that bioconda packages don't configure automatically
+The `eukan` CLI configures all required environment variables (e.g. `$ZOE`, `$ALN_TAB`, EVM paths) automatically at startup. If you need to run the underlying tools directly outside of `eukan`, install the optional activation script:
+
+```bash
 mkdir -p $CONDA_PREFIX/etc/conda/activate.d
 cp conda-activate.sh $CONDA_PREFIX/etc/conda/activate.d/eukan.sh
 conda deactivate && conda activate eukan
-
-eukan check
 ```
 
 The `environment.yml` is auto-generated from `tools.toml`. To regenerate after modifying tool versions: `eukan dev generate-env`.
