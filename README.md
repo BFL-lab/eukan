@@ -8,7 +8,7 @@ Currently, Eukan installation is only supported via Docker and Conda.
 
 ### Docker
 
-The Docker image installs all external tools via conda (from the same `environment.yml` used for local installs), then builds fitild from source and optionally includes GeneMark.
+The Docker image installs all external tools via conda (from the same `environment.yml` used for local installs), then builds fitild from source and includes GeneMark.
 
 ```bash
 git clone https://github.com/BFL-lab/eukan.git
@@ -44,9 +44,7 @@ cp conda-activate.sh $CONDA_PREFIX/etc/conda/activate.d/eukan.sh
 conda deactivate && conda activate eukan
 ```
 
-The `environment.yml` is auto-generated from `tools.toml`. To regenerate after modifying tool versions: `eukan dev generate-env`.
-
-Two tools require manual installation after creating the environment. A helper script handles both:
+`fitild` and GeneMark require manual installation after creating the environment. A helper script handles this:
 
 ```bash
 # Download GeneMark (license required) from:
