@@ -93,6 +93,20 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
 
         # Build training set and train
         build_training_set(config, evidence, sdir)
+
+        # Report training set size
+        train_count = sum(1 for l in open(sdir / "genbank.gb.train") if l.startswith("LOCUS"))
+        test_count = sum(1 for l in open(sdir / "genbank.gb.test") if l.startswith("LOCUS"))
+        total = train_count + test_count
+        if total <= 500:
+            log.warning(
+                "Low AUGUSTUS training set size: %d models (%d train, %d test) "
+                "— prediction quality may be reduced",
+                total, train_count, test_count,
+            )
+        else:
+            log.info("AUGUSTUS training set: %d train, %d test models", train_count, test_count)
+
         run_cmd(["etraining", f"--species={config.name}", "genbank.gb.train"], cwd=sdir, out_file="etraining.out")
 
         # Set stop codon frequencies

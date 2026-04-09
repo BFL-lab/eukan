@@ -95,11 +95,42 @@ def map_reads(config: AssemblyConfig, force: bool = False) -> None:
         star_long_cmd = ["STARlong"] + star_cmd[1:]
         run_cmd(star_long_cmd, cwd=wd)
 
+    # Report mapping rate from STAR log
+    _log_mapping_rate(wd)
+
     # Generate hints from splice junctions
     _generate_hints_from_star(wd)
 
     # Cleanup build index (large)
     shutil.rmtree(index_dir, ignore_errors=True)
+
+
+def _log_mapping_rate(wd: Path) -> None:
+    """Parse STAR Log.final.out and log the overall mapping rate."""
+    log_file = wd / "STAR_Log.final.out"
+    if not log_file.exists():
+        return
+
+    unique_pct = 0.0
+    multi_pct = 0.0
+    for line in log_file.read_text().splitlines():
+        if "Uniquely mapped reads %" in line:
+            unique_pct = float(line.split("|")[-1].strip().rstrip("%"))
+        elif "% of reads mapped to multiple loci" in line:
+            multi_pct = float(line.split("|")[-1].strip().rstrip("%"))
+
+    total_pct = unique_pct + multi_pct
+    if total_pct < 75:
+        log.warning(
+            "Low read mapping rate: %.1f%% (%.1f%% unique, %.1f%% multi) "
+            "— check genome/reads compatibility",
+            total_pct, unique_pct, multi_pct,
+        )
+    else:
+        log.info(
+            "Read mapping rate: %.1f%% (%.1f%% unique, %.1f%% multi)",
+            total_pct, unique_pct, multi_pct,
+        )
 
 
 def _generate_hints_from_star(wd: Path) -> None:

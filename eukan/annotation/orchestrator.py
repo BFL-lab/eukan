@@ -13,7 +13,7 @@ from eukan.annotation.genemark import run_genemark
 from eukan.annotation.snap import run_codingquarry, run_snap
 from eukan.annotation.validation import sanitize_genome_fasta, validate_fasta
 from eukan.gff.io import featuredb2gff3_file
-from eukan.infra.logging import get_logger
+from eukan.infra.logging import count_gff3_features, get_logger
 from eukan.infra.manifest import (
     RunManifest, init_manifest, load_manifest, save_manifest,
     pipeline_step, is_step_complete, is_step_interrupted, clean_interrupted_step,
@@ -78,6 +78,12 @@ def _run_step(
         result_path = fn(config, *args, **kwargs)
         step.output_file = str(result_path)
         return result_path
+
+
+def _log_prediction_count(label: str, gff3_path: Path) -> None:
+    """Log the number of gene predictions in a GFF3 file."""
+    n = count_gff3_features(gff3_path)
+    log.info("%s: %d gene predictions", label, n)
 
 
 def _run_concurrent_steps(
@@ -176,6 +182,7 @@ def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
         ])
         ev["transcriptORFs"] = concurrent["orf_finder"]
         ev["genemark"] = concurrent["genemark"]
+        _log_prediction_count("GeneMark", ev["genemark"])
 
         intron_hints = config.work_dir / "genemark" / "introns.gff"
         ev["spaln"] = _run_step(
@@ -187,6 +194,7 @@ def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
             config, manifest, "augustus", run_augustus,
             ev["genemark"], ev["spaln"], ev["transcriptORFs"],
         )
+        _log_prediction_count("AUGUSTUS", ev["augustus"])
 
         if config.is_fungus:
             # SNAP and CodingQuarry are independent -- run concurrently
@@ -196,6 +204,8 @@ def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
             ])
             ev["snap"] = concurrent["snap"]
             ev["codingquarry"] = concurrent["codingquarry"]
+            _log_prediction_count("SNAP", ev["snap"])
+            _log_prediction_count("CodingQuarry", ev["codingquarry"])
             return _run_step(
                 config, manifest, "evm_consensus_models", build_consensus_models,
                 ev["spaln"], ev["augustus"], ev["snap"],
@@ -208,6 +218,7 @@ def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
             )
     else:
         ev["genemark"] = _run_step(config, manifest, "genemark", run_genemark)
+        _log_prediction_count("GeneMark", ev["genemark"])
         ev["spaln"] = _run_step(
             config, manifest, "prot_align", align_proteins,
             ev["genemark"], config.proteins,
@@ -216,6 +227,7 @@ def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
             config, manifest, "augustus", run_augustus,
             ev["genemark"], ev["spaln"],
         )
+        _log_prediction_count("AUGUSTUS", ev["augustus"])
 
         if config.is_fungus or config.is_protist:
             concurrent = _run_concurrent_steps(config, manifest, [
@@ -224,6 +236,8 @@ def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
             ])
             ev["snap"] = concurrent["snap"]
             ev["codingquarry"] = concurrent["codingquarry"]
+            _log_prediction_count("SNAP", ev["snap"])
+            _log_prediction_count("CodingQuarry", ev["codingquarry"])
             return _run_step(
                 config, manifest, "evm_consensus_models", build_consensus_models,
                 ev["spaln"], ev["augustus"], ev["snap"], ev["codingquarry"],
@@ -233,6 +247,7 @@ def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
                 config, manifest, "snap", run_snap,
                 ev["augustus"], ev["spaln"],
             )
+            _log_prediction_count("SNAP", ev["snap"])
             return _run_step(
                 config, manifest, "evm_consensus_models", build_consensus_models,
                 ev["spaln"], ev["augustus"], ev["snap"], ev["genemark"],

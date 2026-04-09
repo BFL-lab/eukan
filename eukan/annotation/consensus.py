@@ -11,7 +11,7 @@ from eukan.gff import intersecter as gffintersecter
 from eukan.gff import parser as gffparser
 from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_dir
-from eukan.infra.logging import get_logger
+from eukan.infra.logging import count_gff3_features, get_logger
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
@@ -62,6 +62,9 @@ def build_consensus_models(config: PipelineConfig, *evidence: Path) -> Path:
 
     run_evm(config, list(evidence))
 
+    evm_genes = count_gff3_features(sdir / "consensus_models.gff3")
+    log.info("EVM consensus: %d genes", evm_genes)
+
     if config.utrs_db:
         add_utrs_from_pasa(config, sdir, config.utrs_db)
 
@@ -78,6 +81,8 @@ def build_consensus_models(config: PipelineConfig, *evidence: Path) -> Path:
     if orf_path.exists():
         orf_db = gffutils.create_db(str(orf_path), ":memory:")
         missing = gffintersecter.find_nonoverlapping_genes(orf_db, consdb)
+        if missing:
+            log.info("Reintroduced %d transcript ORFs not overlapping EVM consensus", len(missing))
         all_features = list(consdb.all_features()) + missing
         consdb = gffutils.create_db(
             all_features, ":memory:",

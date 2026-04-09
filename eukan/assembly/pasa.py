@@ -109,6 +109,19 @@ def run_pasa(config: AssemblyConfig, force: bool = False) -> None:
         wd / "nr_transcripts.fasta",
     )
 
+    # Report non-redundant transcript count
+    nr_path = wd / "nr_transcripts.fasta"
+    if nr_path.exists():
+        nr_count = sum(1 for line in open(nr_path) if line.startswith(">"))
+        if nr_count < 1000:
+            log.warning(
+                "Only %d non-redundant transcripts assembled "
+                "— transcript evidence may be insufficient",
+                nr_count,
+            )
+        else:
+            log.info("%d non-redundant transcripts assembled", nr_count)
+
     # Convert GFF3 to transcript hints
     _build_transcript_hints(wd)
 
