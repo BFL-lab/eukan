@@ -132,9 +132,14 @@ def run_homology_search(
 ) -> tuple[HitResults, HitResults]:
     """Run phmmer and hmmscan using pyhmmer.
 
+    Both searches are independent and run concurrently, each using
+    half the available CPUs.
+
     Returns:
         Tuple of (phmmer_results, hmmscan_results) dicts keyed by query ID.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     evalue_f = float(evalue)
 
     log.info("Loading query sequences from %s", proteins)
@@ -143,16 +148,25 @@ def run_homology_search(
     log.info("Loading UniProt database from %s", uniprot_db)
     targets = _load_digital_sequences(uniprot_db)
 
-    log.info("Running phmmer (%d queries vs %d targets, %d CPUs)...",
-             len(queries), len(targets), num_cpu)
-    phmmer_res = run_phmmer_search(queries, targets, num_cpu, evalue_f)
-
     log.info("Loading Pfam HMMs from %s", pfam_db)
     hmms = _load_hmm_db(pfam_db)
 
-    log.info("Running hmmscan (%d queries vs %d profiles, %d CPUs)...",
-             len(queries), len(hmms), num_cpu)
-    hmmscan_res = run_hmmscan_search(queries, hmms, num_cpu, evalue_f)
+    # Split CPUs between the two searches
+    phmmer_cpus = max(1, num_cpu // 2)
+    hmmscan_cpus = max(1, num_cpu - phmmer_cpus)
+
+    log.info(
+        "Running phmmer (%d queries vs %d targets, %d CPUs) and "
+        "hmmscan (%d queries vs %d profiles, %d CPUs) concurrently...",
+        len(queries), len(targets), phmmer_cpus,
+        len(queries), len(hmms), hmmscan_cpus,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        phmmer_future = pool.submit(run_phmmer_search, queries, targets, phmmer_cpus, evalue_f)
+        hmmscan_future = pool.submit(run_hmmscan_search, queries, hmms, hmmscan_cpus, evalue_f)
+        phmmer_res = phmmer_future.result()
+        hmmscan_res = hmmscan_future.result()
 
     return phmmer_res, hmmscan_res
 
@@ -233,7 +247,8 @@ def annotate_gff3(
         if any(info["evalue"] <= 1e-2 for info in hits.values())
     }
 
-    gff3 = gffutils.create_db(str(gff3_path), ":memory:", verbose=False)
+    from eukan.gff import create_gff_db
+    gff3 = create_gff_db(gff3_path)
     gff3.update(
         _add_func_info(gff3, phmmer_res, hmmscan_strict),
         merge_strategy="replace",

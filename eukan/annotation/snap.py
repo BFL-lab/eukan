@@ -7,7 +7,8 @@ from pathlib import Path
 import gffutils
 
 from eukan.annotation.augustus import build_training_set
-from eukan.gff import GFF3_DIALECT, parser as gffparser
+from eukan.gff import GFF3_DIALECT, create_gff_db, transform_db
+from eukan.gff import parser as gffparser
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_complete, step_dir
@@ -41,9 +42,8 @@ def run_snap(config: PipelineConfig, *evidence: Path) -> Path:
         cwd=sdir, out_file="snap.gff",
     )
 
-    snap = gffutils.create_db(
-        str(sdir / "snap.gff"), ":memory:",
-        transform=gffparser.fix_snap_featuretype,
+    snap = create_gff_db(
+        sdir / "snap.gff", transform=gffparser.make_snap_featuretype_transform(),
     )
     dialect = gffutils.DataIterator(str(sdir / "snap.gff")).dialect
     dialect["fmt"] = "gtf"
@@ -52,17 +52,12 @@ def run_snap(config: PipelineConfig, *evidence: Path) -> Path:
         gtf_transcript_key="Parent", gtf_gene_key="Parent",
     )
     snap.dialect = GFF3_DIALECT
-    snap = gffutils.create_db(
-        snap, ":memory:", dialect=GFF3_DIALECT, transform=gffparser.gff3_it,
-    )
+    snap = transform_db(snap, gffparser.gff3_it)
     snap.update(
         gffparser.add_missing_feats_to_gff3(snap),
         merge_strategy="create_unique",
     )
-    snap = gffutils.create_db(
-        snap, ":memory:", dialect=GFF3_DIALECT,
-        transform=gffparser.homogenize_snap_source,
-    )
+    snap = transform_db(snap, gffparser.homogenize_snap_source)
     featuredb2gff3_file(snap, sdir / output)
     return sdir / output
 
@@ -88,19 +83,11 @@ def run_codingquarry(config: PipelineConfig, evidence: Path) -> Path:
         cwd=sdir,
     )
 
-    cq = gffutils.create_db(
-        str(sdir / "out" / "PredictedPass.gff3"), ":memory:",
-        transform=gffparser.add_cq_mRNA,
-        merge_strategy="create_unique",
-    )
+    cq = create_gff_db(sdir / "out" / "PredictedPass.gff3", transform=gffparser.add_cq_mRNA)
     cq.update(
         gffparser.add_missing_feats_to_gff3(cq),
         merge_strategy="create_unique",
     )
-    cq = gffutils.create_db(
-        cq, ":memory:", dialect=GFF3_DIALECT,
-        transform=gffparser.fix_dup_IDs,
-        merge_strategy="create_unique",
-    )
+    cq = transform_db(cq, gffparser.fix_dup_IDs)
     featuredb2gff3_file(cq, sdir / output)
     return sdir / output

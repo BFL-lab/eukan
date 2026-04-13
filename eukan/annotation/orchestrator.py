@@ -15,8 +15,9 @@ from eukan.annotation.validation import sanitize_genome_fasta, validate_fasta
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.logging import count_gff3_features, get_logger
 from eukan.infra.manifest import (
-    RunManifest, init_manifest, load_manifest, save_manifest,
+    RunManifest, StepStatus, get_or_create_manifest, save_manifest,
     pipeline_step, is_step_complete, is_step_interrupted, clean_interrupted_step,
+    validate_step_outputs,
 )
 from eukan.infra.steps import step_complete, step_dir
 from eukan.annotation.orf import create_transcriptome_orf_db
@@ -53,6 +54,9 @@ def find_orfs(config: PipelineConfig, trans_gff3: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
+_MANIFEST_PREFIX = "annotation"
+
+
 def _run_step(
     config: PipelineConfig,
     manifest: RunManifest,
@@ -63,18 +67,22 @@ def _run_step(
 ) -> Path:
     """Run a single pipeline step with manifest tracking via context manager.
 
-    Skips if already completed in a previous run.
+    Skips if already completed in a previous run.  The manifest key is
+    prefixed with 'annotation/' to avoid collisions with other pipelines.
     """
-    cached = is_step_complete(manifest, step_name)
+    manifest_key = f"{_MANIFEST_PREFIX}/{step_name}"
+    sdir = config.work_dir / step_name
+
+    cached = is_step_complete(manifest, manifest_key)
     if cached:
         return cached
 
     # Clean up interrupted previous runs before starting
-    if is_step_interrupted(config.work_dir, step_name):
+    if is_step_interrupted(config.manifest_dir, step_name, step_dir=sdir):
         log.warning("[%s] Cleaning up interrupted previous run...", step_name)
-        clean_interrupted_step(config.work_dir, step_name)
+        clean_interrupted_step(config.manifest_dir, step_name, step_dir=sdir)
 
-    with pipeline_step(config.work_dir, manifest, step_name) as step:
+    with pipeline_step(config.manifest_dir, manifest, manifest_key, step_dir=sdir) as step:
         result_path = fn(config, *args, **kwargs)
         step.output_file = str(result_path)
         return result_path
@@ -118,7 +126,10 @@ def _run_concurrent_steps(
 # ---------------------------------------------------------------------------
 
 
-def run_annotation_pipeline(config: PipelineConfig) -> Path:
+def run_annotation_pipeline(
+    config: PipelineConfig,
+    force_steps: list[str] | None = None,
+) -> Path:
     """Run the full annotation pipeline.
 
     Features:
@@ -126,6 +137,12 @@ def run_annotation_pipeline(config: PipelineConfig) -> Path:
     - Skips completed steps on resume
     - Cleans up interrupted steps automatically
     - Runs independent steps concurrently where possible
+
+    Args:
+        config: Pipeline configuration.
+        force_steps: Optional list of step names to force re-run, even if
+            previously completed.  When provided, step records are removed
+            from the manifest so they will be re-executed.
 
     Returns:
         Path to the final GFF3 output.
@@ -135,10 +152,7 @@ def run_annotation_pipeline(config: PipelineConfig) -> Path:
     # Sanitize genome headers (strip descriptions that break GFF tools)
     sanitized_genome = sanitize_genome_fasta(config.genome, config.work_dir)
     if sanitized_genome != config.genome:
-        # Update config with sanitized genome path
-        config = PipelineConfig(
-            **{**config.model_dump(), "genome": sanitized_genome}
-        )
+        config = config.model_copy(update={"genome": sanitized_genome})
 
     if config.has_transcripts:
         log.info("Transcript evidence: %s, %s, %s",
@@ -146,15 +160,31 @@ def run_annotation_pipeline(config: PipelineConfig) -> Path:
     else:
         log.info("No transcript evidence found. Running protein-only annotation.")
 
-    # Load or create manifest
-    manifest = load_manifest(config.work_dir)
-    if manifest and manifest.status == "completed":
-        log.info("Previous run completed. Delete eukan-run.json to re-run.")
-        final = config.work_dir / "final.gff3"
-        if final.exists():
-            return final
-    manifest = init_manifest(config)
-    save_manifest(config.work_dir, manifest)
+    # Load or create shared manifest (used by all pipelines in this work_dir)
+    manifest = get_or_create_manifest(config.manifest_dir, config)
+
+    if force_steps:
+        # Explicit re-run: remove only the requested steps
+        for step in force_steps:
+            manifest.steps.pop(step, None)
+        save_manifest(config.manifest_dir, manifest)
+    else:
+        # Validate manifest: check completed steps have valid output
+        expected = _expected_steps(config)
+        errors = _validate_step_outputs(manifest, expected)
+        if errors:
+            for msg in errors:
+                log.error(msg)
+            raise SystemExit(1)
+
+        # Check if there's any work to do
+        pending = [s for s in expected if s not in manifest.steps]
+        if not pending:
+            final = config.work_dir / "final.gff3"
+            if final.exists():
+                log.info("All steps complete. Use --run-* flags to re-run specific steps.")
+                return final
+        save_manifest(config.manifest_dir, manifest)
 
     try:
         result = _execute_steps(config, manifest)
@@ -162,12 +192,46 @@ def run_annotation_pipeline(config: PipelineConfig) -> Path:
         manifest.finished_at = manifest.steps[
             max(manifest.steps, key=lambda k: manifest.steps[k].finished_at or "")
         ].finished_at
-        save_manifest(config.work_dir, manifest)
+        save_manifest(config.manifest_dir, manifest)
         return result
     except Exception:
         manifest.status = "failed"
-        save_manifest(config.work_dir, manifest)
+        save_manifest(config.manifest_dir, manifest)
         raise
+
+
+# Map from manifest key to the --run-* CLI flag that forces re-run
+_STEP_TO_FLAG = {
+    f"{_MANIFEST_PREFIX}/genemark": "--run-genemark",
+    f"{_MANIFEST_PREFIX}/prot_align": "--run-prot-align",
+    f"{_MANIFEST_PREFIX}/prot_align_ssp": "--run-prot-align",
+    f"{_MANIFEST_PREFIX}/augustus": "--run-augustus",
+    f"{_MANIFEST_PREFIX}/snap": "--run-snap",
+    f"{_MANIFEST_PREFIX}/codingquarry": "--run-snap",
+    f"{_MANIFEST_PREFIX}/orf_finder": "--run-genemark",
+    f"{_MANIFEST_PREFIX}/evm_consensus_models": "--run-consensus",
+}
+
+
+def _validate_step_outputs(manifest: RunManifest, expected: list[str]) -> list[str]:
+    """Validate that completed steps have non-empty output files."""
+    return validate_step_outputs(manifest, expected, _STEP_TO_FLAG)
+
+
+def _expected_steps(config: PipelineConfig) -> list[str]:
+    """Return the list of manifest step keys expected for this config."""
+    prot_align_step = "prot_align_ssp" if config.spaln_ssp else "prot_align"
+    steps = ["genemark", prot_align_step, "augustus"]
+    if config.has_transcripts:
+        steps.insert(0, "orf_finder")
+    if config.is_fungus:
+        steps.extend(["snap", "codingquarry"])
+    elif config.is_protist:
+        steps.extend(["snap", "codingquarry"])
+    else:
+        steps.append("snap")
+    steps.append("evm_consensus_models")
+    return [f"{_MANIFEST_PREFIX}/{s}" for s in steps]
 
 
 def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
@@ -185,8 +249,9 @@ def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
         _log_prediction_count("GeneMark", ev["genemark"])
 
         intron_hints = config.work_dir / "genemark" / "introns.gff"
+        prot_align_step = "prot_align_ssp" if config.spaln_ssp else "prot_align"
         ev["spaln"] = _run_step(
-            config, manifest, "prot_align", align_proteins,
+            config, manifest, prot_align_step, align_proteins,
             ev["genemark"], config.proteins,
             intron_hints if intron_hints.exists() else None,
         )
@@ -219,8 +284,9 @@ def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
     else:
         ev["genemark"] = _run_step(config, manifest, "genemark", run_genemark)
         _log_prediction_count("GeneMark", ev["genemark"])
+        prot_align_step = "prot_align_ssp" if config.spaln_ssp else "prot_align"
         ev["spaln"] = _run_step(
-            config, manifest, "prot_align", align_proteins,
+            config, manifest, prot_align_step, align_proteins,
             ev["genemark"], config.proteins,
         )
         ev["augustus"] = _run_step(

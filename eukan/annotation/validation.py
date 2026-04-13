@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import gffutils
 from Bio import SeqIO
 
-from eukan.exceptions import FastaValidationError, GFFValidationError
+from eukan.exceptions import FastaValidationError
 from eukan.infra.logging import get_logger
 
 log = get_logger(__name__)
@@ -56,8 +55,10 @@ def sanitize_genome_fasta(genome: Path, work_dir: Path) -> Path:
 
 
 def validate_gff(path: Path) -> None:
-    """Verify that a file is valid GFF3."""
-    db = gffutils.create_db(str(path), ":memory:")
-    for f in db.all_features():
-        if len(f.attributes) == 0 or f.start is None or f.end is None:
-            raise GFFValidationError(path, "feature has missing attributes or coordinates")
+    """Verify that a file is valid GFF3.
+
+    Uses streaming validation (no full DB load) for efficiency on large files.
+    Raises GFFValidationError on invalid input.
+    """
+    from eukan.infra.logging import validate_gff as _validate_gff_streaming
+    _validate_gff_streaming(path)

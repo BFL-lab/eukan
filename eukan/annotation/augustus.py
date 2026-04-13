@@ -13,6 +13,7 @@ import gffutils
 from Bio import SeqIO
 
 from eukan.exceptions import ToolEnvError
+from eukan.gff import create_gff_db
 from eukan.gff import intersecter as gffintersecter
 from eukan.gff import parser as gffparser
 from eukan.gff.io import featuredb2gff3_file
@@ -95,8 +96,10 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
         build_training_set(config, evidence, sdir)
 
         # Report training set size
-        train_count = sum(1 for l in open(sdir / "genbank.gb.train") if l.startswith("LOCUS"))
-        test_count = sum(1 for l in open(sdir / "genbank.gb.test") if l.startswith("LOCUS"))
+        with open(sdir / "genbank.gb.train") as fh:
+            train_count = sum(1 for l in fh if l.startswith("LOCUS"))
+        with open(sdir / "genbank.gb.test") as fh:
+            test_count = sum(1 for l in fh if l.startswith("LOCUS"))
         total = train_count + test_count
         if total <= 500:
             log.warning(
@@ -185,10 +188,7 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
         cwd=sdir,
     )
 
-    aug_out = gffutils.create_db(
-        str(sdir / "augustus.gff"), ":memory:",
-        transform=gffparser.clean_augustus_gff3,
-    )
+    aug_out = create_gff_db(sdir / "augustus.gff", transform=gffparser.clean_augustus_gff3)
     featuredb2gff3_file(aug_out, sdir / output)
 
     # Cleanup splits

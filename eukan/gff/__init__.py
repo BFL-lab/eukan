@@ -33,19 +33,22 @@ def create_gff_db(
 ) -> gffutils.FeatureDB:
     """Create a gffutils in-memory database with standardised defaults.
 
-    Wraps ``gffutils.create_db()`` with consistent defaults for dialect,
-    verbose, and merge_strategy so callers don't need to repeat them.
+    Wraps ``gffutils.create_db()`` with consistent defaults for verbose
+    and merge_strategy so callers don't need to repeat them.  The dialect
+    is auto-detected by default; pass ``dialect=GFF3_DIALECT`` explicitly
+    when a specific dialect is needed.
     """
     data = str(source) if isinstance(source, Path) else source
-    return gffutils.create_db(
-        data,
-        ":memory:",
-        dialect=dialect or GFF3_DIALECT,
-        transform=transform,
+    kw: dict = dict(
         merge_strategy=merge_strategy,
         verbose=verbose,
         **kwargs,
     )
+    if transform is not None:
+        kw["transform"] = transform
+    if dialect is not None:
+        kw["dialect"] = dialect
+    return gffutils.create_db(data, ":memory:", **kw)
 
 
 def transform_db(
@@ -59,8 +62,8 @@ def transform_db(
 ) -> gffutils.FeatureDB:
     """Re-create a database by applying a transform to an existing one.
 
-    This is the common pattern of ``gffutils.create_db(existing_db, ...)``
-    with a new transform function.
+    Uses GFF3_DIALECT by default since the input is typically a
+    previously parsed FeatureDB that should produce GFF3 output.
     """
     return gffutils.create_db(
         db,

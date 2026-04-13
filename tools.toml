@@ -54,6 +54,12 @@ required_by = ["annotate"]
 install_hint = "Requires a license from https://topaz.gatech.edu/GeneMark/license_download.cgi"
 conda_path_dirs = ["opt/genemark"]
 
+[diamond]
+binary = "diamond"
+version_cmd = ["diamond", "version"]
+required_by = ["annotate"]
+conda_package = "diamond"
+
 [samtools]
 binary = "samtools"
 version_cmd = ["samtools", "--version"]
@@ -77,6 +83,7 @@ min_version = "3.0"
 conda_env_vars = [
     { var = "ALN_TAB", path = "share/spaln/table" },
     { var = "ALN_DBS", path = "share/spaln/seqdb" },
+    { var = "PERL5LIB", path = "share/spaln/alndbs" },
 ]
 
 [makdbs]

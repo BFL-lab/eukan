@@ -50,6 +50,25 @@ RUN git clone --depth 1 https://github.com/ogotoh/fitild /opt/conda/envs/eukan/o
     && rm -rf .git src/*.o
 
 # ---------------------------------------------------------------------------
+# 2b. Build spaln analysis utilities and install Perl scripts for makessp
+#     The bioconda spaln package only ships the core binaries (spaln, sortgrcd,
+#     makdbs, makmdm). Species-specific parameter generation (--spaln-ssp)
+#     additionally needs: utn, dvn, exinpot, npssm, kmers, rdn, plus the
+#     matching Perl scripts (make_eij.pl, make_ssp.pl, Util.pm, etc.).
+# ---------------------------------------------------------------------------
+RUN git clone --depth 1 https://github.com/ogotoh/spaln /tmp/spaln_src \
+    && cd /tmp/spaln_src/src \
+    && ./configure \
+    && make -j"$(nproc)" all 2>/dev/null || true \
+    && for bin in utn dvn exinpot npssm kmers rdn eij2ild; do \
+        [ -f /tmp/spaln_src/src/$bin ] && cp /tmp/spaln_src/src/$bin /opt/conda/envs/eukan/bin/ || true; \
+    done \
+    && cp /tmp/spaln_src/perl/*.pl /tmp/spaln_src/perl/*.pm \
+       /opt/conda/envs/eukan/share/spaln/alndbs/ \
+    && chmod +x /opt/conda/envs/eukan/share/spaln/alndbs/*.pl \
+    && rm -rf /tmp/spaln_src
+
+# ---------------------------------------------------------------------------
 # 3. GeneMark (optional — requires user-provided license files)
 # ---------------------------------------------------------------------------
 COPY gmes_linux_64*.tar.gz gm_key_64.gz* /tmp/_genemark/
@@ -133,6 +152,7 @@ ENV CONDA_DEFAULT_ENV=eukan \
     PASAHOME="/opt/conda/envs/eukan/opt/pasa-2.5.3" \
     ALN_TAB="/opt/conda/envs/eukan/share/spaln/table" \
     ALN_DBS="/opt/conda/envs/eukan/share/spaln/seqdb" \
+    PERL5LIB="/opt/conda/envs/eukan/share/spaln/alndbs" \
     EUKAN_ROOT=/opt/eukan \
     HOME=/home/eukan \
     USER=eukan

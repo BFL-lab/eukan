@@ -15,6 +15,8 @@ from Bio.Data import CodonTable
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
+from eukan.gff import create_gff_db
+
 
 def featuredb2gff3_file(featuredb: gffutils.FeatureDB, out: str | Path) -> None:
     """Write a FeatureDB to a GFF3 file with proper gene>mRNA>exon/CDS hierarchy."""
@@ -40,7 +42,7 @@ def extract_sequences(
 
     Yields SeqRecord objects (caller decides how to write them).
     """
-    gff3db = gffutils.create_db(str(gff3), ":memory:")
+    gff3db = create_gff_db(gff3)
     contigs = SeqIO.to_dict(SeqIO.parse(str(genome), "fasta"))
     codon_table = CodonTable.unambiguous_dna_by_id[genetic_code]
 

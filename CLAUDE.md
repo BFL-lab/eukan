@@ -40,7 +40,7 @@ docker build -t eukan -f docker/Dockerfile .
 
 ### CLI (`eukan/cli.py`)
 
-Click-based CLI with subcommands: `annotate`, `assemble`, `func-annot`, `gff3toseq`, `db-fetch`, `check`, `status`. Entry point defined in `pyproject.toml` as `eukan = "eukan.cli:cli"`.
+Click-based CLI with subcommands: `annotate`, `assemble`, `func-annot`, `gff3toseq`, `db-fetch`, `check`, `status`, `compare`. Entry point defined in `pyproject.toml` as `eukan = "eukan.cli:cli"`. All subcommands use harmonized option groups ("Required input", "Pipeline parameters", "Re-run steps"). Step re-run flags follow the `--run-*` pattern (e.g., `--run-genemark`, `--run-star`).
 
 ### Package Structure
 
@@ -89,11 +89,17 @@ eukan/
 1. Find ORFs in transcripts (if provided)
 2. GeneMark gene prediction (ES or ET mode depending on RNA-seq hints)
 3. Protein alignment via spaln (intron-rich) or gth (intron-poor)
+   - Default: fitild intron length distribution → spaln `-yI`
+   - `--spsp`: species-specific parameters via `make_eij.pl`/`make_ssp.pl` → spaln `-T` (experimental, uses separate `prot_align_ssp/` step dir)
 4. AUGUSTUS training and prediction using protein + RNA-seq hints
 5. SNAP training and prediction (fungus/protist also runs CodingQuarry)
 6. Consensus model building via EVM, weighted by evidence type
 7. Optional UTR addition via PASA
 8. Final GFF3 formatting with locus tags
+
+### Run Manifest
+
+All three pipelines share a single `eukan-run.json` in the working directory. Step names are prefixed by pipeline (`annotation/genemark`, `assembly/star`, `functional/search`). The manifest tracks per-step status, timing, and output checksums for resume and integrity checking. Key functions: `get_or_create_manifest()`, `pipeline_step()`, `is_step_complete()` in `infra/manifest.py`. Each config has a `manifest_dir` field (defaults to `work_dir`) controlling where the manifest is written.
 
 ### Conventions
 
@@ -103,3 +109,4 @@ eukan/
 - All pipeline state is in `PipelineConfig` (pydantic-settings) — no mutable class state
 - Each annotation step lives in its own file under `annotation/`, one file per tool
 - The three pipelines (annotation, assembly, functional) share the same structure: `orchestrator.py` + tool-specific files
+- CLI option groups are harmonized across subcommands: "Required input", "Pipeline parameters", "Re-run steps"

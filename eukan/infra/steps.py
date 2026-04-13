@@ -33,6 +33,9 @@ def step_dir(work_dir: Path, step_name: str) -> Path:
 def step_complete(work_dir: Path, step_name: str, output: str) -> Path | None:
     """Check if a pipeline step has already completed.
 
+    For GFF3/GFF outputs, validates the file is parseable.
+    For other file types, checks existence and non-emptiness.
+
     Returns:
         The output path if the step is complete and valid, else None.
     """
@@ -43,6 +46,13 @@ def step_complete(work_dir: Path, step_name: str, output: str) -> Path | None:
     if not path.exists():
         return None
 
-    if validate_gff(path):
+    # Only validate GFF structure for GFF files; for other types just
+    # check that the file is non-empty.
+    if path.suffix in (".gff3", ".gff"):
+        if validate_gff(path):
+            return path
+        return None
+
+    if path.stat().st_size > 0:
         return path
     return None

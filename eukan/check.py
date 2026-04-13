@@ -10,8 +10,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -61,13 +60,7 @@ def load_tool_registry() -> list[Tool]:
     if not toml_path:
         return []
 
-    if sys.version_info >= (3, 11):
-        import tomllib
-    else:
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib  # type: ignore[no-redef]
+    from eukan.infra import tomllib
 
     with open(toml_path, "rb") as f:
         data = tomllib.load(f)
@@ -468,6 +461,7 @@ def generate_environment_yml() -> str:
         "  - perl-hash-merge",
         "  - perl-mce",
         "  - perl-parallel-forkmanager",
+        "  - perl-math-utils",
         "",
         "  # eukan + Python dependencies (installed via pip for version consistency)",
         "  - pip",

@@ -233,6 +233,17 @@ def cli(verbose: bool, quiet: bool) -> None:
     "--utrs", type=click.Path(exists=True, path_type=Path),
     help="PASA SQLite database path for adding UTRs.",
 )
+@optgroup.group("Experimental")
+@optgroup.option(
+    "--spsp", is_flag=True, default=False,
+    help="Build species-specific spaln parameters from transcripts (alternative to fitild).",
+)
+@optgroup.group("Re-run steps")
+@optgroup.option("--run-genemark", is_flag=True, help="Force re-run GeneMark gene prediction.")
+@optgroup.option("--run-prot-align", is_flag=True, help="Force re-run protein alignment (spaln/gth).")
+@optgroup.option("--run-augustus", is_flag=True, help="Force re-run AUGUSTUS training and prediction.")
+@optgroup.option("--run-snap", is_flag=True, help="Force re-run SNAP (and CodingQuarry) prediction.")
+@optgroup.option("--run-consensus", is_flag=True, help="Force re-run EVM consensus model building.")
 def annotate(
     genome: Path,
     proteins: tuple[Path, ...],
@@ -241,11 +252,17 @@ def annotate(
     rnaseq_hints: Path | None,
     existing_augustus: str | None,
     strand_specific: bool,
+    spsp: bool,
     numcpu: int,
     weights: tuple[int, ...],
     code: int,
     utrs: Path | None,
     kingdom: str | None,
+    run_genemark: bool,
+    run_prot_align: bool,
+    run_augustus: bool,
+    run_snap: bool,
+    run_consensus: bool,
 ) -> None:
     """Run the genome annotation pipeline.
 
@@ -269,6 +286,7 @@ def annotate(
         "genetic_code": str(code),
         "weights": list(weights),
         "strand_specific": strand_specific,
+        "spaln_ssp": spsp,
     }
     if kingdom:
         kwargs["kingdom"] = kingdom
@@ -282,7 +300,22 @@ def annotate(
         kwargs["utrs_db"] = utrs.resolve()
 
     config = PipelineConfig(**kwargs)
-    result = run_annotation_pipeline(config)
+
+    # Build force_steps list from step-specific flags
+    force_steps: list[str] = []
+    prot_align_step = "prot_align_ssp" if spsp else "prot_align"
+    step_flag_map = {
+        "annotation/genemark": run_genemark,
+        f"annotation/{prot_align_step}": run_prot_align,
+        "annotation/augustus": run_augustus,
+        "annotation/snap": run_snap,
+        "annotation/evm_consensus_models": run_consensus,
+    }
+    for step_name, flag in step_flag_map.items():
+        if flag:
+            force_steps.append(step_name)
+
+    result = run_annotation_pipeline(config, force_steps=force_steps or None)
     click.echo(f"Done. Final annotation: {result}")
 
 
@@ -292,7 +325,7 @@ def annotate(
 
 
 @cli.command(cls=_PreformattedEpilogCommand, epilog=_PASA_CODE_TABLE)
-@optgroup.group("Input")
+@optgroup.group("Required input")
 @optgroup.option(
     "--genome", "-g", required=True, type=click.Path(exists=True, path_type=Path),
     help="Genome FASTA file.",
@@ -322,11 +355,11 @@ def annotate(
 @optgroup.option("--max-intron", "-M", type=int, default=5000, show_default=True, help="Maximum intron length.")
 @optgroup.option("--phred", type=click.Choice(["33", "64"]), default="33", show_default=True, help="Phred quality score.")
 @optgroup.option("--jaccard-clip", "-j", is_flag=True, help="Enable jaccard clipping.")
-@optgroup.option("--force", "-f", is_flag=True, help="Re-run steps even if outputs exist.")
-@optgroup.group("Advanced options")
-@optgroup.option("--map-reads", "-A", is_flag=True, help="Run read mapping (STAR).")
-@optgroup.option("--run-trinity", "-T", is_flag=True, help="Run Trinity assembly.")
-@optgroup.option("--run-pasa", "-P", is_flag=True, help="Run PASA alignment.")
+@optgroup.group("Re-run steps")
+@optgroup.option("--run-star", "-A", is_flag=True, help="Force re-run STAR read mapping.")
+@optgroup.option("--run-trinity", "-T", is_flag=True, help="Force re-run Trinity assembly.")
+@optgroup.option("--run-pasa", "-P", is_flag=True, help="Force re-run PASA alignment.")
+@optgroup.option("--force", "-f", is_flag=True, help="Force re-run all steps.")
 def assemble(
     genome: Path,
     left: Path | None,
@@ -338,7 +371,7 @@ def assemble(
     numcpu: int,
     strand_specific: str | None,
     align_mode: str,
-    map_reads: bool,
+    run_star: bool,
     run_trinity: bool,
     run_pasa: bool,
     jaccard_clip: bool,
@@ -395,14 +428,14 @@ def assemble(
     config = AssemblyConfig(**kwargs)
 
     steps = []
-    if map_reads:
+    if run_star:
         steps.append("map")
     if run_trinity:
         steps.append("trinity")
     if run_pasa:
         steps.append("pasa")
 
-    # If no specific steps, run all
+    # If no specific steps or --force, run all
     if not steps:
         steps = ["map", "trinity", "pasa"]
 
@@ -437,6 +470,7 @@ def assemble(
     "--gff3", type=click.Path(exists=True, path_type=Path),
     default=None, help="GFF3 file to annotate with functional info.",
 )
+@optgroup.option("--force", "-f", is_flag=True, help="Re-run steps even if outputs exist.")
 def func_annot(
     proteins: Path,
     uniprot: Path | None,
@@ -444,6 +478,7 @@ def func_annot(
     gff3: Path | None,
     numcpu: int,
     evalue: str,
+    force: bool,
 ) -> None:
     """Add functional annotations (UniProt + Pfam) to proteins.
 
@@ -467,6 +502,7 @@ def func_annot(
         gff3_path=gff3.resolve() if gff3 else None,
         num_cpu=numcpu,
         evalue=evalue,
+        force=force,
     )
     click.echo("Done.")
 

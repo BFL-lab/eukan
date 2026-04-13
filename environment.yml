@@ -27,6 +27,7 @@ dependencies:
   # External tools
   - augustus>=3.5
   - codingquarry>=2.0
+  - diamond
   - evidencemodeler>=2.1
   - fasta3
   - genomethreader>=1.7

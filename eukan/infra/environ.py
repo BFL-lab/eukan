@@ -28,7 +28,6 @@ Usage::
 from __future__ import annotations
 
 import os
-import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -42,13 +41,7 @@ def _load_tools_toml() -> dict[str, Any]:
     if not toml_path:
         return {}
 
-    if sys.version_info >= (3, 11):
-        import tomllib
-    else:
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib  # type: ignore[no-redef]
+    from eukan.infra import tomllib
 
     with open(toml_path, "rb") as f:
         return tomllib.load(f)

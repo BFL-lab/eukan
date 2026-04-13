@@ -12,11 +12,10 @@ from __future__ import annotations
 import os
 import random
 import string
-import sys
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from eukan.infra.logging import get_logger
 
@@ -34,13 +33,7 @@ def _pyproject_toml_settings(settings: BaseSettings) -> dict[str, Any]:
     if not pyproject.exists():
         return {}
     try:
-        if sys.version_info >= (3, 11):
-            import tomllib
-        else:
-            try:
-                import tomllib
-            except ImportError:
-                import tomli as tomllib  # type: ignore[no-redef]
+        from eukan.infra import tomllib
         with open(pyproject, "rb") as f:
             data = tomllib.load(f)
         return data.get("tool", {}).get("eukan", {})
@@ -112,12 +105,14 @@ class PipelineConfig(BaseSettings):
 
     # --- Defaulted (overridable via config/env/CLI) ---
     work_dir: Path = Field(default_factory=Path.cwd)
+    manifest_dir: Path | None = None  # defaults to work_dir if not set
     name: str = ""  # derived from genome stem if not set
     shortname: str = Field(default_factory=_rand_string)
     kingdom: Kingdom | None = None
     num_cpu: int = Field(default_factory=lambda: os.cpu_count() or 1)
     genetic_code: str = "11"
-    weights: list[int] = Field(default=[2, 1, 3])
+    weights: list[int] = Field(default_factory=lambda: [2, 1, 3])
+    spaln_ssp: bool = False
 
     # --- Optional transcript evidence (auto-discovered from work_dir if not set) ---
     transcripts_fasta: Path | None = None
@@ -132,6 +127,12 @@ class PipelineConfig(BaseSettings):
         "transcripts_gff": "nr_transcripts.gff3",
         "rnaseq_hints": "hints_rnaseq.gff",
     }
+
+    @model_validator(mode="after")
+    def _default_manifest_dir(self) -> "PipelineConfig":
+        if not self.manifest_dir:
+            object.__setattr__(self, "manifest_dir", self.work_dir)
+        return self
 
     @model_validator(mode="after")
     def _derive_name(self) -> "PipelineConfig":
@@ -223,6 +224,7 @@ class AssemblyConfig(BaseSettings):
 
     genome: Path
     work_dir: Path = Field(default_factory=Path.cwd)
+    manifest_dir: Path | None = None  # defaults to work_dir if not set
     left_reads: Path | None = None
     right_reads: Path | None = None
     single_reads: Path | None = None
@@ -235,6 +237,12 @@ class AssemblyConfig(BaseSettings):
     jaccard_clip: bool = False
     genetic_code: str = "1"
     splice_boundary_stringency: int = 3  # NUM_BP_PERFECT_SPLICE_BOUNDARY for PASA (0 for non-canonical)
+
+    @model_validator(mode="after")
+    def _default_manifest_dir(self) -> "AssemblyConfig":
+        if not self.manifest_dir:
+            object.__setattr__(self, "manifest_dir", self.work_dir)
+        return self
 
     @cached_property
     def genetic_code_obj(self):

@@ -7,7 +7,6 @@ core functions for building complete gene model hierarchies.
 from __future__ import annotations
 
 import re
-from collections import defaultdict
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -218,7 +217,8 @@ def prettify_gff3(
 
 def gff2zff(gff3: str | Path, fasta: str | Path, output_dir: Path | None = None) -> None:
     """Convert GFF3 to SNAP's ZFF annotation format (genome.ann)."""
-    featuredb = gffutils.create_db(str(gff3), ":memory:")
+    from eukan.gff import create_gff_db
+    featuredb = create_gff_db(gff3)
     contig_list = [f.id for f in SeqIO.parse(str(fasta), "fasta")]
     contigs: dict[str, list[list]] = {k: [] for k in contig_list}
 
@@ -306,24 +306,31 @@ def fix_dup_IDs(f: gffutils.Feature) -> gffutils.Feature:
     return f
 
 
-_snap_exon_counter: dict[str, int] = {}
+def make_snap_featuretype_transform() -> callable:
+    """Return a fresh transform that normalizes SNAP output features.
 
-
-def fix_snap_featuretype(f: gffutils.Feature) -> gffutils.Feature:
-    """Normalize SNAP output features.
-
-    SNAP GFF output uses ``group_name attr=val; ...`` format.  The group
-    name (gene ID) is always the first attribute key in insertion order.
-    We extract it as the Parent and assign a generated ID.
+    Each call creates an independent counter so that multiple transform
+    passes don't share state (which would cause ID collisions).
     """
-    f.source = "snap"
-    f.featuretype = "exon"
-    # SNAP puts the gene group name as the first attribute key
-    parent = next(iter(f.attributes))
-    _snap_exon_counter[parent] = _snap_exon_counter.get(parent, 0) + 1
-    exon_id = f"{parent}_exon_{_snap_exon_counter[parent]}"
-    f.attributes = {"ID": [exon_id], "Parent": [parent]}
-    return f
+    counter: dict[str, int] = {}
+
+    def fix_snap_featuretype(f: gffutils.Feature) -> gffutils.Feature:
+        """Normalize SNAP output features.
+
+        SNAP GFF output uses ``group_name attr=val; ...`` format.  The group
+        name (gene ID) is always the first attribute key in insertion order.
+        We extract it as the Parent and assign a generated ID.
+        """
+        f.source = "snap"
+        f.featuretype = "exon"
+        # SNAP puts the gene group name as the first attribute key
+        parent = next(iter(f.attributes))
+        counter[parent] = counter.get(parent, 0) + 1
+        exon_id = f"{parent}_exon_{counter[parent]}"
+        f.attributes = {"ID": [exon_id], "Parent": [parent]}
+        return f
+
+    return fix_snap_featuretype
 
 
 def homogenize_snap_source(f: gffutils.Feature) -> gffutils.Feature:

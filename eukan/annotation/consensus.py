@@ -7,6 +7,7 @@ from pathlib import Path
 import gffutils
 
 from eukan.annotation.evm import run_evm
+from eukan.gff import create_gff_db
 from eukan.gff import intersecter as gffintersecter
 from eukan.gff import parser as gffparser
 from eukan.infra.runner import run_cmd
@@ -72,14 +73,12 @@ def build_consensus_models(config: PipelineConfig, *evidence: Path) -> Path:
     consensus_path = pasa_outputs[0] if pasa_outputs else sdir / "consensus_models.gff3"
 
     # Format the final GFF3
-    consdb = gffutils.create_db(
-        str(consensus_path), ":memory:", merge_strategy="create_unique",
-    )
+    consdb = create_gff_db(consensus_path)
 
     # Patch in transcript ORFs that don't overlap consensus models
     orf_path = config.work_dir / "orf_finder" / "transcript_orfs.gff3"
     if orf_path.exists():
-        orf_db = gffutils.create_db(str(orf_path), ":memory:")
+        orf_db = create_gff_db(orf_path)
         missing = gffintersecter.find_nonoverlapping_genes(orf_db, consdb)
         if missing:
             log.info("Reintroduced %d transcript ORFs not overlapping EVM consensus", len(missing))
@@ -90,8 +89,8 @@ def build_consensus_models(config: PipelineConfig, *evidence: Path) -> Path:
         )
 
     consdb.dialect["order"].append("locus_tag")
-    consdb = gffutils.create_db(
-        gffparser.fix_CDS_phases(consdb), ":memory:", merge_strategy="merge",
+    consdb = create_gff_db(
+        gffparser.fix_CDS_phases(consdb), merge_strategy="merge",
     )
     prettified = gffparser.prettify_gff3(consdb, config.shortname)
 

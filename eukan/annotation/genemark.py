@@ -8,7 +8,8 @@ import gffutils
 import pandas as pd
 
 from eukan.annotation.validation import validate_gff
-from eukan.gff import GFF3_DIALECT, parser as gffparser
+from eukan.gff import transform_db
+from eukan.gff import parser as gffparser
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_complete, step_dir
@@ -33,18 +34,18 @@ def run_genemark(config: PipelineConfig, hints: Path | None = None) -> Path:
 
     hgd_flag = ["--fungus"] if config.is_fungus else []
 
-    if hints is None:
-        training_type = ["--ES"]
-    else:
-        # Extract intron hints for guided training
+    # Determine training mode: ES (self-training) or ET (with RNA-seq intron hints)
+    has_intron_hints = False
+    if hints is not None:
         hints_df = pd.read_csv(hints, sep="\t", header=None, low_memory=False)
         introns = hints_df[hints_df[2] == "intron"]
         introns.to_csv(sdir / "introns.gff", sep="\t", header=None, index=False)
-        training_type = (
-            ["--ET=introns.gff", "--et_score=3"]
-            if len(introns) >= 150
-            else ["--ES"]
-        )
+        has_intron_hints = len(introns) >= 150
+
+    if has_intron_hints:
+        training_type = ["--ET=introns.gff", "--et_score=3"]
+    else:
+        training_type = ["--ES"]
 
     if not (sdir / "genemark.gtf").exists():
         run_cmd(
@@ -64,17 +65,11 @@ def run_genemark(config: PipelineConfig, hints: Path | None = None) -> Path:
                  "CDS": ["gene_id", "transcript_id"], "exon": ["gene_id", "transcript_id"],
                  "start_codon": ["gene_id", "transcript_id"], "stop_codon": ["gene_id", "transcript_id"]},
     )
-    gmgff3 = gffutils.create_db(
-        gmgtf, ":memory:", dialect=GFF3_DIALECT,
-        transform=gffparser.gtf2gff3, verbose=False,
-    )
+    gmgff3 = transform_db(gmgtf, gffparser.gtf2gff3)
     gmgff3.update(
         gffparser.add_missing_feats_to_gff3(gmgff3),
         merge_strategy="create_unique",
     )
-    gmgff3 = gffutils.create_db(
-        gmgff3, ":memory:", dialect=GFF3_DIALECT,
-        transform=gffparser.fix_contig_names, verbose=False,
-    )
+    gmgff3 = transform_db(gmgff3, gffparser.fix_contig_names)
     featuredb2gff3_file(gmgff3, sdir / output)
     return sdir / output

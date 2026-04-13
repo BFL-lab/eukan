@@ -8,7 +8,7 @@ Currently, Eukan installation is only supported via Docker and Conda.
 
 ### Docker
 
-The Docker image installs all external tools via conda (from the same `environment.yml` used for local installs), then builds fitild from source and includes GeneMark.
+The Docker image installs all external tools via conda (from the same `environment.yml` used for local installs), then builds fitild from source and optionally includes GeneMark.
 
 ```bash
 git clone https://github.com/BFL-lab/eukan.git
@@ -44,7 +44,9 @@ cp conda-activate.sh $CONDA_PREFIX/etc/conda/activate.d/eukan.sh
 conda deactivate && conda activate eukan
 ```
 
-`fitild` and GeneMark require manual installation after creating the environment. A helper script handles this:
+The `environment.yml` is auto-generated from `tools.toml`. To regenerate after modifying tool versions: `eukan dev generate-env`.
+
+Two tools require manual installation after creating the environment. A helper script handles both:
 
 ```bash
 # Download GeneMark (license required) from:
@@ -75,7 +77,8 @@ poetry run eukan --help
 
 **Manual install**:
 - GeneMark-ES/ET/EP+:  [license required](https://topaz.gatech.edu/GeneMark/license_download.cgi)
-- fitild:  [github.com/ogotoh/fitild](https://github.com/ogotoh/fitild) (only needed for spaln-based protein alignment)
+- fitild:  [github.com/ogotoh/fitild](https://github.com/ogotoh/fitild) (only needed for spaln-based protein alignment in default fitild mode)
+- spaln analysis utilities (`utn`, `npssm`, `exinpot`, etc.): built from [spaln source](https://github.com/ogotoh/spaln) via `make all` (only needed for `--spsp` species-specific parameter mode)
 
 ## Usage
 
@@ -147,6 +150,17 @@ Override options:
   -r, --rnaseq-hints PATH         Override auto-discovered RNA-seq hints GFF.
   --strand-specific                Transcripts are strand-oriented.
   --utrs PATH                      PASA SQLite database for UTR addition.
+
+Experimental:
+  --spsp                           Build species-specific spaln parameters from transcripts
+                                   (alternative to fitild). See "Protein alignment modes" below.
+
+Re-run steps:
+  --run-genemark                   Force re-run GeneMark gene prediction.
+  --run-prot-align                 Force re-run protein alignment (spaln/gth).
+  --run-augustus                    Force re-run AUGUSTUS training and prediction.
+  --run-snap                       Force re-run SNAP (and CodingQuarry) prediction.
+  --run-consensus                  Force re-run EVM consensus model building.
 ```
 
 ### `eukan assemble`
@@ -174,12 +188,12 @@ Pipeline parameters:
   -M, --max-intron INTEGER         Max intron length. [default: 5000]
   --phred [33|64]                  Phred quality score. [default: 33]
   -j, --jaccard-clip               Enable jaccard clipping.
-  -f, --force                      Re-run steps even if outputs exist.
 
-Advanced options:
-  -A, --map-reads                  Run STAR read mapping.
-  -T, --run-trinity                Run Trinity assembly.
-  -P, --run-pasa                   Run PASA alignment.
+Re-run steps:
+  -A, --run-star                   Force re-run STAR read mapping.
+  -T, --run-trinity                Force re-run Trinity assembly.
+  -P, --run-pasa                   Force re-run PASA alignment.
+  -f, --force                      Force re-run all steps.
 ```
 
 The pipeline runs STAR mapping, genome-guided + de novo Trinity assembly, and PASA alignment. If no step flags (`-A`, `-T`, `-P`) are given, all steps run.
@@ -200,6 +214,7 @@ Override options:
   --uniprot PATH         UniProt-SwissProt database FASTA.
   --pfam PATH            Pfam HMM database.
   --gff3 PATH            GFF3 file to annotate with functional info.
+  -f, --force            Re-run steps even if outputs exist.
 ```
 
 Runs phmmer against UniProt and hmmscan against Pfam (via pyhmmer). Produces:
@@ -321,7 +336,7 @@ The annotation pipeline (`eukan annotate`) runs the following steps:
 
 1. **ORF finding**:  Identify ORFs in transcript assemblies (if provided).
 2. **GeneMark**:  Ab initio gene prediction (ES mode, or ET mode if RNA-seq intron hints are available with >= 150 introns).
-3. **Protein alignment**:  Spliced alignment via spaln (intron-rich genomes, > 25% introns/gene) or GenomeThreader (intron-poor).
+3. **Protein alignment**:  Spliced alignment via spaln (intron-rich genomes, > 25% introns/gene) or GenomeThreader (intron-poor). See [Protein alignment modes](#protein-alignment-modes).
 4. **AUGUSTUS**:  Train species-specific parameters from concordant GeneMark/protein models, then predict genes using protein + RNA-seq hints.
 5. **SNAP**:  Train and predict (all kingdoms). **CodingQuarry** also runs for fungus/protist genomes.
 6. **EVidenceModeler**:  Build weighted consensus gene models from all evidence sources.
@@ -329,6 +344,44 @@ The annotation pipeline (`eukan annotate`) runs the following steps:
 8. **Final output**:  Assign sequential locus tags and correct CDS phases. Non-overlapping transcript ORFs not captured by EVM are patched into the final model set.
 
 Output: `final.gff3` in the working directory.
+
+### Protein alignment modes
+
+spaln protein alignment supports two modes for modeling intron structure:
+
+**Default (fitild)**: Builds an intron length distribution from GeneMark predictions and feeds it to spaln via the `-yI` parameter. This is the established approach and requires the [fitild](https://github.com/ogotoh/fitild) tool.
+
+**Species-specific parameters (`--spsp`)**: Uses transcript data to build full species-specific spaln parameters (splice site models, intron potential, codon usage) via spaln's `make_eij.pl` and `make_ssp.pl` scripts. This produces richer alignment parameters than fitild alone, at the cost of additional computation. Requires transcript data (from `eukan assemble` or provided via `--transcripts-fasta`).
+
+```bash
+# Default mode (fitild)
+eukan annotate -g genome.fasta -p proteins.fasta
+
+# Species-specific parameter mode (experimental)
+eukan annotate -g genome.fasta -p proteins.fasta --spsp
+```
+
+When `--spsp` is used, protein alignment results are written to a separate directory (`prot_align_ssp/`) so both modes can coexist for comparison.
+
+### Run tracking and resume
+
+All pipelines write to a shared `eukan-run.json` manifest in the working directory, tracking per-step status, timing, and output checksums. This enables:
+
+- **Resume**: Re-running a subcommand skips steps that already completed.
+- **Selective re-run**: Use `--run-*` flags to force specific steps to re-execute.
+- **Integrity checking**: On startup, completed steps are validated (output exists and is non-empty). If a discrepancy is found, the pipeline reports the issue and suggests the `--run-*` flag to fix it.
+- **Progress monitoring**: `eukan status` reads the manifest and shows progress across all pipelines.
+
+```bash
+# View run status
+eukan status
+
+# Re-run only protein alignment
+eukan annotate -g genome.fasta -p proteins.fasta --run-prot-align
+
+# Re-run only PASA in assembly
+eukan assemble -g genome.fasta -l left.fq -r right.fq -P
+```
 
 ## Testing
 

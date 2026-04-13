@@ -7,12 +7,14 @@ detection — all via direct gffutils FeatureDB queries without pybedtools.
 
 from __future__ import annotations
 
+import bisect
 from collections import defaultdict
 from collections.abc import Iterator
 from pathlib import Path
 
 import gffutils
 
+from eukan.gff import create_gff_db
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.logging import get_logger
 
@@ -129,7 +131,7 @@ def merge_fully_overlapping_transcript_genes(
                     f.attributes["Parent"] = [replacement_ids[parent]]
             yield f
 
-    return gffutils.create_db(_consolidate(), ":memory:")
+    return create_gff_db(_consolidate())
 
 
 # ---------------------------------------------------------------------------
@@ -146,22 +148,37 @@ def find_nonoverlapping_genes(
     Returns all features (gene + children) for non-overlapping, ORF-containing genes.
     """
     # Build a fast lookup of target gene intervals by (chrom, strand)
-    target_intervals: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
+    # Store as parallel sorted lists of (start, end) for binary search.
+    target_starts: dict[tuple[str, str], list[int]] = defaultdict(list)
+    target_ends: dict[tuple[str, str], list[int]] = defaultdict(list)
     for gene in db_target.features_of_type("gene"):
-        target_intervals[(gene.chrom, gene.strand)].append((gene.start, gene.end))
+        key = (gene.chrom, gene.strand)
+        target_starts[key].append(gene.start)
+        target_ends[key].append(gene.end)
 
-    # Sort intervals for binary search
-    for key in target_intervals:
-        target_intervals[key].sort()
+    # Sort by start coordinate; keep ends aligned
+    for key in target_starts:
+        paired = sorted(zip(target_starts[key], target_ends[key]))
+        target_starts[key] = [s for s, _ in paired]
+        target_ends[key] = [e for _, e in paired]
 
     result: list[gffutils.Feature] = []
 
     for gene in db_source.features_of_type("gene"):
         key = (gene.chrom, gene.strand)
-        overlaps = any(
-            gene.start <= t_end and t_start <= gene.end
-            for t_start, t_end in target_intervals.get(key, [])
-        )
+        starts = target_starts.get(key)
+        if not starts:
+            # No target genes on this chrom/strand — no overlap
+            overlaps = False
+        else:
+            # A target (t_start, t_end) overlaps gene if:
+            #   t_start <= gene.end AND t_end >= gene.start
+            # Since starts are sorted, all targets with index < bisect_right(gene.end)
+            # satisfy t_start <= gene.end. We only need to check t_end >= gene.start
+            # among those candidates.
+            idx = bisect.bisect_right(starts, gene.end)
+            ends = target_ends[key]
+            overlaps = any(ends[i] >= gene.start for i in range(idx))
         if overlaps:
             continue
 
@@ -255,8 +272,8 @@ def find_concordant_models(
 
     Returns a FeatureDB containing only the concordant models from gff3_1.
     """
-    db1 = gffutils.create_db(str(gff3_1), ":memory:")
-    db2 = gffutils.create_db(str(gff3_2), ":memory:")
+    db1 = create_gff_db(gff3_1)
+    db2 = create_gff_db(gff3_2)
 
     # Index db2 mRNAs by (chrom, strand) for fast lookup
     db2_mrnas: dict[tuple[str, str], list[gffutils.Feature]] = defaultdict(list)
@@ -305,7 +322,7 @@ def find_concordant_models(
         except gffutils.FeatureNotFoundError:
             continue
 
-    return gffutils.create_db(features, ":memory:") if features else _empty_db()
+    return create_gff_db(features) if features else _empty_db()
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +353,7 @@ def combine_nonredundant_models(
             all_features.extend(db.children(gene))
 
     log.debug("Combined %d non-redundant gene models from %d sources", len(seen_ids), len(feature_dbs))
-    return gffutils.create_db(all_features, ":memory:") if all_features else _empty_db()
+    return create_gff_db(all_features) if all_features else _empty_db()
 
 
 # ---------------------------------------------------------------------------
@@ -369,4 +386,4 @@ def extract_supported_models(
 
     out_path = (output_dir / "training_set.gff3") if output_dir else Path("training_set.gff3")
     featuredb2gff3_file(training_set, out_path)
-    return gffutils.create_db(str(out_path), ":memory:")
+    return create_gff_db(out_path)

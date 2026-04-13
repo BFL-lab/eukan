@@ -11,17 +11,20 @@ Full pipeline order:
     2. Transcriptome assembly (STAR + Trinity + PASA)
     3. Genome annotation (GeneMark + spaln + AUGUSTUS + SNAP + EVM)
     4. Functional annotation (phmmer + hmmscan on predicted proteins)
+
+The test-pipeline command invokes `eukan` CLI subcommands via subprocess,
+exercising the same code paths as real user workflows.
 """
 
 from __future__ import annotations
 
 import multiprocessing
+import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
-# Ensure the project root is on sys.path so `from tests.testdata import ...` works
-# regardless of how the script is invoked (poetry run, conda run, direct, etc.)
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
@@ -31,10 +34,23 @@ import click
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
+def _run_eukan(args: list[str], cwd: Path, label: str) -> subprocess.CompletedProcess:
+    """Run an eukan CLI command via subprocess, mirroring real user usage."""
+    cmd = ["eukan"] + args
+    click.echo(f"  $ {' '.join(cmd)}")
+    sys.stdout.flush()
+    result = subprocess.run(cmd, cwd=cwd)
+    if result.returncode != 0:
+        raise RuntimeError(f"{label} failed (exit {result.returncode})")
+    return result
+
+
 @click.group(context_settings=CONTEXT_SETTINGS)
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 def cli(verbose: bool) -> None:
     """Pipeline integration test utilities."""
+    # Environment setup only needed for setup-test-data and clean-test-data
+    # (test-pipeline shells out to eukan which does its own setup)
     from eukan.infra.environ import configure_process_env
     from eukan.infra.logging import setup_logging
     setup_logging(1 if verbose else 0)
@@ -89,11 +105,11 @@ def test_pipeline_cmd(
     """Run the full pipeline on S. pombe test data.
 
     \b
-    Runs all steps of the annotation workflow:
-      1. Database fetch (UniProt + Pfam for functional annotation)
-      2. Transcriptome assembly (STAR mapping + Trinity + PASA)
-      3. Genome annotation (GeneMark + spaln + AUGUSTUS + SNAP + EVM)
-      4. Functional annotation (phmmer + hmmscan on predicted proteins)
+    Runs all steps of the annotation workflow via the eukan CLI:
+      1. eukan db-fetch        Download UniProt + Pfam databases
+      2. eukan assemble        STAR mapping + Trinity + PASA
+      3. eukan annotate        GeneMark + spaln + AUGUSTUS + SNAP + EVM
+      4. eukan func-annot      phmmer + hmmscan on predicted proteins
 
     Requires test data from: python tests/run_pipeline.py setup-test-data
     """
@@ -121,8 +137,6 @@ def test_pipeline_cmd(
     right_reads = sorted(data_dir.glob("SRR*_2.fastq.gz"))
 
     work_dir.mkdir(parents=True, exist_ok=True)
-    assembly_dir = work_dir / "assembly"
-    annotation_dir = work_dir / "annotation"
     db_dir = work_dir / "databases"
 
     click.echo(f"\nWork directory: {work_dir}")
@@ -138,9 +152,6 @@ def test_pipeline_cmd(
     click.echo("STEP 1: Database fetch (UniProt + Pfam)")
     click.echo(f"{'=' * 60}")
 
-    from eukan.functional.dbfetch import fetch_databases
-
-    db_dir.mkdir(parents=True, exist_ok=True)
     uniprot_db = db_dir / "uniprot_sprot.faa"
     pfam_db = db_dir / "Pfam-A.hmm"
 
@@ -148,7 +159,10 @@ def test_pipeline_cmd(
         click.echo("  Databases already present, skipping download.")
     else:
         try:
-            fetch_databases(db_dir)
+            _run_eukan(
+                ["db-fetch", "-o", str(db_dir)],
+                cwd=work_dir, label="Database fetch",
+            )
             click.echo("  Database fetch complete.")
         except Exception as e:
             click.echo(f"\n  Database fetch failed: {e}")
@@ -160,7 +174,6 @@ def test_pipeline_cmd(
     if not protein_only:
         if not left_reads or not right_reads:
             click.echo("\nNo paired-end reads (_1/_2) found. Skipping assembly.")
-            click.echo("Delete SRR*.fastq.gz and re-run: python tests/run_pipeline.py setup-test-data")
             protein_only = True
 
     if not protein_only:
@@ -169,18 +182,9 @@ def test_pipeline_cmd(
         click.echo(f"  {len(left_reads)} paired-end read pairs")
         click.echo(f"{'=' * 60}")
 
-        from eukan.assembly import run_assembly
-        from eukan.settings import AssemblyConfig
-
-        # Sanitize genome headers before assembly
-        from eukan.annotation.validation import sanitize_genome_fasta
-
-        assembly_dir.mkdir(parents=True, exist_ok=True)
-        genome = sanitize_genome_fasta(genome, assembly_dir)
-
         # Concatenate all forward and reverse reads for assembly
-        concat_left = assembly_dir / "all_left.fastq.gz"
-        concat_right = assembly_dir / "all_right.fastq.gz"
+        concat_left = work_dir / "all_left.fastq.gz"
+        concat_right = work_dir / "all_right.fastq.gz"
 
         if not concat_left.exists():
             click.echo("  Concatenating forward reads...")
@@ -189,25 +193,18 @@ def test_pipeline_cmd(
             click.echo("  Concatenating reverse reads...")
             _concat_files(right_reads, concat_right)
 
-        assembly_config = AssemblyConfig(
-            genome=genome,
-            work_dir=assembly_dir,
-            left_reads=concat_left,
-            right_reads=concat_right,
-            num_cpu=numcpu,
-            strand_specific="RF",
-        )
-
         try:
-            click.echo("  Running: read mapping (STAR)...")
-            sys.stdout.flush()
-            run_assembly(assembly_config, ["map"])
-            click.echo("  Running: Trinity assembly (genome-guided + de novo)...")
-            sys.stdout.flush()
-            run_assembly(assembly_config, ["trinity"])
-            click.echo("  Running: PASA alignment...")
-            sys.stdout.flush()
-            run_assembly(assembly_config, ["pasa"])
+            _run_eukan(
+                [
+                    "assemble",
+                    "-g", str(genome),
+                    "-l", str(concat_left),
+                    "-r", str(concat_right),
+                    "-S", "RF",
+                    "-n", str(numcpu),
+                ],
+                cwd=work_dir, label="Assembly",
+            )
             click.echo("  Assembly complete.")
         except Exception as e:
             click.echo(f"\n  Assembly failed: {e}")
@@ -222,31 +219,28 @@ def test_pipeline_cmd(
     click.echo("STEP 3: Genome annotation")
     click.echo(f"{'=' * 60}")
 
-    from eukan.annotation import run_annotation_pipeline
-    from eukan.settings import PipelineConfig
-
-    annotation_dir.mkdir(parents=True, exist_ok=True)
-
-    # Build config -- with or without transcript evidence
-    config_kwargs: dict = {
-        "genome": genome,
-        "proteins": [proteins],
-        "work_dir": annotation_dir,
-        "kingdom": kingdom,
-        "num_cpu": numcpu,
-    }
+    annotate_args = [
+        "annotate",
+        "-g", str(genome),
+        "-p", str(proteins),
+        "-k", kingdom,
+        "-n", str(numcpu),
+    ]
 
     if not protein_only:
-        # Check for assembly outputs
-        nr_fasta = assembly_dir / "nr_transcripts.fasta"
-        nr_gff3 = assembly_dir / "nr_transcripts.gff3"
-        hints = assembly_dir / "hints_rnaseq.gff"
+        # Check for assembly outputs (written to work_dir by eukan assemble)
+        nr_fasta = work_dir / "nr_transcripts.fasta"
+        nr_gff3 = work_dir / "nr_transcripts.gff3"
+        hints = work_dir / "hints_rnaseq.gff"
 
         if nr_fasta.exists() and nr_gff3.exists() and hints.exists():
             click.echo("  Using transcript evidence from assembly")
-            config_kwargs["transcripts_fasta"] = nr_fasta
-            config_kwargs["transcripts_gff"] = nr_gff3
-            config_kwargs["rnaseq_hints"] = hints
+            annotate_args += [
+                "-tf", str(nr_fasta),
+                "-tg", str(nr_gff3),
+                "-r", str(hints),
+                "--strand-specific",
+            ]
         else:
             click.echo("  Assembly outputs not found, running without transcript evidence")
             missing = [f for f in [nr_fasta, nr_gff3, hints] if not f.exists()]
@@ -255,14 +249,12 @@ def test_pipeline_cmd(
     else:
         click.echo("  Running without transcript evidence (protein-only)")
 
-    config = PipelineConfig(**config_kwargs)
-
     try:
-        final_gff3 = run_annotation_pipeline(config)
-        click.echo(f"\n  Annotation complete. Output: {final_gff3}")
+        _run_eukan(annotate_args, cwd=work_dir, label="Annotation")
+        click.echo("  Annotation complete.")
     except Exception as e:
         click.echo(f"\n  Annotation failed: {e}")
-        click.echo(f"\n  View run details: eukan status -d {annotation_dir}")
+        click.echo(f"\n  View run details: eukan status -d {work_dir}")
         raise SystemExit(1)
 
     # ================================================================
@@ -276,36 +268,39 @@ def test_pipeline_cmd(
     if not uniprot_db.exists() or not pfam_db.exists():
         click.echo("  Skipping: databases not available.")
     else:
-        from Bio import SeqIO
+        # Extract predicted proteins if not already done
+        predicted_proteins = work_dir / "predicted_proteins.faa"
+        final_gff3 = work_dir / "final.gff3"
 
-        from eukan.functional import run_functional_annotation
-        from eukan.gff.io import extract_sequences
-
-        # Extract predicted proteins from annotation
-        predicted_proteins = annotation_dir / "predicted_proteins.faa"
-        if not predicted_proteins.exists():
+        if not predicted_proteins.exists() and final_gff3.exists():
             click.echo("  Extracting predicted proteins from annotation...")
-            records = list(extract_sequences(final_gff3, config.genome))
-            SeqIO.write(records, str(predicted_proteins), "fasta")
-            click.echo(f"  Extracted {len(records)} protein sequences.")
-        else:
-            num_seqs = sum(1 for _ in SeqIO.parse(str(predicted_proteins), "fasta"))
-            click.echo(f"  Using existing predicted proteins ({num_seqs} sequences).")
+            # gff3toseq writes to stdout; capture and save to file
+            cmd = ["eukan", "gff3toseq", "-g", str(genome), "-i", str(final_gff3), "-o", "protein"]
+            click.echo(f"  $ {' '.join(cmd)}")
+            result = subprocess.run(cmd, cwd=work_dir, capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout:
+                predicted_proteins.write_text(result.stdout)
+                n_seqs = result.stdout.count(">")
+                click.echo(f"  Extracted {n_seqs} protein sequences.")
+            else:
+                click.echo("  Failed to extract proteins, skipping functional annotation.")
+                predicted_proteins = None
 
-        try:
-            click.echo("  Running: phmmer (UniProt) + hmmscan (Pfam)...")
-            sys.stdout.flush()
-            run_functional_annotation(
-                proteins=predicted_proteins,
-                uniprot_db=uniprot_db,
-                pfam_db=pfam_db,
-                gff3_path=final_gff3,
-                num_cpu=numcpu,
-            )
-            click.echo("  Functional annotation complete.")
-        except Exception as e:
-            click.echo(f"\n  Functional annotation failed: {e}")
-            raise SystemExit(1)
+        if predicted_proteins and predicted_proteins.exists():
+            func_args = [
+                "func-annot",
+                "-p", str(predicted_proteins),
+                "--uniprot", str(uniprot_db),
+                "--pfam", str(pfam_db),
+                "--gff3", str(final_gff3),
+                "-n", str(numcpu),
+            ]
+            try:
+                _run_eukan(func_args, cwd=work_dir, label="Functional annotation")
+                click.echo("  Functional annotation complete.")
+            except Exception as e:
+                click.echo(f"\n  Functional annotation failed: {e}")
+                raise SystemExit(1)
 
     # ================================================================
     # Summary
@@ -313,14 +308,16 @@ def test_pipeline_cmd(
     click.echo(f"\n{'=' * 60}")
     click.echo("Pipeline complete.")
     click.echo(f"{'=' * 60}")
-    click.echo(f"  Annotation GFF3:  {final_gff3}")
-    func_gff3 = final_gff3.with_suffix(".mod.gff3")
+    final_gff3 = work_dir / "final.gff3"
+    if final_gff3.exists():
+        click.echo(f"  Annotation GFF3:  {final_gff3}")
+    func_gff3 = work_dir / "final.mod.gff3"
     if func_gff3.exists():
         click.echo(f"  Functional GFF3:  {func_gff3}")
-    func_faa = annotation_dir / "predicted_proteins.mod.faa"
+    func_faa = work_dir / "predicted_proteins.mod.faa"
     if func_faa.exists():
         click.echo(f"  Annotated proteins: {func_faa}")
-    click.echo(f"\n  View run details: eukan status -d {annotation_dir}")
+    click.echo(f"\n  View run details: eukan status")
 
 
 @cli.command("compare-annotations", short_help="Compare pipeline output against reference.")
@@ -331,7 +328,7 @@ def test_pipeline_cmd(
 )
 @click.option(
     "--predicted", "-p", type=click.Path(exists=True, path_type=Path),
-    default="tests/pipeline-run/annotation/final.mod.gff3", show_default=True,
+    default="tests/pipeline-run/final.mod.gff3", show_default=True,
     help="Predicted GFF3 file to evaluate.",
 )
 def compare_annotations_cmd(reference: Path, predicted: Path) -> None:
@@ -378,8 +375,6 @@ def clean_test_data_cmd(data_dir: Path, work_dir: Path, clean_all: bool) -> None
     With --all, also removes downloaded genome, proteins, and FASTQ files.
     Accession list files (tests/data/*.txt) are never deleted.
     """
-    import os
-
     data_dir = data_dir.resolve()
     work_dir = work_dir.resolve()
 
