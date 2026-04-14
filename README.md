@@ -150,6 +150,7 @@ Override options:
   -r, --rnaseq-hints PATH         Override auto-discovered RNA-seq hints GFF.
   --strand-specific                Transcripts are strand-oriented.
   --utrs PATH                      PASA SQLite database for UTR addition.
+  --splice-permissive              Allow non-canonical splice sites (GC-AG, AT-AC).
 
 Experimental:
   --spsp                           Build species-specific spaln parameters from transcripts
@@ -181,8 +182,7 @@ Pipeline parameters:
   -S, --strand-specific [RF|FR|R|F]
                                    Strand-specific library type (RF/FR for paired, R/F for single).
   -t, --align-mode [EndToEnd|Local] STAR alignment mode. [default: Local]
-  --splice-boundary INTEGER        PASA splice boundary stringency. Set to 0 for non-canonical
-                                   splice sites (e.g., protists). [default: 3]
+  --splice-permissive              Allow non-canonical splice sites (GC-AG, AT-AC).
   -c, --genetic-code [1|6|10|12]   Genetic code for PASA. [default: 1]
   -m, --min-intron INTEGER         Min intron length. [default: 20]
   -M, --max-intron INTEGER         Max intron length. [default: 5000]
@@ -196,7 +196,7 @@ Re-run steps:
   -f, --force                      Force re-run all steps.
 ```
 
-The pipeline runs STAR mapping, genome-guided + de novo Trinity assembly, and PASA alignment. If no step flags (`-A`, `-T`, `-P`) are given, all steps run.
+The pipeline runs STAR mapping, genome-guided + de novo Trinity assembly, and PASA alignment. STAR also profiles splice site types from junction evidence (`splice_site_summary.json`), which the annotation pipeline uses to allow non-canonical splice sites in AUGUSTUS. If no step flags (`-A`, `-T`, `-P`) are given, all steps run.
 
 ### `eukan func-annot`
 
@@ -334,10 +334,10 @@ Checked 14 external tools:
 
 The annotation pipeline (`eukan annotate`) runs the following steps:
 
-1. **ORF finding**:  Identify ORFs in transcript assemblies (if provided).
-2. **GeneMark**:  Ab initio gene prediction (ES mode, or ET mode if RNA-seq intron hints are available with >= 150 introns).
+1. **ORF finding**:  Identify ORFs in transcript assemblies (if provided). Uses the configured genetic code (`-C`/`--code`) so that alternative stop codons (e.g., code 6 where TAA/TAG encode glutamine) are handled correctly.
+2. **GeneMark**:  Ab initio gene prediction (ES mode, or ET mode if RNA-seq intron hints are available with >= 150 introns). Passes `--gcode` for non-standard genetic codes (codes 6 and 26).
 3. **Protein alignment**:  Spliced alignment via spaln (intron-rich genomes, > 25% introns/gene) or GenomeThreader (intron-poor). See [Protein alignment modes](#protein-alignment-modes).
-4. **AUGUSTUS**:  Train species-specific parameters from concordant GeneMark/protein models, then predict genes using protein + RNA-seq hints.
+4. **AUGUSTUS**:  Train species-specific parameters from concordant GeneMark/protein models, then predict genes using protein + RNA-seq hints. Non-canonical splice sites (e.g., AT-AC) are allowed automatically when supported by sufficient junction evidence from STAR; `--splice-permissive` lowers the evidence thresholds.
 5. **SNAP**:  Train and predict (all kingdoms). **CodingQuarry** also runs for fungus/protist genomes.
 6. **EVidenceModeler**:  Build weighted consensus gene models from all evidence sources.
 7. **PASA UTRs**:  Add UTR annotations and model alternative splicing from the transcriptome database.

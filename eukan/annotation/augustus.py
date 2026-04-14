@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -24,6 +25,81 @@ from eukan.infra.logging import get_logger
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
+
+
+# Minimum evidence thresholds for accepting non-canonical splice sites.
+# A type must pass BOTH the absolute count AND the fraction of total junctions.
+_MIN_JUNCTIONS = 10
+_MIN_UNIQUE_READS = 50
+_MIN_FRACTION = 0.01  # 1% of total junctions
+
+# Splice site types that AUGUSTUS already allows by default — no need to add.
+_AUGUSTUS_BUILTIN_SPLICE = {"gtag", "gcag"}
+
+
+def _splice_type_to_augustus(name: str) -> str | None:
+    """Convert a splice site type name (e.g. ``GC-AG``) to a 4-char AUGUSTUS value.
+
+    Returns ``None`` for entries that don't look like valid dinucleotide pairs
+    (e.g. ``"unknown"``).
+    """
+    parts = name.split("-")
+    if len(parts) == 2 and len(parts[0]) == 2 and len(parts[1]) == 2:
+        return (parts[0] + parts[1]).lower()
+    return None
+
+
+def _get_splice_sites_flag(config: "PipelineConfig") -> list[str]:
+    """Build ``--allow_hinted_splicesites`` flag from STAR splice site evidence.
+
+    Reads ``splice_site_summary.json`` (written by the assembly pipeline)
+    to determine which non-canonical splice site types have sufficient
+    evidence.  A type must pass both an absolute count threshold and a
+    proportional threshold (fraction of total junctions) to be accepted.
+    All observed types that pass are included — not just the well-known
+    semi-canonical pairs (GC-AG, AT-AC).
+
+    Falls back to a blanket allowance when ``allow_noncanonical_splice``
+    is set but no summary exists.
+    """
+    summary_path = config.work_dir / "splice_site_summary.json"
+    allowed: set[str] = set()
+
+    if summary_path.exists():
+        with open(summary_path) as f:
+            summary = json.load(f)
+
+        total_junctions = sum(s["count"] for s in summary.values())
+
+        # Use lower thresholds when --splice-permissive is set
+        if config.allow_noncanonical_splice:
+            min_junctions = 1
+            min_reads = 1
+            min_fraction = 0.0
+        else:
+            min_junctions = _MIN_JUNCTIONS
+            min_reads = _MIN_UNIQUE_READS
+            min_fraction = _MIN_FRACTION
+
+        for splice_type, stats in summary.items():
+            count = stats["count"]
+            fraction = count / total_junctions if total_junctions > 0 else 0.0
+            if count < min_junctions or stats["unique_reads"] < min_reads or fraction < min_fraction:
+                continue
+            aug_name = _splice_type_to_augustus(splice_type)
+            if aug_name and aug_name not in _AUGUSTUS_BUILTIN_SPLICE:
+                allowed.add(aug_name)
+
+    elif config.allow_noncanonical_splice:
+        # No STAR evidence — blanket allowance for common non-canonical types
+        allowed = {"atac"}
+
+    if allowed:
+        value = ",".join(sorted(allowed))
+        log.info("Allowing non-canonical splice sites in AUGUSTUS: %s", value)
+        return [f"--allow_hinted_splicesites={value}"]
+
+    return []
 
 
 def build_training_set(
@@ -158,11 +234,15 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
     run_cmd(["splitMfasta.pl", "genome.fa", f"--minsize={min_size}"], cwd=sdir)
 
     splits = list(sdir.glob("genome.split.*.fa"))
+
+    # Determine which non-canonical splice sites to allow based on evidence
+    splice_sites_flag = _get_splice_sites_flag(config)
+
     base_cmd = [
         "augustus", f"--species={config.name}",
         f"--extrinsicCfgFile={Path(config_path) / 'extrinsic' / ext_cfg}",
         "--hintsfile=hints_all.gff", "--softmasking=1", "--UTR=off",
-    ]
+    ] + splice_sites_flag
 
     # Run splits -- each writes stdout to its own .gff3 file
     def _run_split(split: Path) -> None:

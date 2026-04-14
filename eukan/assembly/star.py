@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import csv
+import json
 import shutil
 import subprocess
+from collections import defaultdict
 from pathlib import Path
 
 from eukan.exceptions import ExternalToolError
@@ -98,8 +100,8 @@ def map_reads(config: AssemblyConfig, force: bool = False) -> None:
     # Report mapping rate from STAR log
     _log_mapping_rate(wd)
 
-    # Generate hints from splice junctions
-    _generate_hints_from_star(wd)
+    # Generate hints from splice junctions and analyze splice sites
+    _generate_hints_from_star(wd, config.genome)
 
     # Cleanup build index (large)
     shutil.rmtree(index_dir, ignore_errors=True)
@@ -133,10 +135,83 @@ def _log_mapping_rate(wd: Path) -> None:
         )
 
 
-def _generate_hints_from_star(wd: Path) -> None:
+# STAR motif codes → canonical splice site dinucleotide pairs
+_STAR_MOTIF_NAMES: dict[int, str] = {
+    1: "GT-AG",
+    2: "CT-AC",
+    3: "GC-AG",
+    4: "CT-GC",
+    5: "AT-AC",
+    6: "GT-AT",
+}
+
+
+def _analyze_splice_sites(sj_file: Path, genome: Path, wd: Path) -> None:
+    """Extract splice site dinucleotides from STAR junctions and write a summary.
+
+    For each junction in SJ.out.tab, extracts the donor and acceptor
+    dinucleotides from the genome FASTA.  Writes ``splice_site_summary.json``
+    with per-type counts and read support.
+
+    STAR SJ.out.tab columns (from STAR source, OutSJ.cpp):
+      col2 = first base of intron (1-based)
+      col3 = last base of intron (1-based)
+      col5 = motif (0=non-canonical, 1=GT/AG, 2=CT/AC, 3=GC/AG, ...)
+      col7 = unique reads, col8 = multi-mapping reads
+    """
+    from Bio import SeqIO as _SeqIO
+
+    contigs = _SeqIO.to_dict(_SeqIO.parse(str(genome), "fasta"))
+
+    # Tally: splice_type → {"count": int, "unique_reads": int}
+    tallies: dict[str, dict[str, int]] = defaultdict(lambda: {"count": 0, "unique_reads": 0})
+
+    with open(sj_file) as fin:
+        reader = csv.reader(fin, delimiter="\t")
+        for row in reader:
+            chrom = row[0]
+            intron_start = int(row[1])  # 1-based, first base of intron
+            intron_end = int(row[2])    # 1-based, last base of intron
+            motif = int(row[4])
+            unique = int(row[6])
+
+            if motif != 0:
+                # Use STAR's motif classification for canonical/semi-canonical
+                splice_type = _STAR_MOTIF_NAMES[motif]
+            else:
+                # Extract actual dinucleotides from the genome
+                seq = contigs.get(chrom)
+                if seq is None or intron_end > len(seq):
+                    splice_type = "unknown"
+                else:
+                    genome_seq = seq.seq
+                    donor = str(genome_seq[intron_start - 1 : intron_start + 1]).upper()
+                    acceptor = str(genome_seq[intron_end - 2 : intron_end]).upper()
+                    splice_type = f"{donor}-{acceptor}"
+
+            tallies[splice_type]["count"] += 1
+            tallies[splice_type]["unique_reads"] += unique
+
+    summary = dict(sorted(tallies.items(), key=lambda kv: -kv[1]["count"]))
+    with open(wd / "splice_site_summary.json", "w") as f:
+        json.dump(summary, f, indent=2)
+
+    # Log summary
+    for stype, counts in summary.items():
+        if stype in ("GT-AG", "CT-AC"):
+            continue  # skip canonical in log — they dominate
+        log.info(
+            "Splice sites (%s): %d junctions, %d unique reads",
+            stype, counts["count"], counts["unique_reads"],
+        )
+
+
+def _generate_hints_from_star(wd: Path, genome: Path) -> None:
     """Generate AUGUSTUS hints from STAR splice junction and coverage output."""
     # Parse splice junctions into intron hints
     sj_file = wd / "STAR_SJ.out.tab"
+    if sj_file.exists():
+        _analyze_splice_sites(sj_file, genome, wd)
     if sj_file.exists():
         strand_map = {"0": ".", "1": "+", "2": "-"}
         with open(sj_file) as fin, open(wd / "hints_introns.gff", "w") as fout:

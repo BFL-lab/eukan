@@ -37,6 +37,21 @@ class TestFindStartsStops:
         starts = df[df["codon"] == "start"]
         assert len(starts) == 0
 
+    def test_genetic_code_6_taa_not_stop(self):
+        """Under code 6 (Ciliate), TAA/TAG encode glutamine; TGA is the only stop."""
+        seqs = [("seq1", "+", "AAATGCCCCTAAGGG")]
+        #                       ATG at pos 3, TAA at pos 10
+
+        # Code 1: TAA is a stop codon
+        df_code1 = find_starts_stops(seqs, genetic_code=1)
+        stops_1 = df_code1[df_code1["codon"] == "stop"]
+        assert any(stops_1["pos"] == 10)
+
+        # Code 6: TAA is NOT a stop (only TGA is)
+        df_code6 = find_starts_stops(seqs, genetic_code=6)
+        stops_6 = df_code6[df_code6["codon"] == "stop"]
+        assert 10 not in stops_6["pos"].values
+
 
 # ---------------------------------------------------------------------------
 # fetch_longest_orf

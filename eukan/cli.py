@@ -233,6 +233,12 @@ def cli(verbose: bool, quiet: bool) -> None:
     "--utrs", type=click.Path(exists=True, path_type=Path),
     help="PASA SQLite database path for adding UTRs.",
 )
+@optgroup.option(
+    "--splice-permissive", is_flag=True, default=False,
+    help="Allow non-canonical splice sites (GC-AG, AT-AC). "
+    "When assembly evidence exists, observed splice types are used automatically; "
+    "otherwise enables blanket allowance in AUGUSTUS.",
+)
 @optgroup.group("Experimental")
 @optgroup.option(
     "--spsp", is_flag=True, default=False,
@@ -252,6 +258,7 @@ def annotate(
     rnaseq_hints: Path | None,
     existing_augustus: str | None,
     strand_specific: bool,
+    splice_permissive: bool,
     spsp: bool,
     numcpu: int,
     weights: tuple[int, ...],
@@ -286,6 +293,7 @@ def annotate(
         "genetic_code": str(code),
         "weights": list(weights),
         "strand_specific": strand_specific,
+        "allow_noncanonical_splice": splice_permissive,
         "spaln_ssp": spsp,
     }
     if kingdom:
@@ -341,9 +349,9 @@ def annotate(
 )
 @optgroup.option("--align-mode", "-t", type=click.Choice(["EndToEnd", "Local"]), default="Local", show_default=True)
 @optgroup.option(
-    "--splice-boundary", type=int, default=3, show_default=True,
-    help="PASA splice boundary stringency (NUM_BP_PERFECT_SPLICE_BOUNDARY). "
-    "Set to 0 for organisms with non-canonical splice sites (e.g., protists).",
+    "--splice-permissive", is_flag=True, default=False,
+    help="Allow non-canonical splice sites (GC-AG, AT-AC). "
+    "Sets PASA splice boundary stringency to 0 and retains non-canonical junctions.",
 )
 @optgroup.option(
     "--genetic-code", "-c",
@@ -375,7 +383,7 @@ def assemble(
     run_trinity: bool,
     run_pasa: bool,
     jaccard_clip: bool,
-    splice_boundary: int,
+    splice_permissive: bool,
     genetic_code: str,
     force: bool,
 ) -> None:
@@ -413,7 +421,7 @@ def assemble(
         "num_cpu": numcpu,
         "align_mode": align_mode,
         "jaccard_clip": jaccard_clip,
-        "splice_boundary_stringency": splice_boundary,
+        "splice_permissive": splice_permissive,
         "genetic_code": genetic_code,
     }
     if left:

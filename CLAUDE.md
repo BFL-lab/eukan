@@ -86,12 +86,12 @@ eukan/
 
 ### Pipeline Flow
 
-1. Find ORFs in transcripts (if provided)
-2. GeneMark gene prediction (ES or ET mode depending on RNA-seq hints)
+1. Find ORFs in transcripts (if provided) — respects configured genetic code
+2. GeneMark gene prediction (ES or ET mode depending on RNA-seq hints) — passes `--gcode` for codes 6/26
 3. Protein alignment via spaln (intron-rich) or gth (intron-poor)
    - Default: fitild intron length distribution → spaln `-yI`
    - `--spsp`: species-specific parameters via `make_eij.pl`/`make_ssp.pl` → spaln `-T` (experimental, uses separate `prot_align_ssp/` step dir)
-4. AUGUSTUS training and prediction using protein + RNA-seq hints
+4. AUGUSTUS training and prediction using protein + RNA-seq hints — auto-allows non-canonical splice sites from STAR evidence (`splice_site_summary.json`); `--splice-permissive` lowers thresholds
 5. SNAP training and prediction (fungus/protist also runs CodingQuarry)
 6. Consensus model building via EVM, weighted by evidence type
 7. Optional UTR addition via PASA

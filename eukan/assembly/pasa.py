@@ -34,14 +34,17 @@ def run_pasa(config: AssemblyConfig, force: bool = False) -> None:
         f.write(f"DATABASE={db_path}\n")
         f.write("validate_alignments_in_db.dbi:--MIN_PERCENT_ALIGNED=95\n")
         f.write("validate_alignments_in_db.dbi:--MIN_AVG_PER_ID=95\n")
-        f.write(f"validate_alignments_in_db.dbi:--NUM_BP_PERFECT_SPLICE_BOUNDARY={config.splice_boundary_stringency}\n")
+        splice_boundary = 0 if config.splice_permissive else 3
+        f.write(f"validate_alignments_in_db.dbi:--NUM_BP_PERFECT_SPLICE_BOUNDARY={splice_boundary}\n")
         f.write("subcluster_builder.dbi:-m=50\n")
 
-    # Extract de novo accessions
+    # Extract de novo accessions (file may not exist if de novo assembly was skipped)
+    denovo_path = wd / "trinity-denovo.fasta"
     with open(wd / "tdn.accs", "w") as f:
-        for line in (wd / "trinity-denovo.fasta").read_text().splitlines():
-            if line.startswith(">"):
-                f.write(line[1:].split()[0] + "\n")
+        if denovo_path.exists():
+            for line in denovo_path.read_text().splitlines():
+                if line.startswith(">"):
+                    f.write(line[1:].split()[0] + "\n")
 
     # Concatenate assemblies
     comprehensive = wd / "trinity-comprehensive.fasta"

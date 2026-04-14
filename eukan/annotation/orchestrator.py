@@ -44,7 +44,7 @@ def find_orfs(config: PipelineConfig, trans_gff3: Path) -> Path:
     log.info("Finding ORFs in transcript assemblies...")
     validate_gff(trans_gff3)
 
-    orfs = create_transcriptome_orf_db(str(trans_gff3), str(config.genome))
+    orfs = create_transcriptome_orf_db(str(trans_gff3), str(config.genome), genetic_code=int(config.genetic_code))
     featuredb2gff3_file(orfs, sdir / output)
     return sdir / output
 

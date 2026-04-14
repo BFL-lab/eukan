@@ -21,6 +21,10 @@ _PASA_NAMES: dict[int, str] = {
     12: "Candida",
 }
 
+# Genetic codes supported by GeneMark-ES/ET (gmes_petap.pl --gcode).
+# Code 26 is remapped to 6 internally by GeneMark.
+_GENEMARK_CODES: set[int] = {1, 6, 26}
+
 
 class GeneticCode:
     """Wrapper around an NCBI genetic code ID.
@@ -95,6 +99,20 @@ class GeneticCode:
     @property
     def is_pasa_supported(self) -> bool:
         return self._ncbi_id in _PASA_NAMES
+
+    @property
+    def genemark_flag(self) -> list[str]:
+        """CLI args for GeneMark's ``--gcode`` option.
+
+        Returns an empty list for code 1 (default) or unsupported codes.
+        """
+        if self._ncbi_id in _GENEMARK_CODES and self._ncbi_id != 1:
+            return [f"--gcode={self._ncbi_id}"]
+        return []
+
+    @property
+    def is_genemark_supported(self) -> bool:
+        return self._ncbi_id in _GENEMARK_CODES
 
     # -- dunder --------------------------------------------------------------
 

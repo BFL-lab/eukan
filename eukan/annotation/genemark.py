@@ -47,12 +47,15 @@ def run_genemark(config: PipelineConfig, hints: Path | None = None) -> Path:
     else:
         training_type = ["--ES"]
 
+    gcode_flag = config.genetic_code_obj.genemark_flag
+
     if not (sdir / "genemark.gtf").exists():
         run_cmd(
             ["gmes_petap.pl", "--soft", "1000"]
             + training_type
             + [f"--cores={config.num_cpu}", f"--sequence={config.genome}"]
-            + hgd_flag,
+            + hgd_flag
+            + gcode_flag,
             cwd=sdir,
         )
 

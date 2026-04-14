@@ -113,6 +113,7 @@ class PipelineConfig(BaseSettings):
     genetic_code: str = "11"
     weights: list[int] = Field(default_factory=lambda: [2, 1, 3])
     spaln_ssp: bool = False
+    allow_noncanonical_splice: bool = False
 
     # --- Optional transcript evidence (auto-discovered from work_dir if not set) ---
     transcripts_fasta: Path | None = None
@@ -236,7 +237,7 @@ class AssemblyConfig(BaseSettings):
     align_mode: str = "Local"
     jaccard_clip: bool = False
     genetic_code: str = "1"
-    splice_boundary_stringency: int = 3  # NUM_BP_PERFECT_SPLICE_BOUNDARY for PASA (0 for non-canonical)
+    splice_permissive: bool = False
 
     @model_validator(mode="after")
     def _default_manifest_dir(self) -> "AssemblyConfig":

@@ -289,7 +289,7 @@ def _map_orf_minus_strand(
 
 
 def create_transcriptome_orf_db(
-    gff: str | Path, genome: str | Path
+    gff: str | Path, genome: str | Path, genetic_code: int = 1,
 ) -> gffutils.FeatureDB:
     """Build a FeatureDB of transcript ORFs mapped to genome coordinates.
 
@@ -312,7 +312,7 @@ def create_transcriptome_orf_db(
     )
 
     seqs = fetch_aligned_sequences(xcripts, genome)
-    starts_stops = find_starts_stops(seqs)
+    starts_stops = find_starts_stops(seqs, genetic_code=genetic_code)
     longest_orfs = fetch_longest_orf(starts_stops)
 
     xcripts.update(
