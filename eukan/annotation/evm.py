@@ -27,7 +27,7 @@ def run_evm(config: PipelineConfig, evidence: list[Path]) -> Path:
 
     w = [str(d) for d in config.weights]
     weights_map = {
-        "prot.gff3": ["PROTEIN", "ALN", w[0]],
+        "prot.gff3": ["PROTEIN", "prot_align", w[0]],
         "augustus.gff3": ["ABINITIO_PREDICTION", "augustus", w[1]],
         "snap.gff3": ["ABINITIO_PREDICTION", "snap", w[1]],
         "genemark.gff3": ["ABINITIO_PREDICTION", "genemark", w[1]],
