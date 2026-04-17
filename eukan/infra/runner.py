@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from eukan.exceptions import ExternalToolError
@@ -189,41 +188,3 @@ def run_shell(
         )
 
     return result
-
-
-def run_parallel(
-    cmds: list[list[str]],
-    *,
-    cwd: Path,
-    max_workers: int,
-) -> list[subprocess.CompletedProcess]:
-    """Run multiple commands in parallel.
-
-    All commands are executed even if some fail.  If any command raises,
-    the first exception is re-raised after all futures complete.
-
-    Returns:
-        List of CompletedProcess results in input order.
-    """
-    def _run_one(cmd: list[str]) -> subprocess.CompletedProcess:
-        return run_cmd(cmd, cwd=cwd)
-
-    results: list[subprocess.CompletedProcess | None] = [None] * len(cmds)
-    first_exc: BaseException | None = None
-
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        future_to_idx = {
-            pool.submit(_run_one, cmd): i for i, cmd in enumerate(cmds)
-        }
-        for future in as_completed(future_to_idx):
-            idx = future_to_idx[future]
-            try:
-                results[idx] = future.result()
-            except Exception as exc:
-                if first_exc is None:
-                    first_exc = exc
-
-    if first_exc is not None:
-        raise first_exc
-
-    return results  # type: ignore[return-value]

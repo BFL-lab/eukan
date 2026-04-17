@@ -148,8 +148,8 @@ def test_pyhmmer_phmmer_minimal():
 
 def test_tool_registry_loads():
     """tools.toml should load and contain expected tools."""
-    from eukan.check import get_tools
-    tools = get_tools()
+    from eukan.infra.tools_registry import load_tools
+    tools = load_tools()
     assert len(tools) > 10
     names = {t.name for t in tools}
     assert "augustus" in names
@@ -159,8 +159,8 @@ def test_tool_registry_loads():
 
 def test_tool_registry_no_hmmer():
     """HMMER tools should NOT be in the registry (replaced by pyhmmer)."""
-    from eukan.check import get_tools
-    tools = get_tools()
+    from eukan.infra.tools_registry import load_tools
+    tools = load_tools()
     binaries = {t.binary for t in tools}
     assert "hmmscan" not in binaries
     assert "phmmer" not in binaries

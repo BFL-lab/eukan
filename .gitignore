@@ -6,7 +6,7 @@ gmes_linux_64*.tar.gz
 ./databases
 
 # Test data (downloaded from NCBI, large files)
-tests/data/genome.fasta
+tests/data/genome.fasta*
 tests/data/proteins.faa
 tests/data/*.fastq
 tests/data/*.fastq.gz

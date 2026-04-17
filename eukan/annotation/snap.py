@@ -43,7 +43,7 @@ def run_snap(config: PipelineConfig, *evidence: Path) -> Path:
     )
 
     snap = create_gff_db(
-        sdir / "snap.gff", transform=gffparser.make_snap_featuretype_transform(),
+        sdir / "snap.gff", transform=gffparser.Snap.make_featuretype_transform(),
     )
     dialect = gffutils.DataIterator(str(sdir / "snap.gff")).dialect
     dialect["fmt"] = "gtf"
@@ -57,7 +57,7 @@ def run_snap(config: PipelineConfig, *evidence: Path) -> Path:
         gffparser.add_missing_feats_to_gff3(snap),
         merge_strategy="create_unique",
     )
-    snap = transform_db(snap, gffparser.homogenize_snap_source)
+    snap = transform_db(snap, gffparser.Snap.homogenize_source)
     featuredb2gff3_file(snap, sdir / output)
     return sdir / output
 
@@ -83,11 +83,11 @@ def run_codingquarry(config: PipelineConfig, evidence: Path) -> Path:
         cwd=sdir,
     )
 
-    cq = create_gff_db(sdir / "out" / "PredictedPass.gff3", transform=gffparser.add_cq_mRNA)
+    cq = create_gff_db(sdir / "out" / "PredictedPass.gff3", transform=gffparser.CodingQuarry.add_mRNA)
     cq.update(
         gffparser.add_missing_feats_to_gff3(cq),
         merge_strategy="create_unique",
     )
-    cq = transform_db(cq, gffparser.fix_dup_IDs)
+    cq = transform_db(cq, gffparser.CodingQuarry.fix_dup_ids)
     featuredb2gff3_file(cq, sdir / output)
     return sdir / output

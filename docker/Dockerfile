@@ -142,7 +142,7 @@ RUN chown -R ${USER_ID}:${GROUP_ID} /opt/conda/envs/eukan/config 2>/dev/null || 
 # Environment variables (mirrors conda-activate.sh)
 # ---------------------------------------------------------------------------
 ENV CONDA_DEFAULT_ENV=eukan \
-    PATH="/opt/conda/envs/eukan/opt/genemark:/opt/conda/envs/eukan/opt/fitild/src:/opt/conda/envs/eukan/bin/EvmUtils:/opt/conda/envs/eukan/bin/EvmUtils/misc:/opt/conda/envs/eukan/bin:${PATH}" \
+    PATH="/opt/conda/envs/eukan/opt/genemark:/opt/conda/envs/eukan/opt/fitild/src:/opt/conda/envs/eukan/bin/EvmUtils:/opt/conda/envs/eukan/bin/EvmUtils/misc:/opt/conda/envs/eukan/opt/pasa-2.5.3/scripts:/opt/conda/envs/eukan/bin:${PATH}" \
     LD_LIBRARY_PATH="/opt/conda/envs/eukan/lib" \
     ZOE="/opt/conda/envs/eukan/share/snap" \
     AUGUSTUS_CONFIG_PATH="/opt/conda/envs/eukan/config" \

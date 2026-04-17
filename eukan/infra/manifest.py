@@ -17,6 +17,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import threading
+from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from enum import Enum
@@ -31,6 +32,17 @@ log = get_logger(__name__)
 
 MANIFEST_FILE = "eukan-run.json"
 SENTINEL = ".running"
+
+# Manifest step keys are prefixed with a pipeline name so the three
+# pipelines can share a single eukan-run.json without colliding.
+ANNOTATION = "annotation"
+ASSEMBLY = "assembly"
+FUNCTIONAL = "functional"
+
+
+def step_key(pipeline: str, name: str) -> str:
+    """Build a prefixed manifest key, e.g. ``annotation/genemark``."""
+    return f"{pipeline}/{name}"
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +236,62 @@ def pipeline_step(
     finally:
         (sdir / SENTINEL).unlink(missing_ok=True)
         save_manifest(work_dir, manifest)
+
+
+def run_orchestrated_step(
+    manifest_dir: Path,
+    manifest: RunManifest,
+    step_name: str,
+    fn: Callable[..., Any],
+    *args: Any,
+    step_dir: Path | None = None,
+    force: bool = False,
+    output_file: Path | None = None,
+    **kwargs: Any,
+) -> Path | None:
+    """Run a pipeline step with full manifest lifecycle management.
+
+    Handles the complete skip-if-complete → clean-interrupted → execute
+    dance uniformly across all three pipelines.
+
+    Args:
+        manifest_dir: Directory containing ``eukan-run.json``.
+        manifest: The shared manifest to update.
+        step_name: Full manifest key (already prefixed, e.g. ``annotation/genemark``).
+        fn: Callable to execute — the caller is responsible for currying
+            any config/state needed by the step.
+        step_dir: Directory holding the step's sentinel and outputs.
+            Defaults to ``manifest_dir / <last segment of step_name>``.
+        force: If True, skip the cached-step check and re-run.
+        output_file: If provided, overrides the return value of *fn* as
+            the step's output path. Useful for steps that write to a
+            fixed filename and return ``None``.
+
+    Returns:
+        The step's output ``Path`` (cached result, ``output_file``, or
+        ``fn``'s return value), or ``None`` if the step has no output.
+    """
+    if not force:
+        cached = is_step_complete(manifest, step_name)
+        if cached:
+            return cached
+
+    sdir = step_dir if step_dir else manifest_dir / step_name.rsplit("/", 1)[-1]
+    if is_step_interrupted(manifest_dir, step_name, step_dir=sdir):
+        log.warning("[%s] Cleaning up interrupted previous run...", step_name)
+        clean_interrupted_step(manifest_dir, step_name, step_dir=sdir)
+
+    with pipeline_step(manifest_dir, manifest, step_name, step_dir=sdir) as step:
+        result = fn(*args, **kwargs)
+
+        if output_file is not None:
+            if output_file.exists():
+                step.output_file = str(output_file)
+            return output_file
+        if isinstance(result, (str, Path)):
+            step.output_file = str(result)
+            return Path(result)
+        return None
 
 
 def is_step_complete(manifest: RunManifest, step_name: str) -> Path | None:

@@ -44,7 +44,7 @@ cp conda-activate.sh $CONDA_PREFIX/etc/conda/activate.d/eukan.sh
 conda deactivate && conda activate eukan
 ```
 
-The `environment.yml` is auto-generated from `tools.toml`. To regenerate after modifying tool versions: `eukan dev generate-env`.
+The `environment.yml` is auto-generated from `tools.toml`. To regenerate after modifying tool versions: `python scripts/generate-env.py`.
 
 Two tools require manual installation after creating the environment. A helper script handles both:
 
@@ -324,10 +324,11 @@ Checked 14 external tools:
     ...
 
   2 tools MISSING or BROKEN:
-    ✗ CodingQuarry                   `CodingQuarry` not found on PATH; $QUARRY_PATH not set
+    ✗ codingquarry                   `CodingQuarry` not found on PATH; env not set: $QUARRY_PATH
       used by: annotate
     ✗ fitild                         `fitild` not found on PATH
       used by: annotate
+      hint: Build from source: git clone https://github.com/ogotoh/fitild ...
 ```
 
 ## Pipeline Overview

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from eukan.functional.search import (
@@ -11,12 +12,32 @@ from eukan.functional.search import (
 )
 from eukan.infra.logging import get_logger
 from eukan.infra.manifest import (
-    RunManifest, StepStatus, get_or_create_manifest,
-    is_step_complete, pipeline_step, save_manifest,
-    validate_step_outputs,
+    FUNCTIONAL, RunManifest, get_or_create_manifest, is_step_complete,
+    run_orchestrated_step, save_manifest, step_key, validate_step_outputs,
 )
 
 log = get_logger(__name__)
+
+
+_FUNCTIONAL_STEPS = [
+    step_key(FUNCTIONAL, "search"),
+    step_key(FUNCTIONAL, "annotate_fasta"),
+    step_key(FUNCTIONAL, "annotate_gff3"),
+]
+
+_FUNCTIONAL_FLAGS = {s: "--force" for s in _FUNCTIONAL_STEPS}
+
+
+def _search_and_cache(
+    proteins: Path, uniprot_db: Path, pfam_db: Path, num_cpu: int, evalue: str,
+    phmmer_json: Path, hmmscan_json: Path,
+) -> Path:
+    phmmer_res, hmmscan_res = run_homology_search(
+        proteins, uniprot_db, pfam_db, num_cpu, evalue,
+    )
+    phmmer_json.write_text(json.dumps(phmmer_res))
+    hmmscan_json.write_text(json.dumps(hmmscan_res))
+    return phmmer_json
 
 
 def run_functional_annotation(
@@ -47,7 +68,7 @@ def run_functional_annotation(
     manifest = get_or_create_manifest(work_dir)
 
     if not force:
-        errors = _validate_step_outputs(manifest)
+        errors = validate_step_outputs(manifest, _FUNCTIONAL_STEPS, _FUNCTIONAL_FLAGS)
         if errors:
             for msg in errors:
                 log.error(msg)
@@ -55,48 +76,31 @@ def run_functional_annotation(
 
     save_manifest(work_dir, manifest)
 
-    # Step 1: Homology search (phmmer + hmmscan)
-    # Results are in-memory dicts; serialize to JSON for caching/manifest.
-    import json
     phmmer_json = proteins.parent / f"{proteins.stem}.phmmer.json"
     hmmscan_json = proteins.parent / f"{proteins.stem}.hmmscan.json"
 
-    step_name = "functional/search"
-    if force or not is_step_complete(manifest, step_name):
-        with pipeline_step(work_dir, manifest, step_name) as step:
-            phmmer_res, hmmscan_res = run_homology_search(
-                proteins, uniprot_db, pfam_db, num_cpu, evalue,
-            )
-            phmmer_json.write_text(json.dumps(phmmer_res))
-            hmmscan_json.write_text(json.dumps(hmmscan_res))
-            step.output_file = str(phmmer_json)
-    else:
-        phmmer_res = json.loads(phmmer_json.read_text())
-        hmmscan_res = json.loads(hmmscan_json.read_text())
+    run_orchestrated_step(
+        work_dir, manifest, step_key(FUNCTIONAL, "search"),
+        _search_and_cache,
+        proteins, uniprot_db, pfam_db, num_cpu, evalue, phmmer_json, hmmscan_json,
+        step_dir=work_dir / "search",
+        force=force,
+    )
 
-    # Step 2: Annotate FASTA
-    step_name = "functional/annotate_fasta"
-    if force or not is_step_complete(manifest, step_name):
-        with pipeline_step(work_dir, manifest, step_name) as step:
-            output = annotate_fasta(proteins, phmmer_res, hmmscan_res)
-            step.output_file = str(output)
+    phmmer_res = json.loads(phmmer_json.read_text())
+    hmmscan_res = json.loads(hmmscan_json.read_text())
 
-    # Step 3: Annotate GFF3 (optional)
+    run_orchestrated_step(
+        work_dir, manifest, step_key(FUNCTIONAL, "annotate_fasta"),
+        annotate_fasta, proteins, phmmer_res, hmmscan_res,
+        step_dir=work_dir / "annotate_fasta",
+        force=force,
+    )
+
     if gff3_path:
-        step_name = "functional/annotate_gff3"
-        if force or not is_step_complete(manifest, step_name):
-            with pipeline_step(work_dir, manifest, step_name) as step:
-                output = annotate_gff3(gff3_path, phmmer_res, hmmscan_res)
-                step.output_file = str(output)
-
-
-_FUNCTIONAL_STEPS = [
-    "functional/search", "functional/annotate_fasta", "functional/annotate_gff3",
-]
-
-_FUNCTIONAL_FLAGS = {s: "--force" for s in _FUNCTIONAL_STEPS}
-
-
-def _validate_step_outputs(manifest: RunManifest) -> list[str]:
-    """Validate that completed functional steps have non-empty output."""
-    return validate_step_outputs(manifest, _FUNCTIONAL_STEPS, _FUNCTIONAL_FLAGS)
+        run_orchestrated_step(
+            work_dir, manifest, step_key(FUNCTIONAL, "annotate_gff3"),
+            annotate_gff3, gff3_path, phmmer_res, hmmscan_res,
+            step_dir=work_dir / "annotate_gff3",
+            force=force,
+        )

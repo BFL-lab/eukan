@@ -54,11 +54,3 @@ def sanitize_genome_fasta(genome: Path, work_dir: Path) -> Path:
     return sanitized
 
 
-def validate_gff(path: Path) -> None:
-    """Verify that a file is valid GFF3.
-
-    Uses streaming validation (no full DB load) for efficiency on large files.
-    Raises GFFValidationError on invalid input.
-    """
-    from eukan.infra.logging import validate_gff as _validate_gff_streaming
-    _validate_gff_streaming(path)

@@ -128,8 +128,8 @@ def _run_spaln(
         cwd=sdir, out_file="temp.gff3",
     )
 
-    spaln_out = create_gff_db(sdir / "temp.gff3", transform=gffparser.fix_spaln_cds_featuretype)
-    spaln_out = transform_db(spaln_out, gffparser.fix_spaln_ids)
+    spaln_out = create_gff_db(sdir / "temp.gff3", transform=gffparser.Spaln.fix_cds_featuretype)
+    spaln_out = transform_db(spaln_out, gffparser.Spaln.fix_ids)
     spaln_out.update(
         gffparser.add_missing_feats_to_gff3(spaln_out),
         merge_strategy="create_unique",
@@ -283,10 +283,10 @@ def _run_gth(sdir: Path) -> None:
         ],
         cwd=sdir,
     )
-    gth_out = create_gff_db(sdir / "gth.gff3", transform=gffparser.filter_gth_gff3)
+    gth_out = create_gff_db(sdir / "gth.gff3", transform=gffparser.Gth.filter)
     gth_out.update(
         gffparser.add_missing_feats_to_gff3(gth_out),
         merge_strategy="create_unique",
     )
-    gth_out = transform_db(gth_out, gffparser.fix_gth_ids)
+    gth_out = transform_db(gth_out, gffparser.Gth.fix_ids)
     featuredb2gff3_file(gth_out, sdir / "prot.gff3")

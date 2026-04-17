@@ -15,9 +15,8 @@ from eukan.annotation.validation import sanitize_genome_fasta, validate_fasta
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.logging import count_gff3_features, get_logger
 from eukan.infra.manifest import (
-    RunManifest, StepStatus, get_or_create_manifest, save_manifest,
-    pipeline_step, is_step_complete, is_step_interrupted, clean_interrupted_step,
-    validate_step_outputs,
+    ANNOTATION, RunManifest, get_or_create_manifest, run_orchestrated_step,
+    save_manifest, step_key, validate_step_outputs,
 )
 from eukan.infra.steps import step_complete, step_dir
 from eukan.annotation.orf import create_transcriptome_orf_db
@@ -33,7 +32,7 @@ log = get_logger(__name__)
 
 def find_orfs(config: PipelineConfig, trans_gff3: Path) -> Path:
     """Find ORFs in transcript assemblies."""
-    from eukan.annotation.validation import validate_gff
+    from eukan.infra.logging import validate_gff
 
     output = "transcript_orfs.gff3"
     existing = step_complete(config.work_dir, "orf_finder", output)
@@ -54,44 +53,26 @@ def find_orfs(config: PipelineConfig, trans_gff3: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-_MANIFEST_PREFIX = "annotation"
-
-
 def _run_step(
     config: PipelineConfig,
     manifest: RunManifest,
-    step_name: str,
+    name: str,
     fn: Callable,
     *args,
     **kwargs,
 ) -> Path:
-    """Run a single pipeline step with manifest tracking via context manager.
-
-    Skips if already completed in a previous run.  The manifest key is
-    prefixed with 'annotation/' to avoid collisions with other pipelines.
-    """
-    manifest_key = f"{_MANIFEST_PREFIX}/{step_name}"
-    sdir = config.work_dir / step_name
-
-    cached = is_step_complete(manifest, manifest_key)
-    if cached:
-        return cached
-
-    # Clean up interrupted previous runs before starting
-    if is_step_interrupted(config.manifest_dir, step_name, step_dir=sdir):
-        log.warning("[%s] Cleaning up interrupted previous run...", step_name)
-        clean_interrupted_step(config.manifest_dir, step_name, step_dir=sdir)
-
-    with pipeline_step(config.manifest_dir, manifest, manifest_key, step_dir=sdir) as step:
-        result_path = fn(config, *args, **kwargs)
-        step.output_file = str(result_path)
-        return result_path
+    """Run an annotation step via the shared orchestrator helper."""
+    return run_orchestrated_step(
+        config.manifest_dir, manifest, step_key(ANNOTATION, name),
+        fn, config, *args,
+        step_dir=config.work_dir / name,
+        **kwargs,
+    )
 
 
 def _log_prediction_count(label: str, gff3_path: Path) -> None:
     """Log the number of gene predictions in a GFF3 file."""
-    n = count_gff3_features(gff3_path)
-    log.info("%s: %d gene predictions", label, n)
+    log.info("%s: %d gene predictions", label, count_gff3_features(gff3_path))
 
 
 def _run_concurrent_steps(
@@ -99,25 +80,15 @@ def _run_concurrent_steps(
     manifest: RunManifest,
     tasks: list[tuple[str, Callable, tuple, dict]],
 ) -> dict[str, Path]:
-    """Run multiple independent steps concurrently.
-
-    Args:
-        tasks: List of (step_name, fn, args, kwargs) tuples.
-
-    Returns:
-        Dict of step_name -> output Path.
-    """
+    """Run multiple independent steps concurrently."""
     results: dict[str, Path] = {}
-
     with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
         future_to_name = {
             pool.submit(_run_step, config, manifest, name, fn, *args, **kwargs): name
             for name, fn, args, kwargs in tasks
         }
         for future in as_completed(future_to_name):
-            name = future_to_name[future]
-            results[name] = future.result()
-
+            results[future_to_name[future]] = future.result()
     return results
 
 
@@ -202,14 +173,17 @@ def run_annotation_pipeline(
 
 # Map from manifest key to the --run-* CLI flag that forces re-run
 _STEP_TO_FLAG = {
-    f"{_MANIFEST_PREFIX}/genemark": "--run-genemark",
-    f"{_MANIFEST_PREFIX}/prot_align": "--run-prot-align",
-    f"{_MANIFEST_PREFIX}/prot_align_ssp": "--run-prot-align",
-    f"{_MANIFEST_PREFIX}/augustus": "--run-augustus",
-    f"{_MANIFEST_PREFIX}/snap": "--run-snap",
-    f"{_MANIFEST_PREFIX}/codingquarry": "--run-snap",
-    f"{_MANIFEST_PREFIX}/orf_finder": "--run-genemark",
-    f"{_MANIFEST_PREFIX}/evm_consensus_models": "--run-consensus",
+    step_key(ANNOTATION, name): flag
+    for name, flag in {
+        "genemark": "--run-genemark",
+        "prot_align": "--run-prot-align",
+        "prot_align_ssp": "--run-prot-align",
+        "augustus": "--run-augustus",
+        "snap": "--run-snap",
+        "codingquarry": "--run-snap",
+        "orf_finder": "--run-genemark",
+        "evm_consensus_models": "--run-consensus",
+    }.items()
 }
 
 
@@ -224,14 +198,12 @@ def _expected_steps(config: PipelineConfig) -> list[str]:
     steps = ["genemark", prot_align_step, "augustus"]
     if config.has_transcripts:
         steps.insert(0, "orf_finder")
-    if config.is_fungus:
-        steps.extend(["snap", "codingquarry"])
-    elif config.is_protist:
+    if config.is_fungus or config.is_protist:
         steps.extend(["snap", "codingquarry"])
     else:
         steps.append("snap")
     steps.append("evm_consensus_models")
-    return [f"{_MANIFEST_PREFIX}/{s}" for s in steps]
+    return [step_key(ANNOTATION, s) for s in steps]
 
 
 def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:

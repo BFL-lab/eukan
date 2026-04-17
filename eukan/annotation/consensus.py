@@ -7,6 +7,7 @@ from pathlib import Path
 import gffutils
 
 from eukan.annotation.evm import run_evm
+from eukan.assembly.pasa import write_pasa_configs
 from eukan.gff import create_gff_db
 from eukan.gff import intersecter as gffintersecter
 from eukan.gff import parser as gffparser
@@ -20,16 +21,7 @@ log = get_logger(__name__)
 
 def add_utrs_from_pasa(config: PipelineConfig, sdir: Path, pasa_db: Path) -> None:
     """Add UTRs and model alternative splicing from a PASA database."""
-    pasa_db_resolved = pasa_db.resolve()
-
-    with open(sdir / "alignAssembly.config", "w") as f:
-        f.write(f"DATABASE={pasa_db_resolved}\n")
-        f.write("validate_alignments_in_db.dbi:--MIN_PERCENT_ALIGNED=95\n")
-        f.write("validate_alignments_in_db.dbi:--MIN_AVG_PER_ID=95\n")
-        f.write("subcluster_builder.dbi:-m=50\n")
-
-    with open(sdir / "annotCompare.config", "w") as f:
-        f.write(f"DATABASE={pasa_db_resolved}\n")
+    write_pasa_configs(sdir, pasa_db)
 
     run_cmd(
         [

@@ -1,8 +1,8 @@
 """Pre-flight checks for external tool availability.
 
-Reads the tool registry from tools.toml (repo root) and verifies that
-each tool is installed, on PATH, and responds to a version/help probe.
-Also checks database integrity via the manifest.
+Reads the tool registry from tools.toml (via :mod:`tools_registry`) and
+verifies that each tool is installed, on PATH, and responds to a
+version/help probe. Also checks database integrity via the manifest.
 """
 
 from __future__ import annotations
@@ -11,83 +11,9 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 
-
-# ---------------------------------------------------------------------------
-# Tool registry (loaded from tools.toml)
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Tool:
-    """An external tool dependency."""
-
-    name: str
-    binary: str
-    version_cmd: list[str]
-    required_by: list[str]
-    env_var: str | None = None
-    conda_package: str | None = None
-    min_version: str | None = None
-    install_hint: str | None = None
-
-
-def _find_tools_toml() -> Path | None:
-    """Locate tools.toml by checking multiple locations."""
-    candidates = [
-        Path(__file__).resolve().parent.parent / "tools.toml",  # relative to package
-        Path.cwd() / "tools.toml",                               # current directory
-    ]
-    # Also check EUKAN_ROOT env var (set in Docker)
-    eukan_root = os.environ.get("EUKAN_ROOT")
-    if eukan_root:
-        candidates.insert(0, Path(eukan_root) / "tools.toml")
-
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def load_tool_registry() -> list[Tool]:
-    """Load the tool registry from tools.toml.
-
-    Falls back to an empty list if the file is not found.
-    """
-    toml_path = _find_tools_toml()
-    if not toml_path:
-        return []
-
-    from eukan.infra import tomllib
-
-    with open(toml_path, "rb") as f:
-        data = tomllib.load(f)
-
-    tools: list[Tool] = []
-    for name, cfg in data.items():
-        if not isinstance(cfg, dict) or "binary" not in cfg:
-            continue
-        tools.append(
-            Tool(
-                name=name,
-                binary=cfg["binary"],
-                version_cmd=cfg.get("version_cmd", [cfg["binary"]]),
-                required_by=cfg.get("required_by", []),
-                env_var=cfg.get("env_var"),
-                conda_package=cfg.get("conda_package"),
-                min_version=cfg.get("min_version"),
-                install_hint=cfg.get("install_hint"),
-            )
-        )
-    return tools
-
-
-@lru_cache(maxsize=1)
-def get_tools() -> tuple[Tool, ...]:
-    """Load and cache the tool registry. Thread-safe via lru_cache."""
-    return tuple(load_tool_registry())
+from eukan.infra.tools_registry import Tool, load_tools
 
 
 # ---------------------------------------------------------------------------
@@ -161,10 +87,12 @@ def check_tool(tool: Tool) -> CheckResult:
 
 
 def _check_env(tool: Tool) -> bool:
-    """Check if the tool's required environment variable is set."""
-    if tool.env_var is None:
-        return True
-    return tool.env_var in os.environ
+    """Check that every env var declared by the tool is set."""
+    return all(spec.var in os.environ for spec in tool.env_vars)
+
+
+def _missing_env_vars(tool: Tool) -> list[str]:
+    return [spec.var for spec in tool.env_vars if spec.var not in os.environ]
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +191,7 @@ def check_python_deps() -> list[PythonCheckResult]:
 
     # Tool registry
     try:
-        tools = get_tools()
+        tools = load_tools()
         assert len(tools) > 10
         results.append(PythonCheckResult("tool registry", True, f"{len(tools)} tools loaded from tools.toml"))
     except Exception as e:
@@ -290,7 +218,7 @@ def run_checks(
     python_results = check_python_deps()
 
     # External tool checks
-    tools = get_tools()
+    tools = load_tools()
     if subcommands:
         tools = [
             t for t in tools
@@ -364,7 +292,8 @@ def format_results(
             elif not r.version_ok:
                 issues.append(f"version check failed: {r.version_output or 'no output'}")
             if not r.env_ok:
-                issues.append(f"${r.tool.env_var} not set")
+                missing = ", ".join(f"${v}" for v in _missing_env_vars(r.tool))
+                issues.append(f"env not set: {missing}")
             lines.append(f"    \u2717 {r.tool.name:<30s} {'; '.join(issues)}")
             lines.append(f"      used by: {', '.join(r.tool.required_by)}")
             if r.tool.install_hint and not r.found:
@@ -402,7 +331,7 @@ def generate_environment_yml() -> str:
 
     Returns the YAML content as a string.
     """
-    tools = get_tools()
+    tools = load_tools()
 
     # Deduplicate conda packages (some tools share a package, e.g. hmmer)
     seen: set[str] = set()

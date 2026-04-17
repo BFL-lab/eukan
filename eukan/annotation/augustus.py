@@ -268,7 +268,7 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
         cwd=sdir,
     )
 
-    aug_out = create_gff_db(sdir / "augustus.gff", transform=gffparser.clean_augustus_gff3)
+    aug_out = create_gff_db(sdir / "augustus.gff", transform=gffparser.Augustus.clean)
     featuredb2gff3_file(aug_out, sdir / output)
 
     # Cleanup splits

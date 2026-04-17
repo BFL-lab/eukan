@@ -91,6 +91,14 @@ class PipelineConfig(BaseSettings):
       - [tool.eukan] in pyproject.toml
       - EUKAN_ prefixed env vars (e.g., EUKAN_NUM_CPU=8)
       - CLI flags (override at construction time)
+
+    Field organization below:
+      1. Required raw inputs
+      2. Defaulted raw inputs
+      3. Optional assembly-evidence paths (auto-discovered if not set)
+      4. Validators (fill in derived defaults)
+      5. Computed properties (``is_fungus``, ``has_transcripts``,
+         ``genetic_code_obj``) — derived on access, never stored.
     """
 
     model_config = SettingsConfigDict(
@@ -128,6 +136,8 @@ class PipelineConfig(BaseSettings):
         "transcripts_gff": "nr_transcripts.gff3",
         "rnaseq_hints": "hints_rnaseq.gff",
     }
+
+    # --- Validators ------------------------------------------------------
 
     @model_validator(mode="after")
     def _default_manifest_dir(self) -> "PipelineConfig":
@@ -185,6 +195,8 @@ class PipelineConfig(BaseSettings):
                 object.__setattr__(self, field, path)
 
         return self
+
+    # --- Computed properties --------------------------------------------
 
     @cached_property
     def genetic_code_obj(self):

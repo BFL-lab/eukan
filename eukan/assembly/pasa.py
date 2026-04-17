@@ -2,41 +2,49 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 
 from eukan.infra.runner import run_cmd
-from eukan.infra.utils import step_done
 from eukan.infra.logging import get_logger
 from eukan.settings import AssemblyConfig
 
 log = get_logger(__name__)
 
 
-def run_pasa(config: AssemblyConfig, force: bool = False) -> None:
-    """Run PASA to assemble spliced alignments from transcriptome assemblies."""
-    wd = config.work_dir
+def write_pasa_configs(
+    sdir: Path, db_path: Path, *, splice_boundary: int | None = None,
+) -> None:
+    """Write ``alignAssembly.config`` and ``annotCompare.config`` into *sdir*.
 
-    if not force and step_done(wd, ["nr_transcripts.fasta", "nr_transcripts.gff3", "hints_rnaseq.gff"]):
-        log.info("[run_pasa] Already complete, skipping. Use force=True to re-run.")
-        return
+    Both files point at *db_path*. ``alignAssembly.config`` additionally
+    pins PASA's alignment-validation thresholds; pass *splice_boundary*
+    to override the default (unset) behavior.
+    """
+    db_str = db_path.resolve()
 
-    log.info("Running PASA spliced alignment...")
+    with open(sdir / "annotCompare.config", "w") as f:
+        f.write(f"DATABASE={db_str}\n")
 
-    pasahome = os.environ.get("PASAHOME", "/opt/PASApipeline.v2.4.1")
-    db_path = wd / f"{config.name}.sqlite"
-
-    # Write PASA configs
-    with open(wd / "annotCompare.config", "w") as f:
-        f.write(f"DATABASE={db_path}\n")
-    with open(wd / "alignAssembly.config", "w") as f:
-        f.write(f"DATABASE={db_path}\n")
+    with open(sdir / "alignAssembly.config", "w") as f:
+        f.write(f"DATABASE={db_str}\n")
         f.write("validate_alignments_in_db.dbi:--MIN_PERCENT_ALIGNED=95\n")
         f.write("validate_alignments_in_db.dbi:--MIN_AVG_PER_ID=95\n")
-        splice_boundary = 0 if config.splice_permissive else 3
-        f.write(f"validate_alignments_in_db.dbi:--NUM_BP_PERFECT_SPLICE_BOUNDARY={splice_boundary}\n")
+        if splice_boundary is not None:
+            f.write(
+                f"validate_alignments_in_db.dbi:--NUM_BP_PERFECT_SPLICE_BOUNDARY={splice_boundary}\n"
+            )
         f.write("subcluster_builder.dbi:-m=50\n")
+
+
+def run_pasa(config: AssemblyConfig) -> None:
+    """Run PASA to assemble spliced alignments from transcriptome assemblies."""
+    wd = config.work_dir
+    log.info("Running PASA spliced alignment...")
+
+    db_path = wd / f"{config.name}.sqlite"
+    splice_boundary = 0 if config.splice_permissive else 3
+    write_pasa_configs(wd, db_path, splice_boundary=splice_boundary)
 
     # Extract de novo accessions (file may not exist if de novo assembly was skipped)
     denovo_path = wd / "trinity-denovo.fasta"
@@ -88,10 +96,9 @@ def run_pasa(config: AssemblyConfig, force: bool = False) -> None:
     )
 
     # Build comprehensive transcriptome
-    build_compreh = f"{pasahome}/scripts/build_comprehensive_transcriptome.dbi"
     run_cmd(
         [
-            build_compreh,
+            "build_comprehensive_transcriptome.dbi",
             "-c", "alignAssembly.config",
             "-t", f"{config.name}.sqlite.assemblies.fasta",
             "--min_per_ID", "95",

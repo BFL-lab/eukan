@@ -11,7 +11,6 @@ from pathlib import Path
 
 from eukan.exceptions import ExternalToolError
 from eukan.infra.runner import run_cmd
-from eukan.infra.utils import step_done
 from eukan.infra.logging import get_logger
 from eukan.settings import AssemblyConfig
 
@@ -27,15 +26,9 @@ def _is_gzipped(path: Path) -> bool:
         return False
 
 
-def map_reads(config: AssemblyConfig, force: bool = False) -> None:
+def map_reads(config: AssemblyConfig) -> None:
     """Map RNA-seq reads to the genome using STAR."""
     wd = config.work_dir
-
-    # Idempotency: check for key outputs
-    if not force and step_done(wd, ["hints_introns.gff", "hints_coverage.gff", "STAR_Aligned.sortedByCoord.out.bam"]):
-        log.info("[map_reads] Already complete, skipping. Use force=True to re-run.")
-        return
-
     log.info("Running STAR read mapping...")
 
     index_dir = wd / "build-index"

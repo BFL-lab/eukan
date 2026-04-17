@@ -2,13 +2,14 @@
 
 from pathlib import Path
 
-from eukan.check import Tool, check_tool, run_checks, format_results, load_tool_registry, generate_environment_yml, PythonCheckResult
+from eukan.check import check_tool, run_checks, format_results, generate_environment_yml, PythonCheckResult
+from eukan.infra.tools_registry import EnvVarSpec, Tool, load_tools
 
 
 class TestCheckTool:
     def test_finds_python(self):
         """Python itself should always be found."""
-        tool = Tool("Python", "python3", ["python3", "--version"], ["test"])
+        tool = Tool("Python", "python3", ("python3", "--version"), ("test",))
         result = check_tool(tool)
         assert result.found
         assert result.version_ok
@@ -16,14 +17,17 @@ class TestCheckTool:
 
     def test_missing_tool(self):
         """A nonexistent binary should fail cleanly."""
-        tool = Tool("fake", "nonexistent_tool_xyz", ["nonexistent_tool_xyz"], ["test"])
+        tool = Tool("fake", "nonexistent_tool_xyz", ("nonexistent_tool_xyz",), ("test",))
         result = check_tool(tool)
         assert not result.found
         assert not result.version_ok
 
     def test_env_var_check(self):
         """Missing env var should be flagged."""
-        tool = Tool("test", "python3", ["python3", "--version"], ["test"], env_var="NONEXISTENT_VAR_XYZ")
+        tool = Tool(
+            "test", "python3", ("python3", "--version"), ("test",),
+            env_vars=(EnvVarSpec(var="NONEXISTENT_VAR_XYZ"),),
+        )
         result = check_tool(tool)
         assert result.found
         assert not result.env_ok
@@ -32,7 +36,7 @@ class TestCheckTool:
 class TestToolRegistry:
     def test_loads_from_toml(self):
         """Should load tools from tools.toml."""
-        tools = load_tool_registry()
+        tools = load_tools()
         assert len(tools) > 0
         names = [t.name for t in tools]
         assert "augustus" in names
@@ -40,7 +44,7 @@ class TestToolRegistry:
 
     def test_tool_fields(self):
         """Tools should have all required fields populated."""
-        tools = load_tool_registry()
+        tools = load_tools()
         for tool in tools:
             assert tool.binary
             assert tool.version_cmd

@@ -119,6 +119,33 @@ class _EukanGroup(click.Group):
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
+# Shared option decorators reused across subcommands.
+
+def _numcpu_option(func):
+    return optgroup.option(
+        "--numcpu", "-n", type=int, default=multiprocessing.cpu_count(),
+        show_default=True, help="Number of CPU threads.",
+    )(func)
+
+
+def _force_option(func):
+    return optgroup.option(
+        "--force", "-f", is_flag=True,
+        help="Force re-run all steps (ignore cached outputs).",
+    )(func)
+
+
+def _genome_option(help_text: str = "Genome sequence in FASTA format."):
+    """Build a --genome/-g required-path option with custom help text."""
+    def decorator(func):
+        return optgroup.option(
+            "--genome", "-g", required=True,
+            type=click.Path(exists=True, path_type=Path),
+            help=help_text,
+        )(func)
+    return decorator
+
+
 # ---------------------------------------------------------------------------
 # Genetic code tables
 # ---------------------------------------------------------------------------
@@ -182,10 +209,9 @@ def cli(verbose: bool, quiet: bool) -> None:
 
 @cli.command(cls=_PreformattedEpilogCommand, epilog=_FULL_CODE_TABLE)
 @optgroup.group("Required input")
-@optgroup.option(
-    "--genome", "-g", required=True, type=click.Path(exists=True, path_type=Path),
-    help="Genome sequence in FASTA format. Must not contain lower-case nucleotides "
-    "(the pipeline soft-masks repeats by converting to lower-case).",
+@_genome_option(
+    "Genome sequence in FASTA format. Must not contain lower-case nucleotides "
+    "(the pipeline soft-masks repeats by converting to lower-case)."
 )
 @optgroup.option(
     "--proteins", "-p", required=True, multiple=True,
@@ -198,10 +224,7 @@ def cli(verbose: bool, quiet: bool) -> None:
     type=click.Choice(["fungus", "protist", "animal", "plant"], case_sensitive=False),
     help="Target organism kingdom (tunes predictor parameters).",
 )
-@optgroup.option(
-    "--numcpu", "-n", type=int, default=multiprocessing.cpu_count(),
-    show_default=True, help="Number of CPU threads.",
-)
+@_numcpu_option
 @optgroup.option(
     "--existing-augustus", type=str, default=None,
     help="Use pre-trained AUGUSTUS species parameters.",
@@ -334,15 +357,12 @@ def annotate(
 
 @cli.command(cls=_PreformattedEpilogCommand, epilog=_PASA_CODE_TABLE)
 @optgroup.group("Required input")
-@optgroup.option(
-    "--genome", "-g", required=True, type=click.Path(exists=True, path_type=Path),
-    help="Genome FASTA file.",
-)
+@_genome_option("Genome FASTA file.")
 @optgroup.option("--left", "-l", type=click.Path(exists=True, path_type=Path), help="Left paired-end reads.")
 @optgroup.option("--right", "-r", type=click.Path(exists=True, path_type=Path), help="Right paired-end reads.")
 @optgroup.option("--single", "-s", type=click.Path(exists=True, path_type=Path), help="Single-end reads.")
 @optgroup.group("Pipeline parameters")
-@optgroup.option("--numcpu", "-n", type=int, default=multiprocessing.cpu_count(), show_default=True)
+@_numcpu_option
 @optgroup.option(
     "--strand-specific", "-S", type=click.Choice(["RF", "FR", "R", "F"]), default=None,
     help="Strand-specific library type.",
@@ -367,7 +387,7 @@ def annotate(
 @optgroup.option("--run-star", "-A", is_flag=True, help="Force re-run STAR read mapping.")
 @optgroup.option("--run-trinity", "-T", is_flag=True, help="Force re-run Trinity assembly.")
 @optgroup.option("--run-pasa", "-P", is_flag=True, help="Force re-run PASA alignment.")
-@optgroup.option("--force", "-f", is_flag=True, help="Force re-run all steps.")
+@_force_option
 def assemble(
     genome: Path,
     left: Path | None,
@@ -458,8 +478,7 @@ def assemble(
 
 @cli.command("func-annot", cls=_PreformattedEpilogCommand)
 @optgroup.group("Pipeline parameters")
-@optgroup.option("--numcpu", "-n", type=int, default=multiprocessing.cpu_count(), show_default=True,
-                 help="Number of CPU threads.")
+@_numcpu_option
 @optgroup.option("--evalue", "-e", type=str, default="1e-1", show_default=True, help="E-value cutoff.")
 @optgroup.group("Override options")
 @optgroup.option(
@@ -478,7 +497,7 @@ def assemble(
     "--gff3", type=click.Path(exists=True, path_type=Path),
     default=None, help="GFF3 file to annotate with functional info.",
 )
-@optgroup.option("--force", "-f", is_flag=True, help="Re-run steps even if outputs exist.")
+@_force_option
 def func_annot(
     proteins: Path,
     uniprot: Path | None,

@@ -6,20 +6,15 @@ import shutil
 from pathlib import Path
 
 from eukan.infra.runner import run_cmd
-from eukan.infra.utils import step_done
 from eukan.infra.logging import get_logger
 from eukan.settings import AssemblyConfig
 
 log = get_logger(__name__)
 
 
-def run_trinity(config: AssemblyConfig, force: bool = False) -> None:
+def run_trinity(config: AssemblyConfig) -> None:
     """Run genome-guided and de novo Trinity assembly."""
     wd = config.work_dir
-
-    if not force and step_done(wd, ["trinity-gg.fasta", "trinity-denovo.fasta"]):
-        log.info("[run_trinity] Already complete, skipping. Use force=True to re-run.")
-        return
 
     lib_type_args = (
         ["--SS_lib_type", config.strand_specific] if config.strand_specific else []

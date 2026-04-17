@@ -1,26 +1,33 @@
 # External tool dependencies for eukan.
 #
 # Single source of truth — consumed by:
-#   - eukan check         (verifies tools are installed)
-#   - eukan.infra.environ (configures conda env vars at runtime)
-#   - environment.yml     (regenerate with: eukan dev generate-env)
-#   - docker/Dockerfile   (ARG versions should match min_version here)
+#   - eukan check                    (verifies tools are installed)
+#   - eukan.infra.environ            (configures conda env vars at runtime)
+#   - eukan.infra.tools_registry     (loader shared by the above)
+#   - environment.yml                (regenerate with: eukan dev generate-env)
+#   - docker/Dockerfile              (ARG versions should match min_version here)
 #
-# Fields:
-#   binary          = executable name on PATH
-#   version_cmd     = command to probe the tool (exit 0 or output = success)
+# Per-tool fields (all optional unless marked required):
+#   binary          = executable name on PATH                           (required)
+#   version_cmd     = command to probe the tool (exit 0 or stdout/stderr = success)
 #   required_by     = which eukan subcommands need this tool
 #   conda_package   = bioconda/conda-forge package name (omit if not available)
 #   min_version     = minimum version for conda pin (omit for unpinned)
-#   env_var         = environment variable that must be set (optional)
-#   install_hint    = shown by `eukan check` when the tool is missing (optional)
+#   install_hint    = shown by `eukan check` when the tool is missing
 #
-# Conda environment fields (read by eukan.infra.environ):
-#   conda_env_path  = path relative to $CONDA_PREFIX that resolves env_var
-#   conda_path_dirs = directories to prepend to PATH (relative to $CONDA_PREFIX)
-#   conda_lib_dirs  = directories to prepend to LD_LIBRARY_PATH, subprocess-only
-#                     (relative to $CONDA_PREFIX; kept out of the parent process
-#                     to avoid breaking system tools like git)
+#   env_vars = [ { var, path?, add_to_path? }, ... ]
+#       Environment variables the tool needs. Each entry:
+#           var         — env var name (checked by `eukan check`)
+#           path        — path relative to $CONDA_PREFIX that sets `var`
+#                         under conda. Omit for vars set externally
+#                         (e.g., in the Dockerfile).
+#           add_to_path — dirs relative to `var`'s value, prepended to PATH
+#                         (for scripts bundled inside the tool's install tree).
+#
+#   conda_path_dirs = dirs relative to $CONDA_PREFIX, prepended to PATH
+#   conda_lib_dirs  = dirs relative to $CONDA_PREFIX, prepended to
+#                     LD_LIBRARY_PATH in subprocesses only (keeps system
+#                     tools like git from breaking in the parent process).
 
 [augustus]
 binary = "augustus"
@@ -28,16 +35,14 @@ version_cmd = ["augustus", "--version"]
 required_by = ["annotate"]
 conda_package = "augustus"
 min_version = "3.5"
-env_var = "AUGUSTUS_CONFIG_PATH"
-conda_env_path = "config"
+env_vars = [{ var = "AUGUSTUS_CONFIG_PATH", path = "config" }]
 
 [snap]
 binary = "snap"
 version_cmd = ["snap"]
 required_by = ["annotate"]
 conda_package = "snap"
-env_var = "ZOE"
-conda_env_path = "share/snap"
+env_vars = [{ var = "ZOE", path = "share/snap" }]
 
 [codingquarry]
 binary = "CodingQuarry"
@@ -45,7 +50,9 @@ version_cmd = ["CodingQuarry", "-h"]
 required_by = ["annotate"]
 conda_package = "codingquarry"
 min_version = "2.0"
-env_var = "QUARRY_PATH"
+# QUARRY_PATH is version-specific (opt/codingquarry-X.Y/QuarryFiles);
+# set by the Dockerfile ENV, not auto-resolved here.
+env_vars = [{ var = "QUARRY_PATH" }]
 
 [genemark]
 binary = "gmes_petap.pl"
@@ -80,7 +87,7 @@ version_cmd = ["spaln", "-h"]
 required_by = ["annotate"]
 conda_package = "spaln"
 min_version = "3.0"
-conda_env_vars = [
+env_vars = [
     { var = "ALN_TAB", path = "share/spaln/table" },
     { var = "ALN_DBS", path = "share/spaln/seqdb" },
     { var = "PERL5LIB", path = "share/spaln/alndbs" },
@@ -106,7 +113,8 @@ version_cmd = ["partition_EVM_inputs.pl"]
 required_by = ["annotate"]
 conda_package = "evidencemodeler"
 min_version = "2.1"
-env_var = "EVM_HOME"
+# EVM_HOME points at a versioned directory; set by the Dockerfile ENV.
+env_vars = [{ var = "EVM_HOME" }]
 conda_path_dirs = ["bin/EvmUtils", "bin/EvmUtils/misc"]
 
 [cdbfasta]
@@ -121,7 +129,8 @@ version_cmd = ["Trinity", "--version"]
 required_by = ["assemble"]
 conda_package = "trinity"
 min_version = "2.15"
-env_var = "TRINITY_HOME"
+# TRINITY_HOME is version-specific; set by the Dockerfile ENV.
+env_vars = [{ var = "TRINITY_HOME" }]
 
 [pasa]
 binary = "Launch_PASA_pipeline.pl"
@@ -129,7 +138,9 @@ version_cmd = ["Launch_PASA_pipeline.pl", "--version"]
 required_by = ["annotate", "assemble"]
 conda_package = "pasa"
 min_version = "2.5"
-env_var = "PASAHOME"
+# PASAHOME is version-specific; set by the Dockerfile ENV.
+# scripts/ is appended to PATH relative to $PASAHOME.
+env_vars = [{ var = "PASAHOME", add_to_path = ["scripts"] }]
 
 [blat]
 binary = "blat"
@@ -195,3 +206,116 @@ binary = "bam2wig"
 version_cmd = ["bam2wig"]
 required_by = ["assemble"]
 # bundled with AUGUSTUS
+
+# ---------------------------------------------------------------------------
+# Helper binaries bundled with parent packages.
+# Registered so `eukan check` can verify their presence.
+# ---------------------------------------------------------------------------
+
+[etraining]
+binary = "etraining"
+version_cmd = ["etraining"]
+required_by = ["annotate"]
+# bundled with AUGUSTUS
+
+[new_species]
+binary = "new_species.pl"
+version_cmd = ["new_species.pl"]
+required_by = ["annotate"]
+# bundled with AUGUSTUS
+
+[randomSplit]
+binary = "randomSplit.pl"
+version_cmd = ["randomSplit.pl"]
+required_by = ["annotate"]
+# bundled with AUGUSTUS
+
+[splitMfasta]
+binary = "splitMfasta.pl"
+version_cmd = ["splitMfasta.pl"]
+required_by = ["annotate"]
+# bundled with AUGUSTUS
+
+[join_aug_pred]
+binary = "join_aug_pred.pl"
+version_cmd = ["join_aug_pred.pl"]
+required_by = ["annotate"]
+# bundled with AUGUSTUS
+
+[gtf2gff]
+binary = "gtf2gff.pl"
+version_cmd = ["gtf2gff.pl"]
+required_by = ["annotate"]
+# bundled with AUGUSTUS
+
+[wig2hints]
+binary = "wig2hints.pl"
+version_cmd = ["wig2hints.pl"]
+required_by = ["assemble"]
+# bundled with AUGUSTUS
+
+[fathom]
+binary = "fathom"
+version_cmd = ["fathom"]
+required_by = ["annotate"]
+# bundled with SNAP
+
+[forge]
+binary = "forge"
+version_cmd = ["forge"]
+required_by = ["annotate"]
+# bundled with SNAP
+
+[hmm-assembler]
+binary = "hmm-assembler.pl"
+version_cmd = ["hmm-assembler.pl"]
+required_by = ["annotate"]
+# bundled with SNAP
+
+[sortgrcd]
+binary = "sortgrcd"
+version_cmd = ["sortgrcd"]
+required_by = ["annotate"]
+# bundled with spaln
+
+[makblk]
+binary = "makblk.pl"
+version_cmd = ["makblk.pl"]
+required_by = ["annotate"]
+# bundled with spaln
+
+[gthconsensus]
+binary = "gthconsensus"
+version_cmd = ["gthconsensus"]
+required_by = ["annotate"]
+# bundled with GenomeThreader
+
+[write_EVM_commands]
+binary = "write_EVM_commands.pl"
+version_cmd = ["write_EVM_commands.pl"]
+required_by = ["annotate"]
+# bundled with EVidenceModeler
+
+[recombine_EVM_partial_outputs]
+binary = "recombine_EVM_partial_outputs.pl"
+version_cmd = ["recombine_EVM_partial_outputs.pl"]
+required_by = ["annotate"]
+# bundled with EVidenceModeler
+
+[convert_EVM_outputs_to_GFF3]
+binary = "convert_EVM_outputs_to_GFF3.pl"
+version_cmd = ["convert_EVM_outputs_to_GFF3.pl"]
+required_by = ["annotate"]
+# bundled with EVidenceModeler
+
+[load_current_gene_annotations]
+binary = "Load_Current_Gene_Annotations.dbi"
+version_cmd = ["Load_Current_Gene_Annotations.dbi"]
+required_by = ["annotate"]
+# bundled with PASA (under $PASAHOME/scripts/, added to PATH via add_to_path)
+
+[build_comprehensive_transcriptome]
+binary = "build_comprehensive_transcriptome.dbi"
+version_cmd = ["build_comprehensive_transcriptome.dbi"]
+required_by = ["assemble"]
+# bundled with PASA (under $PASAHOME/scripts/, added to PATH via add_to_path)

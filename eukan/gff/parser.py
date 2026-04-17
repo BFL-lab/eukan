@@ -1,17 +1,23 @@
 """GFF3/GTF format conversion and normalization.
 
-Transform callbacks for gffutils.create_db(..., transform=fn) and
+Transform callbacks for ``gffutils.create_db(..., transform=fn)`` and
 core functions for building complete gene model hierarchies.
+
+Tool-specific transform callbacks are grouped into namespace classes
+(:class:`Spaln`, :class:`Gth`, :class:`Snap`, :class:`CodingQuarry`,
+:class:`Augustus`) so each tool's quirks live under a single namespace
+and the ``gffparser.Tool.fix_thing`` call sites make intent obvious.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import gffutils
 from Bio import SeqIO
+
 
 # ---------------------------------------------------------------------------
 # GTF ↔ GFF3 conversion
@@ -37,7 +43,7 @@ def gtf2gff3(f: gffutils.Feature) -> gffutils.Feature | None:
 
 
 def gff3_it(f: gffutils.Feature) -> gffutils.Feature:
-    """Normalize transcript/gene features for GFF3 output (SNAP pipeline)."""
+    """Normalize transcript/gene features for GFF3 output."""
     if f.featuretype == "transcript":
         f.featuretype = "mRNA"
         f.attributes["ID"] = f.attributes["Parent"][0] + "_mRNA"
@@ -50,6 +56,22 @@ def gff3_it(f: gffutils.Feature) -> gffutils.Feature:
     if not f.attributes["ID"] and f.id:
         f.attributes["ID"] = f.id
     return f
+
+
+def fix_contig_names(f: gffutils.Feature) -> gffutils.Feature:
+    """Strip trailing description from contig names (GeneMark quirk)."""
+    f.chrom = f.chrom.split(" ")[0]
+    return f
+
+
+def prot2augustus_hints(f: gffutils.Feature) -> gffutils.Feature | None:
+    """Convert protein alignment CDS features to AUGUSTUS CDSpart hints."""
+    if f.featuretype == "CDS":
+        group = f.attributes["Parent"]
+        f.attributes = {"pri": "1", "src": "P", "group": group}
+        f.featuretype = "CDSpart"
+        return f
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +238,7 @@ def prettify_gff3(
 
 
 def gff2zff(gff3: str | Path, fasta: str | Path, output_dir: Path | None = None) -> None:
-    """Convert GFF3 to SNAP's ZFF annotation format (genome.ann)."""
+    """Convert GFF3 to SNAP's ZFF annotation format (``genome.ann``)."""
     from eukan.gff import create_gff_db
     featuredb = create_gff_db(gff3)
     contig_list = [f.id for f in SeqIO.parse(str(fasta), "fasta")]
@@ -253,114 +275,118 @@ def gff2zff(gff3: str | Path, fasta: str | Path, output_dir: Path | None = None)
 
 
 # ---------------------------------------------------------------------------
-# Tool-specific transform callbacks
+# Tool-specific transform callbacks, grouped by source tool.
+#
+# Each class is a namespace (no instances) whose staticmethods are
+# ``gffutils.create_db(..., transform=fn)`` callbacks. Grouping by tool
+# makes it easy to see at a call site (``gffparser.Spaln.fix_ids``)
+# which tool's quirks a transform is compensating for.
 # ---------------------------------------------------------------------------
 
 
-def fix_spaln_cds_featuretype(f: gffutils.Feature) -> gffutils.Feature:
-    """Fix spaln's lowercase 'cds' featuretype."""
-    if f.featuretype == "cds":
-        f.attributes["ID"][0] = f"{f.attributes['Parent'][0]}:{f.attributes['ID'][0]}"
-        f.featuretype = "CDS"
-    return f
+class Spaln:
+    """Transforms for spaln protein-alignment output."""
 
-
-def fix_spaln_ids(f: gffutils.Feature) -> gffutils.Feature:
-    """Normalize spaln feature IDs and source."""
-    if f.featuretype in ("CDS", "exon"):
-        f.attributes["ID"][0] = f.id
-    f.source = "prot_align"
-    return f
-
-
-def prot2augustus_hints(f: gffutils.Feature) -> gffutils.Feature | None:
-    """Convert protein alignment CDS to AUGUSTUS CDSpart hints."""
-    if f.featuretype == "CDS":
-        group = f.attributes["Parent"]
-        f.attributes = {"pri": "1", "src": "P", "group": group}
-        f.featuretype = "CDSpart"
-        return f
-    return None
-
-
-def fix_contig_names(f: gffutils.Feature) -> gffutils.Feature:
-    """Strip trailing description from contig names (GeneMark quirk)."""
-    f.chrom = f.chrom.split(" ")[0]
-    return f
-
-
-def add_cq_mRNA(f: gffutils.Feature) -> gffutils.Feature:
-    """Fix CodingQuarry's incomplete output."""
-    f.source = "codingquarry"
-    if f.featuretype == "CDS":
-        f.attributes["Parent"][0] += "_mRNA"
-    return f
-
-
-def fix_dup_IDs(f: gffutils.Feature) -> gffutils.Feature:
-    """Fix duplicate IDs in CodingQuarry output."""
-    if f.featuretype == "mRNA":
-        f.id = f.attributes["ID"][0]
-    else:
-        f.attributes["ID"] = [f.id]
-    return f
-
-
-def make_snap_featuretype_transform() -> callable:
-    """Return a fresh transform that normalizes SNAP output features.
-
-    Each call creates an independent counter so that multiple transform
-    passes don't share state (which would cause ID collisions).
-    """
-    counter: dict[str, int] = {}
-
-    def fix_snap_featuretype(f: gffutils.Feature) -> gffutils.Feature:
-        """Normalize SNAP output features.
-
-        SNAP GFF output uses ``group_name attr=val; ...`` format.  The group
-        name (gene ID) is always the first attribute key in insertion order.
-        We extract it as the Parent and assign a generated ID.
-        """
-        f.source = "snap"
-        f.featuretype = "exon"
-        # SNAP puts the gene group name as the first attribute key
-        parent = next(iter(f.attributes))
-        counter[parent] = counter.get(parent, 0) + 1
-        exon_id = f"{parent}_exon_{counter[parent]}"
-        f.attributes = {"ID": [exon_id], "Parent": [parent]}
+    @staticmethod
+    def fix_cds_featuretype(f: gffutils.Feature) -> gffutils.Feature:
+        """Fix spaln's lowercase ``cds`` featuretype."""
+        if f.featuretype == "cds":
+            f.attributes["ID"][0] = f"{f.attributes['Parent'][0]}:{f.attributes['ID'][0]}"
+            f.featuretype = "CDS"
         return f
 
-    return fix_snap_featuretype
-
-
-def homogenize_snap_source(f: gffutils.Feature) -> gffutils.Feature:
-    """Set source to 'snap' for all features."""
-    f.source = "snap"
-    return f
-
-
-def clean_augustus_gff3(f: gffutils.Feature) -> gffutils.Feature | None:
-    """Keep only gene/mRNA/CDS/exon features from AUGUSTUS output."""
-    if f.featuretype in ("gene", "mRNA", "CDS", "exon"):
-        f.source = "augustus"
+    @staticmethod
+    def fix_ids(f: gffutils.Feature) -> gffutils.Feature:
+        """Normalize spaln feature IDs and source."""
+        if f.featuretype in ("CDS", "exon"):
+            f.attributes["ID"][0] = f.id
+        f.source = "prot_align"
         return f
-    return None
 
 
-def filter_gth_gff3(f: gffutils.Feature) -> gffutils.Feature | None:
-    """Filter GenomeThreader GFF3 to gene and exon features."""
-    if f.featuretype in ("gene", "exon"):
+class Gth:
+    """Transforms for GenomeThreader protein-alignment output."""
+
+    @staticmethod
+    def filter(f: gffutils.Feature) -> gffutils.Feature | None:
+        """Keep only gene and exon features; reparent exons to ``_mRNA``."""
+        if f.featuretype in ("gene", "exon"):
+            if f.featuretype == "exon":
+                f.attributes["Parent"][0] += "_mRNA"
+            return f
+        return None
+
+    @staticmethod
+    def fix_ids(f: gffutils.Feature) -> gffutils.Feature:
+        """Normalize GenomeThreader feature IDs."""
+        f.source = "prot_align"
         if f.featuretype == "exon":
+            f.attributes["ID"] = [f.id]
+        if f.featuretype == "mRNA":
+            f.id = f.attributes["ID"][0]
+        return f
+
+
+class Snap:
+    """Transforms for SNAP gene-prediction output."""
+
+    @staticmethod
+    def make_featuretype_transform() -> Callable[[gffutils.Feature], gffutils.Feature]:
+        """Return a fresh transform that normalizes SNAP output features.
+
+        Each call creates an independent counter so that multiple
+        transform passes don't share state (which would cause ID
+        collisions).
+        """
+        counter: dict[str, int] = {}
+
+        def fix_snap_featuretype(f: gffutils.Feature) -> gffutils.Feature:
+            f.source = "snap"
+            f.featuretype = "exon"
+            # SNAP puts the gene group name as the first attribute key
+            parent = next(iter(f.attributes))
+            counter[parent] = counter.get(parent, 0) + 1
+            exon_id = f"{parent}_exon_{counter[parent]}"
+            f.attributes = {"ID": [exon_id], "Parent": [parent]}
+            return f
+
+        return fix_snap_featuretype
+
+    @staticmethod
+    def homogenize_source(f: gffutils.Feature) -> gffutils.Feature:
+        """Set ``source`` to ``snap`` for all features."""
+        f.source = "snap"
+        return f
+
+
+class CodingQuarry:
+    """Transforms for CodingQuarry gene-prediction output."""
+
+    @staticmethod
+    def add_mRNA(f: gffutils.Feature) -> gffutils.Feature:
+        """Fix CodingQuarry's incomplete output by attaching mRNA parents."""
+        f.source = "codingquarry"
+        if f.featuretype == "CDS":
             f.attributes["Parent"][0] += "_mRNA"
         return f
-    return None
+
+    @staticmethod
+    def fix_dup_ids(f: gffutils.Feature) -> gffutils.Feature:
+        """Fix duplicate IDs in CodingQuarry output."""
+        if f.featuretype == "mRNA":
+            f.id = f.attributes["ID"][0]
+        else:
+            f.attributes["ID"] = [f.id]
+        return f
 
 
-def fix_gth_ids(f: gffutils.Feature) -> gffutils.Feature:
-    """Normalize GenomeThreader feature IDs."""
-    f.source = "prot_align"
-    if f.featuretype == "exon":
-        f.attributes["ID"] = [f.id]
-    if f.featuretype == "mRNA":
-        f.id = f.attributes["ID"][0]
-    return f
+class Augustus:
+    """Transforms for AUGUSTUS gene-prediction output."""
+
+    @staticmethod
+    def clean(f: gffutils.Feature) -> gffutils.Feature | None:
+        """Keep only gene/mRNA/CDS/exon features from AUGUSTUS output."""
+        if f.featuretype in ("gene", "mRNA", "CDS", "exon"):
+            f.source = "augustus"
+            return f
+        return None

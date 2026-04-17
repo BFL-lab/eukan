@@ -7,7 +7,7 @@ from pathlib import Path
 import gffutils
 import pandas as pd
 
-from eukan.annotation.validation import validate_gff
+from eukan.infra.logging import validate_gff
 from eukan.gff import transform_db
 from eukan.gff import parser as gffparser
 from eukan.gff.io import featuredb2gff3_file
