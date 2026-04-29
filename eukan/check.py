@@ -48,11 +48,17 @@ def check_tool(tool: Tool) -> CheckResult:
         )
 
     try:
+        # Use subprocess_env() so tools that depend on LD_LIBRARY_PATH
+        # (e.g. fitild needs liblbfgs from $CONDA_PREFIX/lib) load their
+        # shared libs without requiring the user to export LD_LIBRARY_PATH.
+        from eukan.infra.environ import subprocess_env
         result = subprocess.run(
             tool.version_cmd,
             capture_output=True,
             text=True,
             timeout=10,
+            stdin=subprocess.DEVNULL,
+            env=subprocess_env(),
         )
         # Many bioinformatics tools exit non-zero on --help or with no args
         # but still produce useful output. Accept non-zero if output doesn't

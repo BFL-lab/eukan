@@ -41,9 +41,12 @@ def _apply_env_vars(tool: Tool, prefix: str, env: dict[str, str]) -> None:
     """Set env vars declared by *tool* and extend PATH for add_to_path dirs."""
     for spec in tool.env_vars:
         if spec.path:
-            resolved = _resolve(prefix, spec.path)
-            if resolved is not None:
-                env.setdefault(spec.var, resolved)
+            # Always set the var when a path is declared. Some tools (e.g.
+            # spaln's ALN_DBS) point at user-data directories that aren't
+            # populated by the conda package — the env var still needs to
+            # be set for the tool to work.
+            resolved = str(Path(prefix) / spec.path)
+            env.setdefault(spec.var, resolved)
 
         var_val = env.get(spec.var, "")
         for rel in spec.add_to_path:

@@ -238,7 +238,9 @@ required_by = ["annotate"]
 
 [join_aug_pred]
 binary = "join_aug_pred.pl"
-version_cmd = ["join_aug_pred.pl"]
+# Reads from stdin with no help flag; --help triggers a Getopt error
+# that prints "Unknown option: help" — enough to confirm the script runs.
+version_cmd = ["join_aug_pred.pl", "--help"]
 required_by = ["annotate"]
 # bundled with AUGUSTUS
 
@@ -250,7 +252,9 @@ required_by = ["annotate"]
 
 [wig2hints]
 binary = "wig2hints.pl"
-version_cmd = ["wig2hints.pl"]
+# Reads from stdin; --help triggers a Getopt error that prints
+# "Unknown option: help" — enough to confirm the script runs.
+version_cmd = ["wig2hints.pl", "--help"]
 required_by = ["assemble"]
 # bundled with AUGUSTUS
 
@@ -286,7 +290,7 @@ required_by = ["annotate"]
 
 [gthconsensus]
 binary = "gthconsensus"
-version_cmd = ["gthconsensus"]
+version_cmd = ["gthconsensus", "-version"]
 required_by = ["annotate"]
 # bundled with GenomeThreader
 
