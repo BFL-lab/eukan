@@ -41,6 +41,34 @@ _ALIASES = {"map": "star"}
 _STEP_TO_FLAG = {step_key(ASSEMBLY, n): s.flag for n, s in _STEPS.items()}
 
 
+def steps_and_force_from_run_flags(
+    *,
+    run_star: bool = False,
+    run_trinity: bool = False,
+    run_pasa: bool = False,
+    force: bool = False,
+) -> tuple[list[str], bool]:
+    """Translate per-flag CLI booleans into ``(steps, force)`` for ``run_assembly``.
+
+    Any ``--run-X`` flag selects step X *and* forces it to re-run, so a
+    completed manifest entry doesn't silently no-op.  When no ``--run-X``
+    flag is set, every step runs and ``force`` controls whether completed
+    entries are re-executed.
+
+    This mirrors the annotate side's ``force_steps_from_run_flags``.
+    """
+    flag_to_step = {
+        "run_star": "star",
+        "run_trinity": "trinity",
+        "run_pasa": "pasa",
+    }
+    flag_states = {"run_star": run_star, "run_trinity": run_trinity, "run_pasa": run_pasa}
+    selected = [step for flag, step in flag_to_step.items() if flag_states[flag]]
+    if selected:
+        return selected, True
+    return list(flag_to_step.values()), force
+
+
 def run_assembly(config: AssemblyConfig, steps: list[str], force: bool = False) -> None:
     """Run the specified assembly steps with manifest tracking."""
     manifest = get_or_create_manifest(config.manifest_dir)

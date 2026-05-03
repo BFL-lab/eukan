@@ -487,18 +487,11 @@ def assemble(
 
     config = AssemblyConfig(**kwargs)
 
-    steps = []
-    if run_star:
-        steps.append("map")
-    if run_trinity:
-        steps.append("trinity")
-    if run_pasa:
-        steps.append("pasa")
+    from eukan.assembly.orchestrator import steps_and_force_from_run_flags
 
-    # If no specific steps or --force, run all
-    if not steps:
-        steps = ["map", "trinity", "pasa"]
-
+    steps, force = steps_and_force_from_run_flags(
+        run_star=run_star, run_trinity=run_trinity, run_pasa=run_pasa, force=force,
+    )
     run_assembly(config, steps, force=force)
     click.echo("Done.")
 
