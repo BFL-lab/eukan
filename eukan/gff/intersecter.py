@@ -147,20 +147,30 @@ def find_nonoverlapping_genes(
 
     Returns all features (gene + children) for non-overlapping, ORF-containing genes.
     """
-    # Build a fast lookup of target gene intervals by (chrom, strand)
-    # Store as parallel sorted lists of (start, end) for binary search.
+    # Build a per-(chrom, strand) index: intervals sorted by start, with a
+    # parallel monotone prefix-max of ends. The prefix-max lets us bisect
+    # for the left bound of overlap candidates: any target with
+    # max_end_to[i] < query.start cannot overlap.
     target_starts: dict[tuple[str, str], list[int]] = defaultdict(list)
     target_ends: dict[tuple[str, str], list[int]] = defaultdict(list)
+    target_max_end_to: dict[tuple[str, str], list[int]] = {}
     for gene in db_target.features_of_type("gene"):
         key = (gene.chrom, gene.strand)
         target_starts[key].append(gene.start)
         target_ends[key].append(gene.end)
 
-    # Sort by start coordinate; keep ends aligned
     for key in target_starts:
         paired = sorted(zip(target_starts[key], target_ends[key]))
         target_starts[key] = [s for s, _ in paired]
-        target_ends[key] = [e for _, e in paired]
+        ends_sorted = [e for _, e in paired]
+        target_ends[key] = ends_sorted
+        max_end_to: list[int] = []
+        running_max = 0
+        for end in ends_sorted:
+            if end > running_max:
+                running_max = end
+            max_end_to.append(running_max)
+        target_max_end_to[key] = max_end_to
 
     result: list[gffutils.Feature] = []
 
@@ -168,17 +178,18 @@ def find_nonoverlapping_genes(
         key = (gene.chrom, gene.strand)
         starts = target_starts.get(key)
         if not starts:
-            # No target genes on this chrom/strand — no overlap
             overlaps = False
         else:
-            # A target (t_start, t_end) overlaps gene if:
-            #   t_start <= gene.end AND t_end >= gene.start
-            # Since starts are sorted, all targets with index < bisect_right(gene.end)
-            # satisfy t_start <= gene.end. We only need to check t_end >= gene.start
-            # among those candidates.
-            idx = bisect.bisect_right(starts, gene.end)
             ends = target_ends[key]
-            overlaps = any(ends[i] >= gene.start for i in range(idx))
+            max_end_to = target_max_end_to[key]
+            idx_right = bisect.bisect_right(starts, gene.end)
+            if idx_right == 0:
+                overlaps = False
+            else:
+                idx_left = bisect.bisect_left(max_end_to, gene.start)
+                overlaps = any(
+                    ends[i] >= gene.start for i in range(idx_left, idx_right)
+                )
         if overlaps:
             continue
 
@@ -275,10 +286,25 @@ def find_concordant_models(
     db1 = create_gff_db(gff3_1)
     db2 = create_gff_db(gff3_2)
 
-    # Index db2 mRNAs by (chrom, strand) for fast lookup
-    db2_mrnas: dict[tuple[str, str], list[gffutils.Feature]] = defaultdict(list)
+    # Index db2 mRNAs by (chrom, strand) -- sorted by start with a parallel
+    # monotone prefix-max-end for bounded overlap lookup.
+    db2_buckets: dict[tuple[str, str], list[gffutils.Feature]] = defaultdict(list)
     for mrna in db2.features_of_type("mRNA"):
-        db2_mrnas[(mrna.chrom, mrna.strand)].append(mrna)
+        db2_buckets[(mrna.chrom, mrna.strand)].append(mrna)
+    db2_index: dict[
+        tuple[str, str],
+        tuple[list[gffutils.Feature], list[int], list[int]],
+    ] = {}
+    for key, mrnas in db2_buckets.items():
+        mrnas.sort(key=lambda m: m.start)
+        starts = [m.start for m in mrnas]
+        max_end_to: list[int] = []
+        running_max = 0
+        for m in mrnas:
+            if m.end > running_max:
+                running_max = m.end
+            max_end_to.append(running_max)
+        db2_index[key] = (mrnas, starts, max_end_to)
 
     concordant_gene_ids: set[str] = set()
 
@@ -288,21 +314,27 @@ def find_concordant_models(
             continue
 
         key = (mrna1.chrom, mrna1.strand)
-        for mrna2 in db2_mrnas.get(key, []):
-            # Quick reject: no overlap
-            if mrna1.start > mrna2.end or mrna2.start > mrna1.end:
+        entry = db2_index.get(key)
+        if entry is None:
+            continue
+        mrnas2, starts2, max_end_to2 = entry
+        idx_right = bisect.bisect_right(starts2, mrna1.end)
+        if idx_right == 0:
+            continue
+        idx_left = bisect.bisect_left(max_end_to2, mrna1.start)
+
+        for i in range(idx_left, idx_right):
+            mrna2 = mrnas2[i]
+            if mrna2.end < mrna1.start:
                 continue
 
-            # Check span similarity
             if not _mrna_spans_match(mrna1, mrna2):
                 continue
 
-            # Check CDS count
             cds2 = _get_cds_list(db2, mrna2)
             if len(cds1) != len(cds2):
                 continue
 
-            # Check boundary concordance
             if _cds_boundaries_match(cds1, cds2):
                 parent_id = mrna1.attributes["Parent"][0]
                 concordant_gene_ids.add(parent_id)

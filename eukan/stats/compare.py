@@ -21,7 +21,7 @@ CDS and intron levels:
 
 from __future__ import annotations
 
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from itertools import permutations
 from pathlib import Path
@@ -100,18 +100,31 @@ def _group_by_parent(
 # ---------------------------------------------------------------------------
 
 
-# Spatial index: (chrom, strand) -> sorted list of intervals + start array
-_Index = dict[tuple[str, str], tuple[list[Interval], list[int]]]
+# Spatial index: (chrom, strand) -> (sorted intervals, starts, prefix-max ends)
+_Index = dict[tuple[str, str], tuple[list[Interval], list[int], list[int]]]
 
 
 def _build_index(intervals: list[Interval]) -> _Index:
+    """Build a strand-aware interval index with monotone prefix-max ends.
+
+    ``max_end_to[i]`` is ``max(end[0..i])``.  Because intervals are sorted
+    by start, this array is monotone non-decreasing, so a binary search on
+    it gives the leftmost candidate whose end could reach a query.start.
+    """
     buckets: dict[tuple[str, str], list[Interval]] = defaultdict(list)
     for iv in intervals:
         buckets[(iv.chrom, iv.strand)].append(iv)
     idx: _Index = {}
     for key, ivs in buckets.items():
         ivs.sort(key=lambda x: x.start)
-        idx[key] = (ivs, [iv.start for iv in ivs])
+        starts = [iv.start for iv in ivs]
+        max_end_to: list[int] = []
+        running_max = 0
+        for iv in ivs:
+            if iv.end > running_max:
+                running_max = iv.end
+            max_end_to.append(running_max)
+        idx[key] = (ivs, starts, max_end_to)
     return idx
 
 
@@ -119,20 +132,28 @@ def _find_overlaps(
     query: Interval,
     targets_idx: _Index,
 ) -> list[tuple[Interval, int]]:
-    """Find all overlapping targets with overlap bp. Strand-aware."""
+    """Find all overlapping targets with overlap bp. Strand-aware.
+
+    Bounds the candidate range with two binary searches:
+    * right bound: first target with ``start > query.end`` (no future overlap)
+    * left bound: first target where ``max_end_to >= query.start``
+      (all earlier targets strictly end before the query)
+    """
     entry = targets_idx.get((query.chrom, query.strand))
     if entry is None:
         return []
-    ivs, starts = entry
-    # Skip to the first target that could overlap (start <= query.end)
-    # All targets from bisect point onward have start > query.end.
-    end = bisect_left(starts, query.end + 1)
+    ivs, starts, max_end_to = entry
+    idx_right = bisect_right(starts, query.end)
+    if idx_right == 0:
+        return []
+    idx_left = bisect_left(max_end_to, query.start)
     results = []
-    for i in range(end):
+    for i in range(idx_left, idx_right):
         t = ivs[i]
+        if t.end < query.start:
+            continue
         ovl = min(query.end, t.end) - max(query.start, t.start) + 1
-        if ovl > 0:
-            results.append((t, ovl))
+        results.append((t, ovl))
     return results
 
 

@@ -201,6 +201,25 @@ class TestFindNonoverlapping:
         result = find_nonoverlapping_genes(db1, db2)
         assert len([f for f in result if f.featuretype == "gene"]) == 0
 
+    def test_long_spanning_target_engulfs_source(self):
+        """A long-spanning target before short non-overlapping ones must
+        still be detected as overlapping. Exercises the prefix-max-end
+        bound used by the index."""
+        db_source = _db(
+            "chr1\ttest\tgene\t5000\t5100\t.\t+\t.\tID=src\n"
+            "chr1\ttest\tmRNA\t5000\t5100\t.\t+\t.\tID=m;Parent=src\n"
+            "chr1\ttest\tCDS\t5000\t5100\t.\t+\t0\tID=c;Parent=m\n"
+        )
+        # Long-spanning gene starts well before src and engulfs it.
+        # Several short genes with start > src.end serve as decoys.
+        db_target = _db(
+            "chr1\ttest\tgene\t100\t9000\t.\t+\t.\tID=engulf\n"
+            "chr1\ttest\tgene\t6000\t6100\t.\t+\t.\tID=after1\n"
+            "chr1\ttest\tgene\t7000\t7100\t.\t+\t.\tID=after2\n"
+        )
+        result = find_nonoverlapping_genes(db_source, db_target)
+        assert [f.id for f in result if f.featuretype == "gene"] == []
+
 
 # ---------------------------------------------------------------------------
 # Concordant models
