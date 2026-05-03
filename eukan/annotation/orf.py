@@ -92,6 +92,9 @@ def find_starts_stops(
 # ---------------------------------------------------------------------------
 
 
+_ORF_COLUMNS = ["id", "seqlen", "start", "stop", "strand", "frame", "orflen"]
+
+
 def fetch_longest_orf(
     codon_df: pd.DataFrame,
     min_orf_len: int = 90,
@@ -99,62 +102,84 @@ def fetch_longest_orf(
 ) -> pd.DataFrame:
     """Select the longest ORF per transcript from start/stop codon positions.
 
-    For each transcript, finds in-frame start-stop pairs, selects the
-    pair with the shortest stop for each start, then keeps the longest ORF.
+    For each (transcript, strand, frame), pairs each start with the
+    nearest downstream stop and tracks the longest such pair.  Across
+    frames, the longest ORF per (transcript, strand) wins.
+
+    The previous implementation built an O(starts * stops) merged
+    DataFrame per frame; this version walks the codons once and
+    binary-searches for the nearest stop, which is O((S+T) log T) per
+    frame and avoids materialising the cross product.
 
     Args:
         codon_df: Output of find_starts_stops.
-        min_orf_len: Minimum ORF length in nucleotides.
-        orf_len_frac: Minimum ORF length as fraction of transcript length.
+        min_orf_len: Minimum ORF length in nucleotides (strict >).
+        orf_len_frac: Minimum ORF length as fraction of transcript length (strict >).
 
     Returns:
         DataFrame with columns: id, seqlen, start, stop, strand, frame, orflen
     """
-    starts = (
-        codon_df[codon_df["codon"] == "start"]
-        .rename(columns={"pos": "start"})
-        .drop(columns="codon")
-    )
-    stops = (
-        codon_df[codon_df["codon"] == "stop"]
-        .rename(columns={"pos": "stop"})
-        .drop(columns="codon")
-    )
+    if codon_df.empty:
+        return pd.DataFrame(columns=_ORF_COLUMNS)
 
-    # Merge in-frame start+stop pairs
-    merge_keys = ["id", "seqlen", "strand", "frame"]
-    pairs = starts.merge(stops, on=merge_keys)
-    pairs = pairs[pairs["start"] < pairs["stop"]].reset_index(drop=True)
+    from bisect import bisect_right
+    from collections import defaultdict
+    from dataclasses import dataclass, field
 
-    if pairs.empty:
-        return pd.DataFrame(
-            columns=["id", "seqlen", "start", "stop", "strand", "frame", "orflen"]
-        )
+    @dataclass
+    class _FrameData:
+        seqlen: int = 0
+        starts: list[int] = field(default_factory=list)
+        stops: list[int] = field(default_factory=list)
 
-    # For each start, find the nearest downstream stop
-    nearest_stop = (
-        pairs.groupby([*merge_keys, "start"], as_index=False)["stop"].min()
-    )
-    pairs = pairs.merge(
-        nearest_stop, on=[*merge_keys, "start", "stop"]
-    )
+    # Group codons by (id, strand, frame). seqlen is invariant per id.
+    groups: dict[tuple[str, str, int], _FrameData] = defaultdict(_FrameData)
+    for row in codon_df.itertuples(index=False):
+        slot = groups[(row.id, row.strand, row.frame)]
+        slot.seqlen = row.seqlen
+        (slot.starts if row.codon == "start" else slot.stops).append(row.pos)
 
-    # Calculate ORF length and keep longest per transcript
-    pairs["orflen"] = pairs["stop"] - pairs["start"]
-    longest = pairs.loc[
-        pairs.groupby(["id", "seqlen", "strand"])["orflen"].idxmax()
-    ]
+    # For each frame, find the longest in-frame ORF; keep the per-transcript winner.
+    best_per_transcript: dict[tuple[str, str], dict] = {}
+    for (tid, strand, frame), data in groups.items():
+        stops_sorted = sorted(data.stops)
+        if not stops_sorted:
+            continue
+        seqlen = data.seqlen
 
-    # Apply length filters
-    longest = longest[
-        (longest["orflen"] > min_orf_len)
-        & (longest["orflen"] / longest["seqlen"] > orf_len_frac)
-    ].copy()
+        best_orflen = 0
+        best_start = best_stop = 0
+        for start in data.starts:
+            idx = bisect_right(stops_sorted, start)
+            if idx == len(stops_sorted):
+                continue
+            stop = stops_sorted[idx]
+            orflen = stop - start
+            if orflen > best_orflen:
+                best_orflen = orflen
+                best_start, best_stop = start, stop
 
-    # Adjust stop position to include the full stop codon (+2 nt)
-    longest["stop"] += 2
+        if best_orflen <= min_orf_len:
+            continue
+        if seqlen <= 0 or best_orflen / seqlen <= orf_len_frac:
+            continue
 
-    return longest[["id", "seqlen", "start", "stop", "strand", "frame", "orflen"]]
+        key = (tid, strand)
+        prev = best_per_transcript.get(key)
+        if prev is None or prev["orflen"] < best_orflen:
+            best_per_transcript[key] = {
+                "id": tid,
+                "seqlen": seqlen,
+                "start": best_start,
+                "stop": best_stop + 2,  # include the full stop codon
+                "strand": strand,
+                "frame": frame,
+                "orflen": best_orflen,
+            }
+
+    if not best_per_transcript:
+        return pd.DataFrame(columns=_ORF_COLUMNS)
+    return pd.DataFrame(list(best_per_transcript.values()), columns=_ORF_COLUMNS)
 
 
 # ---------------------------------------------------------------------------
