@@ -29,11 +29,11 @@ def _rand_string(length: int = 5) -> str:
 
 def _pyproject_toml_settings(settings: BaseSettings) -> dict[str, Any]:
     """Load [tool.eukan] from pyproject.toml if it exists."""
+    import tomllib
     pyproject = Path("pyproject.toml")
     if not pyproject.exists():
         return {}
     try:
-        from eukan.infra import tomllib
         with open(pyproject, "rb") as f:
             data = tomllib.load(f)
         return data.get("tool", {}).get("eukan", {})

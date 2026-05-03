@@ -317,7 +317,7 @@ def test_pipeline_cmd(
     func_faa = work_dir / "predicted_proteins.mod.faa"
     if func_faa.exists():
         click.echo(f"  Annotated proteins: {func_faa}")
-    click.echo(f"\n  View run details: eukan status")
+    click.echo("\n  View run details: eukan status")
 
 
 @cli.command("compare-annotations", short_help="Compare pipeline output against reference.")

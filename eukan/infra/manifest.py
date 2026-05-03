@@ -19,7 +19,7 @@ import subprocess
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -489,7 +489,7 @@ def format_status(manifest: RunManifest) -> str:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _compute_duration(record: StepRecord) -> None:

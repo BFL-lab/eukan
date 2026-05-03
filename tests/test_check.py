@@ -1,8 +1,13 @@
 """Tests for eukan.check — external tool and database pre-flight checks."""
 
-from pathlib import Path
 
-from eukan.check import check_tool, run_checks, format_results, generate_environment_yml, PythonCheckResult
+from eukan.check import (
+    PythonCheckResult,
+    check_tool,
+    format_results,
+    generate_environment_yml,
+    run_checks,
+)
 from eukan.infra.tools_registry import EnvVarSpec, Tool, load_tools
 
 

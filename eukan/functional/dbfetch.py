@@ -10,7 +10,7 @@ import gzip
 import json
 import shutil
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pyhmmer
@@ -129,7 +129,7 @@ def _make_entry(name: str, filename: str, url: str, db_dir: Path) -> DatabaseEnt
         file=filename,
         source_url=url,
         md5=md5_file(path),
-        date=datetime.now(timezone.utc).isoformat(),
+        date=datetime.now(UTC).isoformat(),
         size_bytes=path.stat().st_size,
     )
 

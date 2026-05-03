@@ -32,12 +32,11 @@ install tree (e.g., ``$PASAHOME/scripts``).
 from __future__ import annotations
 
 import os
+import tomllib
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
-
-from eukan.infra import tomllib
 
 
 @dataclass(frozen=True)

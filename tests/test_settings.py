@@ -1,11 +1,8 @@
 """Tests for eukan.settings — pydantic-settings configuration."""
 
-import os
 from pathlib import Path
 
-import pytest
-
-from eukan.settings import PipelineConfig, AssemblyConfig, FunctionalConfig, Kingdom
+from eukan.settings import AssemblyConfig, FunctionalConfig, Kingdom, PipelineConfig
 
 
 class TestPipelineConfig:

@@ -71,7 +71,7 @@ def _require_tool(name: str) -> str:
             f"`{name}` not found on PATH. "
             f"Install it from: https://www.ncbi.nlm.nih.gov/datasets/docs/v2/command-line-tools/"
             if name == "datasets" else
-            f"Install it from: https://github.com/ncbi/sra-tools/wiki/01.-Downloading-SRA-Toolkit"
+            "Install it from: https://github.com/ncbi/sra-tools/wiki/01.-Downloading-SRA-Toolkit"
         )
     return path
 
@@ -458,7 +458,7 @@ def validate_test_data(output_dir: Path) -> list[tuple[str, str, bool]]:
         # Check for old _1/_3 naming from --split-files
         old_files = len(list(output_dir.glob("SRR*_3.fastq.gz")))
         if old_files > 0:
-            results.append(("reads", f"found _1/_3 files (need _1/_2 pairs — delete and re-download)", False))
+            results.append(("reads", "found _1/_3 files (need _1/_2 pairs — delete and re-download)", False))
         else:
             results.append(("reads", "no FASTQ files found (run: eukan dev setup-test-data)", False))
 

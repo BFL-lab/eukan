@@ -10,11 +10,8 @@ These tests don't require external bioinformatics tools. They verify that:
 
 import importlib
 import subprocess
-import sys
-from pathlib import Path
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Module imports — catches circular deps and missing packages
@@ -101,8 +98,8 @@ def test_pyhmmer_imports():
     """pyhmmer and its key submodules should be importable."""
     import pyhmmer
     import pyhmmer.easel
-    import pyhmmer.plan7
     import pyhmmer.hmmer
+    import pyhmmer.plan7
     assert hasattr(pyhmmer.hmmer, "phmmer")
     assert hasattr(pyhmmer.hmmer, "hmmscan")
     assert hasattr(pyhmmer.hmmer, "hmmpress")

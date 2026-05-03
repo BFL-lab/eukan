@@ -1,10 +1,7 @@
 """Tests for eukan.gff.io — GFF3 serialization and sequence extraction."""
 
-import tempfile
-from pathlib import Path
 
 import gffutils
-import pytest
 
 from eukan.gff.io import extract_sequences, featuredb2gff3_file
 

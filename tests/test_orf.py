@@ -1,10 +1,8 @@
 """Tests for eukan.annotation.orf — ORF finding and coordinate mapping."""
 
 import pandas as pd
-import pytest
 
 from eukan.annotation.orf import fetch_longest_orf, find_starts_stops
-
 
 # ---------------------------------------------------------------------------
 # find_starts_stops

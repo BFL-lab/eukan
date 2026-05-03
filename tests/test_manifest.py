@@ -1,19 +1,18 @@
 """Tests for eukan.manifest — run tracking and step lifecycle."""
 
-from pathlib import Path
 
 from eukan.infra.manifest import (
+    SENTINEL,
     RunManifest,
     StepRecord,
     StepStatus,
-    pipeline_step,
+    clean_interrupted_step,
+    format_status,
     is_step_complete,
     is_step_interrupted,
-    clean_interrupted_step,
     load_manifest,
+    pipeline_step,
     save_manifest,
-    format_status,
-    SENTINEL,
 )
 
 

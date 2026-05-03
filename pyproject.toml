@@ -11,7 +11,7 @@ packages = [{include = "eukan"}]
 eukan = "eukan.cli:cli"
 
 [tool.poetry.dependencies]
-python = ">=3.10,<4.0"
+python = ">=3.11,<4.0"
 click = ">=8.1"
 gffutils = ">=0.12"
 biopython = ">=1.83"
@@ -32,7 +32,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
@@ -40,13 +40,23 @@ ignore = [
     "E501",   # line length (handled by formatter)
     "B008",   # function-call-in-default (pydantic Field default_factory style)
     "SIM117", # combine-with-statements (sometimes hurts readability)
+    "UP042",  # StrEnum: switching changes str() semantics on 3.11; not worth the risk
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["B011"]
+# Tests routinely unpack tuples ignoring parts; SIM105 try/except/pass is
+# clearer than contextlib.suppress in some test fixtures.
+"tests/*" = ["B011", "RUF059", "RUF015"]
+# Dev tooling: setup-then-import pattern, looser rules.
+"tests/run_pipeline.py" = ["B007", "B904", "E402", "RUF005", "SIM102"]
+"tests/compare_spaln_modes.py" = ["E402"]
+# Grouped seq[i]=X assignments in test data construction.
+"tests/test_splice_and_gencode.py" = ["E702"]
+# SIM105: try/except/pass is clearer than contextlib.suppress in this test.
+"tests/test_dbfetch.py" = ["SIM105"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true

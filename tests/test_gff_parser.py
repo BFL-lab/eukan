@@ -1,12 +1,10 @@
 """Tests for eukan.gff.parser — GFF3 transforms and feature hierarchy."""
 
 import gffutils
-import pytest
 
 from eukan.gff.parser import (
     add_missing_feats_to_gff3,
     fix_CDS_phases,
-    gtf2gff3,
     prettify_gff3,
 )
 

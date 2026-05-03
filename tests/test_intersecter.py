@@ -1,16 +1,15 @@
 """Tests for eukan.gff.intersecter — interval operations with pure gffutils."""
 
 import gffutils
-import pytest
 
 from eukan.gff.intersecter import (
+    _cds_boundaries_match,
     _features_overlap,
     _find_overlapping_genes,
-    _cds_boundaries_match,
-    merge_fully_overlapping_transcript_genes,
-    find_nonoverlapping_genes,
-    find_concordant_models,
     combine_nonredundant_models,
+    find_concordant_models,
+    find_nonoverlapping_genes,
+    merge_fully_overlapping_transcript_genes,
 )
 
 
