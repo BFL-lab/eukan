@@ -138,7 +138,13 @@ def run_pasa(config: AssemblyConfig) -> None:
 
 
 def _deduplicate_fasta(input_fa: Path, output_fa: Path) -> None:
-    """Remove duplicate sequences from a FASTA file."""
+    """Drop records with duplicate header lines from a FASTA file.
+
+    Defends against duplicate IDs introduced by concatenating the genome-
+    guided and de-novo Trinity outputs upstream. Note: dedup is by header
+    line only -- two records with different headers but identical
+    sequences both survive.
+    """
     seen: set[str] = set()
     with open(input_fa) as fin, open(output_fa, "w") as fout:
         write = False

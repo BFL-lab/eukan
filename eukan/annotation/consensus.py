@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import gffutils
-
 from eukan.annotation.evm import run_evm
 from eukan.assembly.pasa import write_pasa_configs
 from eukan.gff import create_gff_db
@@ -74,11 +72,8 @@ def build_consensus_models(config: PipelineConfig, *evidence: Path) -> Path:
         missing = gffintersecter.find_nonoverlapping_genes(orf_db, consdb)
         if missing:
             log.info("Reintroduced %d transcript ORFs not overlapping EVM consensus", len(missing))
-        all_features = list(consdb.all_features()) + missing
-        consdb = gffutils.create_db(
-            all_features, ":memory:",
-            merge_strategy="merge", from_string=True,
-        )
+        all_features = [*consdb.all_features(), *missing]
+        consdb = create_gff_db(all_features, merge_strategy="merge")
 
     consdb.dialect["order"].append("locus_tag")
     consdb = create_gff_db(

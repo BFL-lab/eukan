@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import multiprocessing
 import sys
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import click
 from click_option_group import optgroup
+
+try:
+    _EUKAN_VERSION = version("eukan")
+except PackageNotFoundError:
+    _EUKAN_VERSION = "unknown"
 
 
 class _PreformattedEpilogCommand(click.Command):
@@ -194,7 +200,7 @@ def _pasa_code_table_text() -> str:
 
 
 @click.group(cls=_EukanGroup, context_settings=CONTEXT_SETTINGS)
-@click.version_option("0.2.0")
+@click.version_option(_EUKAN_VERSION)
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress info logging (warnings only).")
 def cli(verbose: bool, quiet: bool) -> None:
