@@ -357,19 +357,16 @@ def annotate(
 
     config = PipelineConfig(**kwargs)
 
-    # Build force_steps list from step-specific flags
-    force_steps: list[str] = []
-    prot_align_step = "prot_align_ssp" if spsp else "prot_align"
-    step_flag_map = {
-        "annotation/genemark": run_genemark,
-        f"annotation/{prot_align_step}": run_prot_align,
-        "annotation/augustus": run_augustus,
-        "annotation/snap": run_snap,
-        "annotation/evm_consensus_models": run_consensus,
-    }
-    for step_name, flag in step_flag_map.items():
-        if flag:
-            force_steps.append(step_name)
+    from eukan.annotation.orchestrator import force_steps_from_run_flags
+
+    force_steps = force_steps_from_run_flags(
+        spaln_ssp=spsp,
+        run_genemark=run_genemark,
+        run_prot_align=run_prot_align,
+        run_augustus=run_augustus,
+        run_snap=run_snap,
+        run_consensus=run_consensus,
+    )
 
     result = run_annotation_pipeline(config, force_steps=force_steps or None)
     click.echo(f"Done. Final annotation: {result}")

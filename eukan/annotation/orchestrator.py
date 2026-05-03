@@ -184,20 +184,59 @@ def run_annotation_pipeline(
         raise
 
 
-# Map from manifest key to the --run-* CLI flag that forces re-run
-_STEP_TO_FLAG = {
-    step_key(ANNOTATION, name): flag
-    for name, flag in {
-        "genemark": "--run-genemark",
-        "prot_align": "--run-prot-align",
-        "prot_align_ssp": "--run-prot-align",
-        "augustus": "--run-augustus",
-        "snap": "--run-snap",
-        "codingquarry": "--run-snap",
-        "orf_finder": "--run-genemark",
-        "evm_consensus_models": "--run-consensus",
-    }.items()
+# Single source of truth: step name (no prefix) -> --run-* CLI flag that
+# (a) forces re-run when the user passes the flag, and
+# (b) is shown in error messages when a step's output is broken.
+# Multiple step names mapping to the same flag means the flag forces all
+# of them as a group (e.g. --run-genemark also re-runs orf_finder).
+_ANNOTATION_STEP_FLAGS: dict[str, str] = {
+    "genemark":             "--run-genemark",
+    "orf_finder":           "--run-genemark",
+    "prot_align":           "--run-prot-align",
+    "prot_align_ssp":       "--run-prot-align",
+    "augustus":             "--run-augustus",
+    "snap":                 "--run-snap",
+    "codingquarry":         "--run-snap",
+    "evm_consensus_models": "--run-consensus",
 }
+
+# Manifest-key form of the same mapping, for validate_step_outputs.
+_STEP_TO_FLAG: dict[str, str] = {
+    step_key(ANNOTATION, name): flag for name, flag in _ANNOTATION_STEP_FLAGS.items()
+}
+
+
+def force_steps_from_run_flags(
+    *,
+    spaln_ssp: bool = False,
+    run_genemark: bool = False,
+    run_prot_align: bool = False,
+    run_augustus: bool = False,
+    run_snap: bool = False,
+    run_consensus: bool = False,
+) -> list[str]:
+    """Translate per-flag booleans into manifest step keys to force.
+
+    Steps grouped under the same flag are all forced together, except
+    that prot_align/prot_align_ssp is selected based on ``spaln_ssp``.
+    """
+    flag_states = {
+        "--run-genemark":   run_genemark,
+        "--run-prot-align": run_prot_align,
+        "--run-augustus":   run_augustus,
+        "--run-snap":       run_snap,
+        "--run-consensus":  run_consensus,
+    }
+    forced: list[str] = []
+    for name, flag in _ANNOTATION_STEP_FLAGS.items():
+        if not flag_states.get(flag, False):
+            continue
+        if name == "prot_align" and spaln_ssp:
+            continue
+        if name == "prot_align_ssp" and not spaln_ssp:
+            continue
+        forced.append(step_key(ANNOTATION, name))
+    return forced
 
 
 def _validate_step_outputs(manifest: RunManifest, expected: list[str]) -> list[str]:
