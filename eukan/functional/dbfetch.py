@@ -78,19 +78,47 @@ def _is_current(entry: DatabaseEntry, db_dir: Path) -> bool:
 
 
 def _download_file(url: str, dest: Path) -> None:
-    """Download a file with streaming and progress reporting."""
+    """Download a file with resume support.
+
+    Streams to ``dest.partial`` and atomically renames to ``dest`` on
+    success.  If ``dest.partial`` already exists from a previous failed
+    attempt, sends a Range request to resume from where we stopped.
+    Servers that don't support Range fall back to a clean restart.
+    """
     log.info("Downloading %s...", url)
-    with requests.get(url, stream=True, allow_redirects=True, timeout=600) as r:
+    partial = dest.with_suffix(dest.suffix + ".partial")
+    resume_from = partial.stat().st_size if partial.exists() else 0
+
+    headers: dict[str, str] = {}
+    if resume_from > 0:
+        headers["Range"] = f"bytes={resume_from}-"
+        log.info("Resuming from byte %s", f"{resume_from:,}")
+
+    with requests.get(
+        url, stream=True, allow_redirects=True, timeout=600, headers=headers,
+    ) as r:
         r.raise_for_status()
-        total = int(r.headers.get("content-length", 0))
-        downloaded = 0
-        with open(dest, "wb") as f:
+
+        # Some servers ignore Range and return 200 + the full body.
+        # In that case discard any partial data and start over.
+        if resume_from > 0 and r.status_code != 206:
+            log.warning("Server ignored Range header; restarting download.")
+            partial.unlink(missing_ok=True)
+            resume_from = 0
+
+        mode = "ab" if resume_from > 0 else "wb"
+        total_remaining = int(r.headers.get("content-length", 0))
+        total = resume_from + total_remaining
+        downloaded = resume_from
+        with open(partial, mode) as f:
             for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
                 f.write(chunk)
                 downloaded += len(chunk)
                 if total:
                     pct = downloaded / total * 100
                     log.debug("  %s / %s bytes (%.1f%%)", f"{downloaded:,}", f"{total:,}", pct)
+
+    partial.replace(dest)
 
 
 def _make_entry(name: str, filename: str, url: str, db_dir: Path) -> DatabaseEntry:
