@@ -7,6 +7,7 @@ from eukan.gff.intersecter import (
     _features_overlap,
     _find_overlapping_genes,
     combine_nonredundant_models,
+    extract_supported_models,
     find_concordant_models,
     find_nonoverlapping_genes,
     merge_fully_overlapping_transcript_genes,
@@ -306,3 +307,78 @@ class TestCombineNonredundant:
         assert len(genes) == 2
         ids = {g.id for g in genes}
         assert ids == {"g1", "g2"}
+
+
+# ---------------------------------------------------------------------------
+# Training-set extraction (3-path concurrent branch)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractSupportedModels:
+    """Regression: the 3-path branch fans concordance passes across a
+    ``ThreadPoolExecutor``.  Returning ``gffutils.FeatureDB`` from worker
+    threads broke at the next main-thread query with
+    ``sqlite3.ProgrammingError: SQLite objects created in a thread can
+    only be used in that same thread``.  The fix returns Feature lists
+    from workers and builds dbs on the main thread.
+    """
+
+    def _write_simple_pair(self, dirp, name, gene_id, start=100, end=400):
+        path = dirp / name
+        path.write_text(
+            f"chr1\tpred\tgene\t{start}\t{end}\t.\t+\t.\tID={gene_id}\n"
+            f"chr1\tpred\tmRNA\t{start}\t{end}\t.\t+\t.\tID=m_{gene_id};Parent={gene_id}\n"
+            f"chr1\tpred\tCDS\t{start}\t{end}\t.\t+\t0\tID=c_{gene_id};Parent=m_{gene_id}\n"
+        )
+        return path
+
+    def test_three_paths_does_not_leak_db_across_threads(self, tmp_path):
+        """Calling extract_supported_models with 3 paths must produce a
+        usable FeatureDB on the main thread, with no SQLite cross-thread
+        error."""
+        a = self._write_simple_pair(tmp_path, "a.gff3", "ga")
+        b = self._write_simple_pair(tmp_path, "b.gff3", "ga")
+        c = self._write_simple_pair(tmp_path, "c.gff3", "ga")
+
+        result = extract_supported_models(a, b, c, output_dir=tmp_path)
+
+        # The query that previously raised ProgrammingError in the failing run.
+        genes = list(result.features_of_type("gene"))
+        assert len(genes) == 1
+        assert genes[0].id == "ga"
+        assert (tmp_path / "training_set.gff3").exists()
+
+    def test_three_paths_partial_concordance_queryable_main_thread(self, tmp_path):
+        """When some pairs concord and others don't, the per-worker
+        Feature lists vary in length — but the assembled db must still be
+        queryable on the main thread without a cross-thread error."""
+        # ga concordant in (a,b) and (a,c); (b,c) finds gc only when c==b's gene.
+        # We arrange: a==b==c on ga; (a,c) concord ga; (c,b) finds nothing.
+        a = self._write_simple_pair(tmp_path, "a.gff3", "ga", start=100, end=400)
+        b = self._write_simple_pair(tmp_path, "b.gff3", "ga", start=105, end=395)
+        # c shares ga's locus with a, but different ID — concord (a,c) finds ga,
+        # (c,b) compares c's gc-named gene against b's ga, which won't match by ID
+        # but find_concordant_models doesn't compare IDs, only structure.
+        c_path = tmp_path / "c.gff3"
+        c_path.write_text(
+            "chr1\tpred\tgene\t102\t398\t.\t+\t.\tID=gc\n"
+            "chr1\tpred\tmRNA\t102\t398\t.\t+\t.\tID=mc;Parent=gc\n"
+            "chr1\tpred\tCDS\t102\t398\t.\t+\t0\tID=cc;Parent=mc\n"
+        )
+
+        result = extract_supported_models(a, b, c_path, output_dir=tmp_path)
+
+        # Must not raise — and must be queryable on the main thread.
+        genes = list(result.features_of_type("gene"))
+        assert {g.id for g in genes} <= {"ga", "gc"}
+        assert len(genes) >= 1
+
+    def test_two_paths_unchanged(self, tmp_path):
+        """The 2-path branch is sequential; verify it still works."""
+        a = self._write_simple_pair(tmp_path, "a.gff3", "ga")
+        b = self._write_simple_pair(tmp_path, "b.gff3", "ga")
+
+        result = extract_supported_models(a, b, output_dir=tmp_path)
+        genes = list(result.features_of_type("gene"))
+        assert len(genes) == 1
+        assert genes[0].id == "ga"

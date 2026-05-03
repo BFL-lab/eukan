@@ -271,17 +271,16 @@ def _mrna_spans_match(
     )
 
 
-def find_concordant_models(
+def _concordant_features(
     gff3_1: str | Path, gff3_2: str | Path
-) -> gffutils.FeatureDB:
-    """Find structurally concordant gene models between two GFF3 files.
+) -> list[gffutils.Feature]:
+    """Worker-thread-safe core of :func:`find_concordant_models`.
 
-    Two models are concordant if:
-    1. Their mRNAs overlap on the same strand with similar spans
-    2. They have the same number of CDS features
-    3. Their intron-exon boundaries match within BOUNDARY_TOLERANCE bp
-
-    Returns a FeatureDB containing only the concordant models from gff3_1.
+    Returns the list of Feature objects for concordant genes (gene +
+    mRNA + exon + CDS) instead of a :class:`gffutils.FeatureDB`.  All
+    SQLite work happens within this function — the connections never
+    cross thread boundaries — so callers can fan this out across a
+    ``ThreadPoolExecutor`` and assemble the result on the main thread.
     """
     db1 = create_gff_db(gff3_1)
     db2 = create_gff_db(gff3_2)
@@ -343,9 +342,6 @@ def find_concordant_models(
     log.debug("Found %d concordant gene models", len(concordant_gene_ids))
 
     # Collect all features for concordant genes
-    if not concordant_gene_ids:
-        return _empty_db()
-
     features: list[gffutils.Feature] = []
     for gene_id in concordant_gene_ids:
         try:
@@ -354,6 +350,22 @@ def find_concordant_models(
         except gffutils.FeatureNotFoundError:
             continue
 
+    return features
+
+
+def find_concordant_models(
+    gff3_1: str | Path, gff3_2: str | Path
+) -> gffutils.FeatureDB:
+    """Find structurally concordant gene models between two GFF3 files.
+
+    Two models are concordant if:
+    1. Their mRNAs overlap on the same strand with similar spans
+    2. They have the same number of CDS features
+    3. Their intron-exon boundaries match within BOUNDARY_TOLERANCE bp
+
+    Returns a FeatureDB containing only the concordant models from gff3_1.
+    """
+    features = _concordant_features(gff3_1, gff3_2)
     return create_gff_db(features) if features else _empty_db()
 
 
@@ -410,7 +422,9 @@ def extract_supported_models(
         training_set = find_concordant_models(paths[0], paths[1])
     elif len(paths) == 3:
         # Three concordance passes are independent and each is O(N log N);
-        # run them concurrently.
+        # run them concurrently.  Workers return Feature *lists* so the
+        # SQLite connections never escape their creating thread; the dbs
+        # passed to combine_nonredundant_models are built on this thread.
         from concurrent.futures import ThreadPoolExecutor
         pairs = [
             (paths[0], paths[1]),
@@ -418,9 +432,12 @@ def extract_supported_models(
             (paths[2], paths[1]),
         ]
         with ThreadPoolExecutor(max_workers=3) as pool:
-            pair1, pair2, pair3 = pool.map(
-                lambda ab: find_concordant_models(*ab), pairs,
+            feat1, feat2, feat3 = pool.map(
+                lambda ab: _concordant_features(*ab), pairs,
             )
+        pair1 = create_gff_db(feat1) if feat1 else _empty_db()
+        pair2 = create_gff_db(feat2) if feat2 else _empty_db()
+        pair3 = create_gff_db(feat3) if feat3 else _empty_db()
         training_set = combine_nonredundant_models(pair1, pair2, pair3)
     else:
         raise ValueError(f"Expected 2 or 3 paths, got {len(paths)}")
