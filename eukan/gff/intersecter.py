@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import bisect
 from collections import defaultdict
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 import gffutils
@@ -17,6 +17,23 @@ import gffutils
 from eukan.gff import create_gff_db
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.logging import get_logger
+
+
+def _build_max_end_prefix(ends: Iterable[int]) -> list[int]:
+    """Build a monotone running-max-end array.
+
+    Given interval ends in start-sorted order, returns ``out[i] =
+    max(ends[:i+1])``.  Lets ``bisect_left(out, query.start)`` skip
+    intervals that cannot overlap a query, bounding the candidate set
+    instead of scanning every interval before ``query.end``.
+    """
+    out: list[int] = []
+    running_max = 0
+    for e in ends:
+        if e > running_max:
+            running_max = e
+        out.append(running_max)
+    return out
 
 
 def _empty_db() -> gffutils.FeatureDB:
@@ -164,13 +181,7 @@ def find_nonoverlapping_genes(
         target_starts[key] = [s for s, _ in paired]
         ends_sorted = [e for _, e in paired]
         target_ends[key] = ends_sorted
-        max_end_to: list[int] = []
-        running_max = 0
-        for end in ends_sorted:
-            if end > running_max:
-                running_max = end
-            max_end_to.append(running_max)
-        target_max_end_to[key] = max_end_to
+        target_max_end_to[key] = _build_max_end_prefix(ends_sorted)
 
     result: list[gffutils.Feature] = []
 
@@ -297,13 +308,7 @@ def _concordant_features(
     for key, mrnas in db2_buckets.items():
         mrnas.sort(key=lambda m: m.start)
         starts = [m.start for m in mrnas]
-        max_end_to: list[int] = []
-        running_max = 0
-        for m in mrnas:
-            if m.end > running_max:
-                running_max = m.end
-            max_end_to.append(running_max)
-        db2_index[key] = (mrnas, starts, max_end_to)
+        db2_index[key] = (mrnas, starts, _build_max_end_prefix(m.end for m in mrnas))
 
     concordant_gene_ids: set[str] = set()
 
