@@ -16,12 +16,17 @@ class _PreformattedEpilogCommand(click.Command):
     Also renders option-group help without the wrapping "Options:" header
     and without the extra indentation that click-option-group adds to
     grouped options.
+
+    Epilog values are resolved through :func:`_resolve_epilog` so heavy
+    text (e.g. the genetic-code tables, which import BioPython) can be
+    deferred until ``--help`` is actually requested.
     """
 
     def format_epilog(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         if self.epilog and _show_full_help:
+            text = _resolve_epilog(self.epilog)
             formatter.write("\n")
-            for line in self.epilog.split("\n"):
+            for line in text.split("\n"):
                 formatter.write(f"  {line}\n")
 
     def format_options(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
@@ -147,31 +152,45 @@ def _genome_option(help_text: str = "Genome sequence in FASTA format."):
 
 
 # ---------------------------------------------------------------------------
-# Genetic code tables
+# Genetic code tables (deferred -- importing BioPython is slow)
 # ---------------------------------------------------------------------------
 
+# Sentinel epilog markers; the real text is built lazily on first --help.
+_FULL_CODE_TABLE = "__EUKAN_FULL_CODE_TABLE__"
+_PASA_CODE_TABLE = "__EUKAN_PASA_CODE_TABLE__"
 
-def _build_code_tables() -> tuple[str, str]:
+
+def _resolve_epilog(value: str) -> str:
+    """Resolve an epilog sentinel to its rendered text. Pass-through otherwise."""
+    if value == _FULL_CODE_TABLE:
+        return _full_code_table_text()
+    if value == _PASA_CODE_TABLE:
+        return _pasa_code_table_text()
+    return value
+
+
+def _full_code_table_text() -> str:
     from Bio.Data import CodonTable
-    from eukan.gencode import GeneticCode, _PASA_NAMES
+    from eukan.gencode import _PASA_NAMES
 
-    full_lines = ["Genetic codes (NCBI translation tables):", ""]
+    lines = ["Genetic codes (NCBI translation tables):", ""]
     for cid, table in sorted(CodonTable.unambiguous_dna_by_id.items()):
         marker = " *" if cid in _PASA_NAMES else ""
-        full_lines.append(f"  {cid:>2}  {table.names[0]}{marker}")
-    full_lines.append("")
-    full_lines.append("  * = also supported by PASA (eukan assemble)")
+        lines.append(f"  {cid:>2}  {table.names[0]}{marker}")
+    lines.append("")
+    lines.append("  * = also supported by PASA (eukan assemble)")
+    return "\n".join(lines)
 
-    pasa_lines = ["Genetic codes supported by PASA:", ""]
+
+def _pasa_code_table_text() -> str:
+    from eukan.gencode import GeneticCode, _PASA_NAMES
+
+    lines = ["Genetic codes supported by PASA:", ""]
     for cid in sorted(_PASA_NAMES):
         gc = GeneticCode(cid)
         ncbi_name = gc.codon_table.names[0]
-        pasa_lines.append(f"  {cid:>2}  {ncbi_name} ({gc.pasa_name})")
-
-    return "\n".join(full_lines), "\n".join(pasa_lines)
-
-
-_FULL_CODE_TABLE, _PASA_CODE_TABLE = _build_code_tables()
+        lines.append(f"  {cid:>2}  {ncbi_name} ({gc.pasa_name})")
+    return "\n".join(lines)
 
 
 @click.group(cls=_EukanGroup, context_settings=CONTEXT_SETTINGS)
