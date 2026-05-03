@@ -78,6 +78,32 @@ def prot2augustus_hints(f: gffutils.Feature) -> gffutils.Feature | None:
 # ---------------------------------------------------------------------------
 
 
+def derived_feature(
+    parent: gffutils.Feature,
+    featuretype: str,
+    attributes: dict,
+    *,
+    frame: str | int = ".",
+    start: int | None = None,
+    end: int | None = None,
+) -> gffutils.Feature:
+    """Build a Feature inheriting seqid/source/strand from a parent feature.
+
+    Coordinates default to the parent's; pass ``start``/``end`` to override
+    when projecting (e.g. ORF coords onto an exon).
+    """
+    return gffutils.Feature(
+        seqid=parent.chrom,
+        source=parent.source,
+        featuretype=featuretype,
+        start=parent.start if start is None else start,
+        end=parent.end if end is None else end,
+        strand=parent.strand,
+        frame=frame,
+        attributes=attributes,
+    )
+
+
 def add_missing_feats_to_gff3(
     gff3: gffutils.FeatureDB,
 ) -> Iterator[gffutils.Feature]:
@@ -92,15 +118,9 @@ def add_missing_feats_to_gff3(
     if "mRNA" not in feats and "gene" in feats:
         for gene in gff3.features_of_type("gene"):
             gene_id = gene.attributes["ID"][0]
-            yield gffutils.Feature(
-                seqid=gene.chrom,
-                source=gene.source,
-                featuretype="mRNA",
-                start=gene.start,
-                end=gene.end,
-                strand=gene.strand,
-                frame=".",
-                attributes={"ID": [f"{gene_id}_mRNA"], "Parent": [gene_id]},
+            yield derived_feature(
+                gene, "mRNA",
+                {"ID": [f"{gene_id}_mRNA"], "Parent": [gene_id]},
             )
             gene.attributes["ID"] = [f"{gene_id}_gene"]
 
@@ -108,41 +128,28 @@ def add_missing_feats_to_gff3(
     if "CDS" not in feats and "exon" in feats:
         for exon in gff3.features_of_type("exon"):
             phase = (exon.start - 1) % 3 if exon.strand == "-" else (exon.end + 1) % 3
-            cds_id = re.sub("exon", "CDS", exon.id)
-            if cds_id == exon.id:
-                cds_id = f"{exon.id}:CDS"
             attrs = dict(exon.attributes)
-            attrs["ID"] = [cds_id]
-            yield gffutils.Feature(
-                seqid=exon.chrom,
-                source=exon.source,
-                featuretype="CDS",
-                start=exon.start,
-                end=exon.end,
-                strand=exon.strand,
-                frame=phase,
-                attributes=attrs,
-            )
+            attrs["ID"] = [_swap_id_kind(exon.id, "exon", "CDS")]
+            yield derived_feature(exon, "CDS", attrs, frame=phase)
 
     # CDS but no exon → derive exons from CDS
     if "exon" not in feats and "CDS" in feats:
         for cds in gff3.features_of_type("CDS"):
             cds_id = cds.attributes["ID"][0]
-            exon_id = re.sub(r"CDS|cds", "exon", cds_id)
-            if exon_id == cds_id:
-                exon_id = f"{cds_id}:exon"
             attrs = dict(cds.attributes)
-            attrs["ID"] = [exon_id]
-            yield gffutils.Feature(
-                seqid=cds.chrom,
-                source=cds.source,
-                featuretype="exon",
-                start=cds.start,
-                end=cds.end,
-                strand=cds.strand,
-                frame=".",
-                attributes=attrs,
-            )
+            attrs["ID"] = [_swap_id_kind(cds_id, r"CDS|cds", "exon")]
+            yield derived_feature(cds, "exon", attrs)
+
+
+def _swap_id_kind(feature_id: str, from_kind: str, to_kind: str) -> str:
+    """Replace a feature-kind token in an ID, falling back to a suffix.
+
+    e.g. ``exon1`` → ``CDS1``; ``g1`` (no match) → ``g1:CDS``.
+    """
+    new_id = re.sub(from_kind, to_kind, feature_id)
+    if new_id == feature_id:
+        new_id = f"{feature_id}:{to_kind}"
+    return new_id
 
 
 # ---------------------------------------------------------------------------

@@ -215,20 +215,9 @@ def _make_cds_from_exon(
 ) -> gffutils.Feature:
     """Create a CDS feature derived from an exon."""
     attrs = dict(exon.attributes)
-    exon_id = exon.attributes["ID"][0]
-    cds_id = re.sub("exon", "CDS", exon_id)
-    if cds_id == exon_id:
-        cds_id = f"{exon_id}:CDS"
-    attrs["ID"] = [cds_id]
-    return gffutils.Feature(
-        seqid=exon.chrom,
-        source=exon.source,
-        featuretype="CDS",
-        start=start,
-        end=end,
-        strand=exon.strand,
-        frame=phase,
-        attributes=attrs,
+    attrs["ID"] = [gffparser._swap_id_kind(exon.attributes["ID"][0], "exon", "CDS")]
+    return gffparser.derived_feature(
+        exon, "CDS", attrs, frame=phase, start=start, end=end,
     )
 
 
