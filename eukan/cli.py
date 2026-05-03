@@ -219,12 +219,22 @@ def cli(verbose: bool, quiet: bool) -> None:
          eukan gff3toseq    Extract sequences from annotation
          eukan status       View progress of a pipeline run
     """
+    import signal
+
     from eukan.infra.environ import configure_process_env
     from eukan.infra.logging import setup_logging
+    from eukan.infra.runner import terminate_all_children
 
     verbosity = 1 if verbose else (-1 if quiet else 0)
     setup_logging(verbosity)
     configure_process_env()
+
+    def _on_sigint(signum, frame):
+        # Tear down child subprocesses before propagating the interrupt.
+        terminate_all_children()
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _on_sigint)
 
 
 # ---------------------------------------------------------------------------

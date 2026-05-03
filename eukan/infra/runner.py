@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 from eukan.exceptions import ExternalToolError
@@ -10,6 +13,46 @@ from eukan.infra.environ import subprocess_env as _subprocess_env
 from eukan.infra.logging import get_logger
 
 log = get_logger(__name__)
+
+
+# Registry of currently-running child processes so a top-level SIGINT
+# handler (installed by the CLI) can terminate them on shutdown.
+_REGISTRY_LOCK = threading.Lock()
+_RUNNING: set[subprocess.Popen] = set()
+
+
+def _track(proc: subprocess.Popen) -> None:
+    with _REGISTRY_LOCK:
+        _RUNNING.add(proc)
+
+
+def _untrack(proc: subprocess.Popen) -> None:
+    with _REGISTRY_LOCK:
+        _RUNNING.discard(proc)
+
+
+def terminate_all_children(grace_period: float = 5.0) -> None:
+    """Terminate every tracked child process, then SIGKILL stragglers.
+
+    Called from the CLI's SIGINT handler so Ctrl-C doesn't orphan running
+    bioinformatics tools.
+    """
+    with _REGISTRY_LOCK:
+        procs = list(_RUNNING)
+    if not procs:
+        return
+    log.warning("Interrupted; terminating %d running child process(es)...", len(procs))
+    for p in procs:
+        with contextlib.suppress(OSError):
+            p.terminate()
+    deadline = time.monotonic() + grace_period
+    for p in procs:
+        remaining = max(0.0, deadline - time.monotonic())
+        try:
+            p.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(OSError):
+                p.kill()
 
 
 def _tool_name(cmd: list[str]) -> str:
@@ -59,30 +102,36 @@ def run_cmd(
     stdout_path = cwd / out_file if out_file else None
     stderr_path = cwd / err_file if err_file else None
 
-    # When err_file is set, write stderr directly to the file via Popen's
-    # stdout= mechanism. We open the file in binary mode and let the child
-    # write to its file descriptor — saves loading stderr into Python.
-    stderr_target: int | None
+    # When err_file is set, the child writes stderr straight to the file
+    # via its file descriptor (no Python buffering).
     err_handle = None
     if stderr_path:
         # File handle's lifetime is the subprocess call; closed in finally.
         err_handle = open(stderr_path, "wb")  # noqa: SIM115
-        stderr_target = err_handle.fileno()
+        stderr_target: int = err_handle.fileno()
     else:
         stderr_target = subprocess.PIPE
 
+    # Run via Popen so we can register the child for SIGINT cleanup.
+    # start_new_session=True isolates the child from terminal SIGINT, so
+    # only our handler decides when to terminate it.
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=_subprocess_env(extra_env),
+        stdout=subprocess.PIPE if stdout_path else subprocess.DEVNULL,
+        stderr=stderr_target,
+        text=not binary,
+        start_new_session=True,
+    )
+    _track(proc)
     try:
         try:
-            result = subprocess.run(
-                cmd,
-                cwd=cwd,
-                env=_subprocess_env(extra_env),
-                stdout=subprocess.PIPE if stdout_path else subprocess.DEVNULL,
-                stderr=stderr_target,
-                text=not binary,
-                timeout=timeout,
-            )
+            stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                proc.communicate(timeout=5)
             raise ExternalToolError(
                 f"{_tool_name(cmd)} timed out after {timeout}s",
                 tool=_tool_name(cmd),
@@ -90,37 +139,45 @@ def run_cmd(
                 cmd=cmd,
                 stderr_snippet=str(exc),
             ) from exc
+        except KeyboardInterrupt:
+            proc.terminate()
+            try:
+                proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            raise
     finally:
+        _untrack(proc)
         if err_handle is not None:
             err_handle.close()
 
-    if stdout_path and result.stdout:
+    if stdout_path and stdout:
         mode = "wb" if binary else "w"
         with open(stdout_path, mode) as f:
-            f.write(result.stdout)
+            f.write(stdout)
 
-    if result.stderr is None:
+    if stderr is None:
         stderr_text = ""
     else:
-        stderr_text = (
-            result.stderr
-            if isinstance(result.stderr, str)
-            else result.stderr.decode(errors="replace")
-        )
+        stderr_text = stderr if isinstance(stderr, str) else stderr.decode(errors="replace")
     if stderr_text:
         log.debug("stderr from %s:\n%s", _tool_name(cmd), stderr_text)
 
-    if result.returncode != 0:
-        log.error("Command failed (exit %d): %s", result.returncode, cmd_str)
+    if proc.returncode != 0:
+        log.error("Command failed (exit %d): %s", proc.returncode, cmd_str)
         raise ExternalToolError(
-            f"{_tool_name(cmd)} failed (exit {result.returncode})",
+            f"{_tool_name(cmd)} failed (exit {proc.returncode})",
             tool=_tool_name(cmd),
-            returncode=result.returncode,
+            returncode=proc.returncode,
             cmd=cmd,
             stderr_snippet=stderr_text,
         )
 
-    return result
+    # Synthesize a CompletedProcess so callers that use the return value
+    # don't need to change.
+    return subprocess.CompletedProcess(
+        args=cmd, returncode=proc.returncode, stdout=stdout, stderr=stderr,
+    )
 
 
 def run_piped(
@@ -140,22 +197,34 @@ def run_piped(
 
     env = _subprocess_env()
     p1 = subprocess.Popen(
-        cmd1, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        cmd1, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        start_new_session=True,
     )
     assert p1.stdout is not None  # PIPE was requested above
+    _track(p1)
+    p2: subprocess.Popen | None = None
     try:
         p2 = subprocess.Popen(
-            cmd2, cwd=cwd, env=env, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            cmd2, cwd=cwd, env=env, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True,
         )
+        _track(p2)
         p1.stdout.close()
 
         stdout, stderr = p2.communicate()
-    except Exception:
+    except (Exception, KeyboardInterrupt):
         p1.kill()
+        if p2 is not None:
+            p2.kill()
         p1.wait()
+        if p2 is not None:
+            p2.wait()
         raise
     finally:
         p1.wait()
+        _untrack(p1)
+        if p2 is not None:
+            _untrack(p2)
 
     output = stdout.decode()
 
@@ -192,23 +261,39 @@ def run_shell(
     """
     log.debug("Running (shell): %s (cwd=%s)", cmd_str, cwd)
 
-    result = subprocess.run(
-        cmd_str, shell=True, cwd=cwd, env=_subprocess_env(), capture_output=True, text=True,
+    proc = subprocess.Popen(
+        cmd_str, shell=True, cwd=cwd, env=_subprocess_env(),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        start_new_session=True,
     )
+    _track(proc)
+    try:
+        try:
+            stdout, stderr = proc.communicate()
+        except KeyboardInterrupt:
+            proc.terminate()
+            try:
+                proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            raise
+    finally:
+        _untrack(proc)
 
-    if result.stderr:
-        log.debug("stderr (shell):\n%s", result.stderr)
+    if stderr:
+        log.debug("stderr (shell):\n%s", stderr)
 
-    if result.returncode != 0:
-        # Try to extract tool name from the command string
+    if proc.returncode != 0:
         tool = cmd_str.split()[0] if cmd_str.strip() else "shell"
-        log.error("Shell command failed (exit %d): %s", result.returncode, cmd_str[:200])
+        log.error("Shell command failed (exit %d): %s", proc.returncode, cmd_str[:200])
         raise ExternalToolError(
-            f"Shell command failed (exit {result.returncode})",
+            f"Shell command failed (exit {proc.returncode})",
             tool=tool,
-            returncode=result.returncode,
+            returncode=proc.returncode,
             cmd=[cmd_str],
-            stderr_snippet=result.stderr,
+            stderr_snippet=stderr,
         )
 
-    return result
+    return subprocess.CompletedProcess(
+        args=cmd_str, returncode=proc.returncode, stdout=stdout, stderr=stderr,
+    )
