@@ -409,9 +409,18 @@ def extract_supported_models(
     if len(paths) == 2:
         training_set = find_concordant_models(paths[0], paths[1])
     elif len(paths) == 3:
-        pair1 = find_concordant_models(paths[0], paths[1])
-        pair2 = find_concordant_models(paths[0], paths[2])
-        pair3 = find_concordant_models(paths[2], paths[1])
+        # Three concordance passes are independent and each is O(N log N);
+        # run them concurrently.
+        from concurrent.futures import ThreadPoolExecutor
+        pairs = [
+            (paths[0], paths[1]),
+            (paths[0], paths[2]),
+            (paths[2], paths[1]),
+        ]
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            pair1, pair2, pair3 = pool.map(
+                lambda ab: find_concordant_models(*ab), pairs,
+            )
         training_set = combine_nonredundant_models(pair1, pair2, pair3)
     else:
         raise ValueError(f"Expected 2 or 3 paths, got {len(paths)}")
