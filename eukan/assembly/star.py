@@ -5,7 +5,6 @@ from __future__ import annotations
 import csv
 import json
 import shutil
-import subprocess
 from collections import defaultdict
 from pathlib import Path
 
@@ -256,36 +255,16 @@ def _generate_hints_from_star(wd: Path, genome: Path) -> None:
 
 
 def _run_wig2hints(wd: Path, wig_file: str, strand: str, out_file: str) -> None:
-    """Run wig2hints.pl with stdin/stdout redirection.
-
-    wig2hints.pl reads from stdin and writes to stdout:
-        wig2hints.pl [options] < input.wig > output.gff
-    """
-    cmd = [
-        "wig2hints.pl",
-        "--width=10", "--margin=10", "--minthresh=2",
-        "--minscore=4", "--prune=0.1", "--src=W",
-        "--type=exonpart", "--radius=4.5", "--pri=4",
-        f"--strand={strand}",
-    ]
-
-    log.debug("Running: %s < %s > %s", " ".join(cmd), wig_file, out_file)
-
-    with open(wd / wig_file) as stdin_f, open(wd / out_file, "w") as stdout_f:
-        result = subprocess.run(
-            cmd,
-            cwd=wd,
-            stdin=stdin_f,
-            stdout=stdout_f,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-
-    if result.returncode != 0:
-        raise ExternalToolError(
-            "wig2hints.pl failed",
-            tool="wig2hints.pl",
-            returncode=result.returncode,
-            cmd=cmd,
-            stderr_snippet=result.stderr or "",
-        )
+    """Run wig2hints.pl, reading the wig from stdin and writing GFF to stdout."""
+    run_cmd(
+        [
+            "wig2hints.pl",
+            "--width=10", "--margin=10", "--minthresh=2",
+            "--minscore=4", "--prune=0.1", "--src=W",
+            "--type=exonpart", "--radius=4.5", "--pri=4",
+            f"--strand={strand}",
+        ],
+        cwd=wd,
+        in_file=wig_file,
+        out_file=out_file,
+    )

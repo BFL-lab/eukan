@@ -71,6 +71,7 @@ def run_cmd(
     cmd: list[str],
     *,
     cwd: Path,
+    in_file: str | None = None,
     out_file: str | None = None,
     err_file: str | None = None,
     binary: bool = False,
@@ -82,10 +83,15 @@ def run_cmd(
     Args:
         cmd: Command as a list of strings (never a shell string).
         cwd: Working directory for the subprocess.
-        out_file: If set, stdout is written to this filename within *cwd*.
-        err_file: If set, stderr is written to this filename within *cwd*
-            instead of being captured into the exception on failure.
-        binary: If True, capture stdout as bytes (for BAM, gzip, etc.).
+        in_file: If set, the file at this path within *cwd* is opened
+            for reading and connected to the child's stdin (no Python
+            buffering — the child reads from the fd directly).
+        out_file: If set, stdout is streamed straight to this filename
+            within *cwd* via the child's fd (no in-process capture).
+        err_file: If set, stderr is streamed straight to this filename
+            within *cwd* via the child's fd.
+        binary: Only meaningful when *out_file* is unset; controls
+            whether captured stdout is returned as bytes or str.
         timeout: Optional timeout in seconds.
         extra_env: Additional environment variables merged on top of
             the current environment for this subprocess only.
@@ -99,18 +105,14 @@ def run_cmd(
     cmd_str = " ".join(cmd)
     log.debug("Running: %s (cwd=%s)", cmd_str, cwd)
 
-    stdout_path = cwd / out_file if out_file else None
-    stderr_path = cwd / err_file if err_file else None
+    # File handles' lifetimes span the subprocess call; closed in finally.
+    in_handle = open(cwd / in_file, "rb") if in_file else None  # noqa: SIM115
+    out_handle = open(cwd / out_file, "wb") if out_file else None  # noqa: SIM115
+    err_handle = open(cwd / err_file, "wb") if err_file else None  # noqa: SIM115
 
-    # When err_file is set, the child writes stderr straight to the file
-    # via its file descriptor (no Python buffering).
-    err_handle = None
-    if stderr_path:
-        # File handle's lifetime is the subprocess call; closed in finally.
-        err_handle = open(stderr_path, "wb")  # noqa: SIM115
-        stderr_target: int = err_handle.fileno()
-    else:
-        stderr_target = subprocess.PIPE
+    stdin_target: int | None = in_handle.fileno() if in_handle else None
+    stdout_target: int = out_handle.fileno() if out_handle else subprocess.DEVNULL
+    stderr_target: int = err_handle.fileno() if err_handle else subprocess.PIPE
 
     # Run via Popen so we can register the child for SIGINT cleanup.
     # start_new_session=True isolates the child from terminal SIGINT, so
@@ -119,7 +121,8 @@ def run_cmd(
         cmd,
         cwd=cwd,
         env=_subprocess_env(extra_env),
-        stdout=subprocess.PIPE if stdout_path else subprocess.DEVNULL,
+        stdin=stdin_target,
+        stdout=stdout_target,
         stderr=stderr_target,
         text=not binary,
         start_new_session=True,
@@ -127,7 +130,7 @@ def run_cmd(
     _track(proc)
     try:
         try:
-            stdout, stderr = proc.communicate(timeout=timeout)
+            _, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
             proc.kill()
             with contextlib.suppress(subprocess.TimeoutExpired):
@@ -148,13 +151,9 @@ def run_cmd(
             raise
     finally:
         _untrack(proc)
-        if err_handle is not None:
-            err_handle.close()
-
-    if stdout_path and stdout:
-        mode = "wb" if binary else "w"
-        with open(stdout_path, mode) as f:
-            f.write(stdout)
+        for h in (in_handle, out_handle, err_handle):
+            if h is not None:
+                h.close()
 
     if stderr is None:
         stderr_text = ""
@@ -173,10 +172,8 @@ def run_cmd(
             stderr_snippet=stderr_text,
         )
 
-    # Synthesize a CompletedProcess so callers that use the return value
-    # don't need to change.
     return subprocess.CompletedProcess(
-        args=cmd, returncode=proc.returncode, stdout=stdout, stderr=stderr,
+        args=cmd, returncode=proc.returncode, stdout=None, stderr=stderr,
     )
 
 
