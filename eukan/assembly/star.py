@@ -152,14 +152,12 @@ def _analyze_splice_sites(sj_file: Path, genome: Path, wd: Path) -> None:
       col5 = motif (0=non-canonical, 1=GT/AG, 2=CT/AC, 3=GC/AG, ...)
       col7 = unique reads, col8 = multi-mapping reads
     """
-    from Bio import SeqIO as _SeqIO
-
-    contigs = _SeqIO.to_dict(_SeqIO.parse(str(genome), "fasta"))
+    from eukan.infra.genome import ContigIndex
 
     # Tally: splice_type → {"count": int, "unique_reads": int}
     tallies: dict[str, dict[str, int]] = defaultdict(lambda: {"count": 0, "unique_reads": 0})
 
-    with open(sj_file) as fin:
+    with ContigIndex(genome) as contigs, open(sj_file) as fin:
         reader = csv.reader(fin, delimiter="\t")
         for row in reader:
             chrom = row[0]
@@ -174,7 +172,7 @@ def _analyze_splice_sites(sj_file: Path, genome: Path, wd: Path) -> None:
             else:
                 # Extract actual dinucleotides from the genome
                 seq = contigs.get(chrom)
-                if seq is None or intron_end > len(seq):
+                if seq is None or seq.seq is None or intron_end > len(seq):
                     splice_type = "unknown"
                 else:
                     genome_seq = seq.seq

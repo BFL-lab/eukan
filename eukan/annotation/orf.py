@@ -33,21 +33,23 @@ def fetch_aligned_sequences(
     Returns:
         List of (mRNA_id, strand, sequence) tuples.
     """
-    from Bio import SeqIO
+    from eukan.infra.genome import ContigIndex
 
-    contigs = SeqIO.to_dict(SeqIO.parse(str(fasta), "fasta"))
     result: list[tuple[str, str, str]] = []
-
-    for mRNA in gff3db.features_of_type("mRNA"):
-        contig = contigs[mRNA.chrom].seq
-        seq_parts = [
-            str(contig[child.start - 1 : child.end]).upper()
-            for child in gff3db.children(mRNA, featuretype=featuretype)
-        ]
-        seq = "".join(seq_parts)
-        if mRNA.strand == "-":
-            seq = str(Seq(seq).reverse_complement())
-        result.append((mRNA.id, mRNA.strand, seq))
+    # Sort mRNAs by chromosome so the ContigIndex single-record cache stays warm.
+    mrnas = sorted(gff3db.features_of_type("mRNA"), key=lambda m: (m.chrom, m.start))
+    with ContigIndex(fasta) as contigs:
+        for mRNA in mrnas:
+            contig = contigs[mRNA.chrom].seq
+            assert contig is not None  # FASTA records always carry a sequence
+            seq_parts = [
+                str(contig[child.start - 1 : child.end]).upper()
+                for child in gff3db.children(mRNA, featuretype=featuretype)
+            ]
+            seq = "".join(seq_parts)
+            if mRNA.strand == "-":
+                seq = str(Seq(seq).reverse_complement())
+            result.append((mRNA.id, mRNA.strand, seq))
 
     return result
 

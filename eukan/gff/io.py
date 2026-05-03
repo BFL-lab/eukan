@@ -10,12 +10,12 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import gffutils
-from Bio import SeqIO
 from Bio.Data import CodonTable
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
 from eukan.gff import create_gff_db
+from eukan.infra.genome import ContigIndex
 
 
 def featuredb2gff3_file(featuredb: gffutils.FeatureDB, out: str | Path) -> None:
@@ -43,23 +43,25 @@ def extract_sequences(
     Yields SeqRecord objects (caller decides how to write them).
     """
     gff3db = create_gff_db(gff3)
-    contigs = SeqIO.to_dict(SeqIO.parse(str(genome), "fasta"))
     codon_table = CodonTable.unambiguous_dna_by_id[genetic_code]
 
-    for mrna in gff3db.features_of_type("mRNA"):
-        cds_seqs = [
-            contigs[child.chrom][child.start - 1 : child.end].seq
-            for child in gff3db.children(mrna, featuretype="CDS", order_by="start")
-        ]
-        if not cds_seqs:
-            continue
+    # Sort by chromosome so the ContigIndex single-record cache stays warm.
+    mrnas = sorted(gff3db.features_of_type("mRNA"), key=lambda m: (m.chrom, m.start))
+    with ContigIndex(genome) as contigs:
+        for mrna in mrnas:
+            cds_seqs = [
+                contigs[child.chrom][child.start - 1 : child.end].seq
+                for child in gff3db.children(mrna, featuretype="CDS", order_by="start")
+            ]
+            if not cds_seqs:
+                continue
 
-        seq_concat = Seq("".join(str(s) for s in cds_seqs))
-        if mrna.strand == "-":
-            seq_concat = seq_concat.reverse_complement()
+            seq_concat = Seq("".join(str(s) for s in cds_seqs))
+            if mrna.strand == "-":
+                seq_concat = seq_concat.reverse_complement()
 
-        if extract_to == "protein":
-            translated = seq_concat.translate(table=codon_table)
-            yield SeqRecord(translated, id=mrna.id, description="")
-        else:
-            yield SeqRecord(seq_concat, id=mrna.id, description="")
+            if extract_to == "protein":
+                translated = seq_concat.translate(table=codon_table)
+                yield SeqRecord(translated, id=mrna.id, description="")
+            else:
+                yield SeqRecord(seq_concat, id=mrna.id, description="")
