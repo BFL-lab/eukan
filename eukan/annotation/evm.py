@@ -5,10 +5,10 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_shell
 from eukan.infra.steps import step_dir
 from eukan.infra.utils import symlink
-from eukan.infra.logging import get_logger
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)

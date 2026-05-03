@@ -160,7 +160,7 @@ def find_nonoverlapping_genes(
         target_ends[key].append(gene.end)
 
     for key in target_starts:
-        paired = sorted(zip(target_starts[key], target_ends[key]))
+        paired = sorted(zip(target_starts[key], target_ends[key], strict=True))
         target_starts[key] = [s for s, _ in paired]
         ends_sorted = [e for _, e in paired]
         target_ends[key] = ends_sorted

@@ -75,6 +75,7 @@ def validate_gff(path: Path) -> bool:
         GFFValidationError: If the file cannot be parsed or has invalid features.
     """
     import gffutils
+
     from eukan.exceptions import GFFValidationError
 
     try:

@@ -18,7 +18,6 @@ from Bio.Seq import Seq
 from eukan.gff import parser as gffparser
 from eukan.gff.intersecter import merge_fully_overlapping_transcript_genes
 
-
 # ---------------------------------------------------------------------------
 # Sequence extraction from FeatureDB
 # ---------------------------------------------------------------------------
@@ -132,10 +131,10 @@ def fetch_longest_orf(
 
     # For each start, find the nearest downstream stop
     nearest_stop = (
-        pairs.groupby(merge_keys + ["start"], as_index=False)["stop"].min()
+        pairs.groupby([*merge_keys, "start"], as_index=False)["stop"].min()
     )
     pairs = pairs.merge(
-        nearest_stop, on=merge_keys + ["start", "stop"]
+        nearest_stop, on=[*merge_keys, "start", "stop"]
     )
 
     # Calculate ORF length and keep longest per transcript

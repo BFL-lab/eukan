@@ -177,7 +177,7 @@ def fetch_databases(
             log.warning("Unknown database: %s", db_name)
             continue
 
-        filename, download_fn = DATABASES[db_name]
+        _filename, download_fn = DATABASES[db_name]
 
         # Check if already current
         if not force and db_name in manifest and _is_current(manifest[db_name], output_dir):

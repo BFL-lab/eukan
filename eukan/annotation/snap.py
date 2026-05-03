@@ -10,10 +10,10 @@ from eukan.annotation.augustus import build_training_set
 from eukan.gff import GFF3_DIALECT, create_gff_db, transform_db
 from eukan.gff import parser as gffparser
 from eukan.gff.io import featuredb2gff3_file
+from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_dir
 from eukan.infra.utils import symlink
-from eukan.infra.logging import get_logger
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)

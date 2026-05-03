@@ -23,6 +23,8 @@ click-option-group = ">=0.5.6"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.0"
+ruff = "^0.15.12"
+mypy = "^1.20.2"
 
 [build-system]
 requires = ["poetry-core"]
@@ -50,6 +52,7 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 no_implicit_optional = true
 exclude = ["tests/", "scripts/"]
+disable_error_code = ["import-untyped"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

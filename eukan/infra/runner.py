@@ -119,6 +119,7 @@ def run_piped(
     p1 = subprocess.Popen(
         cmd1, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
+    assert p1.stdout is not None  # PIPE was requested above
     try:
         p2 = subprocess.Popen(
             cmd2, cwd=cwd, env=env, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE

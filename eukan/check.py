@@ -15,7 +15,6 @@ from pathlib import Path
 
 from eukan.infra.tools_registry import Tool, load_tools
 
-
 # ---------------------------------------------------------------------------
 # Check logic
 # ---------------------------------------------------------------------------
@@ -151,7 +150,7 @@ def check_python_deps() -> list[PythonCheckResult]:
         seq = pyhmmer.easel.TextSequence(
             name=b"test", sequence="MKFLILLFNILCLFPVLAADNH"
         ).digitize(alpha)
-        hits = list(pyhmmer.hmmer.phmmer([seq], [seq], cpus=1))
+        hits = list(pyhmmer.hmmer.phmmer([seq], [seq], cpus=1))  # type: ignore[list-item]
         assert len(hits) == 1 and len(hits[0]) >= 1
         results.append(PythonCheckResult("pyhmmer", True, "phmmer search works"))
     except Exception as e:
@@ -171,6 +170,7 @@ def check_python_deps() -> list[PythonCheckResult]:
     # BioPython functional check
     try:
         import io
+
         from Bio import SeqIO
         from Bio.Seq import Seq
         from Bio.SeqRecord import SeqRecord
@@ -187,6 +187,7 @@ def check_python_deps() -> list[PythonCheckResult]:
     # pydantic-settings functional check
     try:
         import tempfile
+
         from eukan.settings import PipelineConfig
         with tempfile.NamedTemporaryFile(suffix=".fa") as f:
             config = PipelineConfig(genome=Path(f.name), proteins=[Path(f.name)])
@@ -224,7 +225,7 @@ def run_checks(
     python_results = check_python_deps()
 
     # External tool checks
-    tools = load_tools()
+    tools: tuple[Tool, ...] | list[Tool] = load_tools()
     if subcommands:
         tools = [
             t for t in tools
@@ -270,40 +271,40 @@ def format_results(
 
     # --- Python dependencies ---
     if python_results:
-        py_ok = [r for r in python_results if r.ok]
-        py_fail = [r for r in python_results if not r.ok]
+        py_ok = [pr for pr in python_results if pr.ok]
+        py_fail = [pr for pr in python_results if not pr.ok]
 
         if py_ok:
             lines.append(f"  {len(py_ok)} Python checks OK:")
-            for r in py_ok:
-                lines.append(f"    \u2713 {r.name:<30s} {r.detail}")
+            for pr in py_ok:
+                lines.append(f"    \u2713 {pr.name:<30s} {pr.detail}")
         if py_fail:
             lines.append(f"\n  {len(py_fail)} Python checks FAILED:")
-            for r in py_fail:
-                lines.append(f"    \u2717 {r.name:<30s} {r.detail}")
+            for pr in py_fail:
+                lines.append(f"    \u2717 {pr.name:<30s} {pr.detail}")
         lines.append("")
 
     # --- External tools ---
     if passed:
         lines.append(f"  {len(passed)} tools OK:")
-        for r in passed:
-            lines.append(f"    \u2713 {r.tool.name:<30s} {r.version_output}")
+        for tr in passed:
+            lines.append(f"    \u2713 {tr.tool.name:<30s} {tr.version_output}")
 
     if failed:
         lines.append(f"\n  {len(failed)} tools MISSING or BROKEN:")
-        for r in failed:
+        for tr in failed:
             issues = []
-            if not r.found:
-                issues.append(f"`{r.tool.binary}` not found on PATH")
-            elif not r.version_ok:
-                issues.append(f"version check failed: {r.version_output or 'no output'}")
-            if not r.env_ok:
-                missing = ", ".join(f"${v}" for v in _missing_env_vars(r.tool))
+            if not tr.found:
+                issues.append(f"`{tr.tool.binary}` not found on PATH")
+            elif not tr.version_ok:
+                issues.append(f"version check failed: {tr.version_output or 'no output'}")
+            if not tr.env_ok:
+                missing = ", ".join(f"${v}" for v in _missing_env_vars(tr.tool))
                 issues.append(f"env not set: {missing}")
-            lines.append(f"    \u2717 {r.tool.name:<30s} {'; '.join(issues)}")
-            lines.append(f"      used by: {', '.join(r.tool.required_by)}")
-            if r.tool.install_hint and not r.found:
-                lines.append(f"      hint: {r.tool.install_hint}")
+            lines.append(f"    \u2717 {tr.tool.name:<30s} {'; '.join(issues)}")
+            lines.append(f"      used by: {', '.join(tr.tool.required_by)}")
+            if tr.tool.install_hint and not tr.found:
+                lines.append(f"      hint: {tr.tool.install_hint}")
 
     total = len(passed) + len(failed)
     lines.append(f"\n  Checked {total} external tools total.")

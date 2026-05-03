@@ -10,8 +10,8 @@ from collections import defaultdict
 from pathlib import Path
 
 from eukan.exceptions import ExternalToolError
-from eukan.infra.runner import run_cmd
 from eukan.infra.logging import get_logger
+from eukan.infra.runner import run_cmd
 from eukan.settings import AssemblyConfig
 
 log = get_logger(__name__)
@@ -87,7 +87,7 @@ def map_reads(config: AssemblyConfig) -> None:
         run_cmd(star_cmd, cwd=wd)
     except ExternalToolError:
         log.warning("STAR failed, falling back to STARlong")
-        star_long_cmd = ["STARlong"] + star_cmd[1:]
+        star_long_cmd = ["STARlong", *star_cmd[1:]]
         run_cmd(star_long_cmd, cwd=wd)
 
     # Report mapping rate from STAR log
@@ -230,7 +230,7 @@ def _generate_hints_from_star(wd: Path, genome: Path) -> None:
             cwd=wd, out_file="STAR_forward.bam", binary=True,
         )
 
-        for direction, strand, wig in [
+        for direction, _strand, wig in [
             ("STAR_reverse.bam", "-", "minus.wig"),
             ("STAR_forward.bam", "+", "plus.wig"),
         ]:
@@ -273,7 +273,7 @@ def _run_wig2hints(wd: Path, wig_file: str, strand: str, out_file: str) -> None:
 
     log.debug("Running: %s < %s > %s", " ".join(cmd), wig_file, out_file)
 
-    with open(wd / wig_file, "r") as stdin_f, open(wd / out_file, "w") as stdout_f:
+    with open(wd / wig_file) as stdin_f, open(wd / out_file, "w") as stdout_f:
         result = subprocess.run(
             cmd,
             cwd=wd,

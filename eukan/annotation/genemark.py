@@ -6,13 +6,12 @@ from pathlib import Path
 
 import gffutils
 
-from eukan.infra.logging import validate_gff
-from eukan.gff import transform_db
 from eukan.gff import parser as gffparser
+from eukan.gff import transform_db
 from eukan.gff.io import featuredb2gff3_file
+from eukan.infra.logging import get_logger, validate_gff
 from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_dir
-from eukan.infra.logging import get_logger
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
@@ -41,20 +40,20 @@ def run_genemark(config: PipelineConfig, hints: Path | None = None) -> Path:
                     intron_count += 1
         has_intron_hints = intron_count >= 150
 
-    if has_intron_hints:
-        training_type = ["--ET=introns.gff", "--et_score=3"]
-    else:
-        training_type = ["--ES"]
-
+    training_type = (
+        ["--ET=introns.gff", "--et_score=3"] if has_intron_hints else ["--ES"]
+    )
     gcode_flag = config.genetic_code_obj.genemark_flag
 
     if not (sdir / "genemark.gtf").exists():
         run_cmd(
-            ["gmes_petap.pl", "--soft", "1000"]
-            + training_type
-            + [f"--cores={config.num_cpu}", f"--sequence={config.genome}"]
-            + hgd_flag
-            + gcode_flag,
+            [
+                "gmes_petap.pl", "--soft", "1000",
+                *training_type,
+                f"--cores={config.num_cpu}", f"--sequence={config.genome}",
+                *hgd_flag,
+                *gcode_flag,
+            ],
             cwd=sdir,
         )
 

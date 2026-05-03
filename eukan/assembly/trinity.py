@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
 
-from eukan.infra.runner import run_cmd
 from eukan.infra.logging import get_logger
+from eukan.infra.runner import run_cmd
 from eukan.settings import AssemblyConfig
 
 log = get_logger(__name__)

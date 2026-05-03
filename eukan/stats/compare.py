@@ -38,7 +38,6 @@ from eukan.stats.models import (
     subfeature_stats_from_records,
 )
 
-
 # ---------------------------------------------------------------------------
 # GFF3 parsing
 # ---------------------------------------------------------------------------
@@ -88,10 +87,11 @@ def _derive_introns(cds_list: list[Interval]) -> list[Interval]:
 def _group_by_parent(
     intervals: list[Interval],
 ) -> dict[str, list[Interval]]:
-    """Group intervals by their parent_id."""
+    """Group intervals by their parent_id. Intervals without a parent are skipped."""
     groups: dict[str, list[Interval]] = defaultdict(list)
     for iv in intervals:
-        groups[iv.parent_id].append(iv)
+        if iv.parent_id is not None:
+            groups[iv.parent_id].append(iv)
     return groups
 
 
@@ -208,7 +208,7 @@ def _max_pairwise_matching(
             for perm in permutations(pred_indices, k):
                 total = 0
                 matches = []
-                for ri, pi in zip(ref_indices, perm):
+                for ri, pi in zip(ref_indices, perm, strict=True):
                     ovl = ovl_lookup.get((ri, pi), 0)
                     total += ovl
                     if ovl > 0:
@@ -220,7 +220,7 @@ def _max_pairwise_matching(
             for perm in permutations(ref_indices, k):
                 total = 0
                 matches = []
-                for ri, pi in zip(perm, pred_indices):
+                for ri, pi in zip(perm, pred_indices, strict=True):
                     ovl = ovl_lookup.get((ri, pi), 0)
                     total += ovl
                     if ovl > 0:
@@ -238,13 +238,13 @@ def _max_pairwise_matching(
     overlaps.sort(key=lambda x: x[2], reverse=True)
     used_refs: set[int] = set()
     used_preds: set[int] = set()
-    matches = []
+    greedy: list[tuple[Interval, Interval, int]] = []
     for ri, pi, ovl in overlaps:
         if ri not in used_refs and pi not in used_preds:
-            matches.append((ref_feats[ri], pred_feats[pi], ovl))
+            greedy.append((ref_feats[ri], pred_feats[pi], ovl))
             used_refs.add(ri)
             used_preds.add(pi)
-    return matches
+    return greedy
 
 
 # ---------------------------------------------------------------------------
@@ -343,9 +343,8 @@ def _classify_genes(
     # --- Step 4: novel predictions ---
     matched_pred_ids = set(gene_match_map.values()) | excluded_pred_ids
     for pred in pred_genes:
-        if pred.feat_id not in matched_pred_ids:
-            if not _find_overlaps(pred, ref_idx):
-                records.append(FeatureRecord.from_pred("gene", "novel", pred))
+        if pred.feat_id not in matched_pred_ids and not _find_overlaps(pred, ref_idx):
+            records.append(FeatureRecord.from_pred("gene", "novel", pred))
 
     return gene_match_map, records
 

@@ -10,8 +10,12 @@ from eukan.assembly.star import map_reads
 from eukan.assembly.trinity import run_trinity
 from eukan.infra.logging import get_logger
 from eukan.infra.manifest import (
-    ASSEMBLY, get_or_create_manifest, run_orchestrated_step,
-    save_manifest, step_key, validate_step_outputs,
+    ASSEMBLY,
+    get_or_create_manifest,
+    run_orchestrated_step,
+    save_manifest,
+    step_key,
+    validate_step_outputs,
 )
 from eukan.settings import AssemblyConfig
 

@@ -10,16 +10,21 @@ from eukan.annotation.alignment import align_proteins
 from eukan.annotation.augustus import run_augustus
 from eukan.annotation.consensus import build_consensus_models
 from eukan.annotation.genemark import run_genemark
+from eukan.annotation.orf import create_transcriptome_orf_db
 from eukan.annotation.snap import run_codingquarry, run_snap
 from eukan.annotation.validation import sanitize_genome_fasta, validate_fasta
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.logging import count_gff3_features, get_logger
 from eukan.infra.manifest import (
-    ANNOTATION, RunManifest, get_or_create_manifest, run_orchestrated_step,
-    save_manifest, step_key, validate_step_outputs,
+    ANNOTATION,
+    RunManifest,
+    get_or_create_manifest,
+    run_orchestrated_step,
+    save_manifest,
+    step_key,
+    validate_step_outputs,
 )
 from eukan.infra.steps import step_dir
-from eukan.annotation.orf import create_transcriptome_orf_db
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
@@ -57,13 +62,19 @@ def _run_step(
     *args,
     **kwargs,
 ) -> Path:
-    """Run an annotation step via the shared orchestrator helper."""
-    return run_orchestrated_step(
+    """Run an annotation step via the shared orchestrator helper.
+
+    All annotation steps produce a GFF3 output, so the result is always
+    a Path (never None).
+    """
+    result = run_orchestrated_step(
         config.manifest_dir, manifest, step_key(ANNOTATION, name),
         fn, config, *args,
         step_dir=config.work_dir / name,
         **kwargs,
     )
+    assert result is not None, f"annotation step {name!r} returned no output"
+    return result
 
 
 def _log_prediction_count(label: str, gff3_path: Path) -> None:
@@ -122,6 +133,12 @@ def run_annotation_pipeline(
         config = config.model_copy(update={"genome": sanitized_genome})
 
     if config.has_transcripts:
+        # has_transcripts is True iff all three are non-None
+        assert (
+            config.transcripts_fasta is not None
+            and config.transcripts_gff is not None
+            and config.rnaseq_hints is not None
+        )
         log.info("Transcript evidence: %s, %s, %s",
                  config.transcripts_fasta.name, config.transcripts_gff.name, config.rnaseq_hints.name)
     else:

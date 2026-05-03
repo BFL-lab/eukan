@@ -6,8 +6,7 @@ from dataclasses import astuple
 from pathlib import Path
 from statistics import median
 
-from eukan.stats.models import ComparisonResult, FeatureRecord, TSV_COLUMNS
-
+from eukan.stats.models import TSV_COLUMNS, ComparisonResult
 
 # ---------------------------------------------------------------------------
 # Helpers

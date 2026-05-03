@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
@@ -17,10 +18,10 @@ from eukan.exceptions import ExternalToolError
 from eukan.gff import create_gff_db, transform_db
 from eukan.gff import parser as gffparser
 from eukan.gff.io import featuredb2gff3_file
+from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_shell
 from eukan.infra.steps import step_dir
 from eukan.infra.utils import symlink
-from eukan.infra.logging import get_logger
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
@@ -172,7 +173,11 @@ def _build_ssp(config: PipelineConfig, sdir: Path) -> str:
     The spaln makessp scripts expect genome databases named ``<species>_g``
     and transcript files named ``<species>_c.cf``, so we follow that
     convention using ``config.shortname`` as the species identifier.
+
+    Caller is responsible for ensuring ``config.transcripts_fasta`` is set
+    (this function is only invoked when ``use_ssp`` is true in _run_spaln).
     """
+    assert config.transcripts_fasta is not None
     ssp_name = config.shortname.lower()
     aln_tab = os.environ.get("ALN_TAB", "")
     if not aln_tab:
@@ -254,13 +259,13 @@ def _build_ssp(config: PipelineConfig, sdir: Path) -> str:
     # code as long as the required files were produced.
     # Run via shell to ensure Perl's system() calls and shell redirects
     # inside make_ssp.pl work correctly.
-    try:
+    with contextlib.suppress(ExternalToolError):
+        # check for output files below — non-zero exit is tolerated when
+        # the level 9/13 outputs (Splice3/5, IntronPotTab) were produced
         run_shell(
             f"perl {_make_ssp} -d{genome_name} -S {transcript_name}.eij",
             cwd=ssp_dir,
         )
-    except ExternalToolError:
-        pass  # check for output files below
 
     # Verify key output files were created (may be .dat, .dgz, or extensionless)
     for base in ("Splice3", "Splice5", "IntronPotTab"):

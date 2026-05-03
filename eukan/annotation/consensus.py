@@ -11,9 +11,9 @@ from eukan.assembly.pasa import write_pasa_configs
 from eukan.gff import create_gff_db
 from eukan.gff import intersecter as gffintersecter
 from eukan.gff import parser as gffparser
+from eukan.infra.logging import count_gff3_features, get_logger
 from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_dir
-from eukan.infra.logging import count_gff3_features, get_logger
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
@@ -42,8 +42,8 @@ def add_utrs_from_pasa(config: PipelineConfig, sdir: Path, pasa_db: Path) -> Non
             "-A", "-g", str(config.genome),
             "--CPU", str(config.num_cpu),
             "-t", str(config.transcripts_fasta),
-        ]
-        + gc_args,
+            *gc_args,
+        ],
         cwd=sdir,
     )
 

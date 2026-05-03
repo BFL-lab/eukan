@@ -17,12 +17,12 @@ from __future__ import annotations
 import shutil
 import subprocess
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from pydantic import BaseModel, Field
 

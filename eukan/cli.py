@@ -88,13 +88,16 @@ class _EukanGroup(click.Group):
             if isinstance(exc, PydanticValidationError):
                 click.secho("Error: invalid configuration", fg="red", err=True)
                 for err in exc.errors():
-                    loc = " → ".join(str(l) for l in err["loc"])
+                    loc = " → ".join(str(part) for part in err["loc"])
                     click.echo(f"  {loc}: {err['msg']}", err=True)
-                raise SystemExit(1)
+                raise SystemExit(1) from exc
 
             from eukan.exceptions import (
-                EukanError, ExternalToolError, ValidationError,
-                DependencyError, ConfigurationError,
+                ConfigurationError,
+                DependencyError,
+                EukanError,
+                ExternalToolError,
+                ValidationError,
             )
             if not isinstance(exc, EukanError):
                 raise
@@ -106,11 +109,7 @@ class _EukanGroup(click.Group):
                 if exc.stderr_snippet:
                     click.echo(f"  stderr: {exc.stderr_snippet[:300]}", err=True)
                 click.echo("  Run with -v for full command and stderr output.", err=True)
-            elif isinstance(exc, ValidationError):
-                click.secho(f"Error: {exc}", fg="red", err=True)
-            elif isinstance(exc, DependencyError):
-                click.secho(f"Error: {exc}", fg="red", err=True)
-            elif isinstance(exc, ConfigurationError):
+            elif isinstance(exc, (ValidationError, DependencyError, ConfigurationError)):
                 click.secho(f"Error: {exc}", fg="red", err=True)
             else:
                 click.secho(f"Error: {exc}", fg="red", err=True)
@@ -118,7 +117,7 @@ class _EukanGroup(click.Group):
             if exc.hint:
                 click.echo(f"  Hint: {exc.hint}", err=True)
 
-            raise SystemExit(1)
+            raise SystemExit(1) from exc
 
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
@@ -171,6 +170,7 @@ def _resolve_epilog(value: str) -> str:
 
 def _full_code_table_text() -> str:
     from Bio.Data import CodonTable
+
     from eukan.gencode import _PASA_NAMES
 
     lines = ["Genetic codes (NCBI translation tables):", ""]
@@ -183,7 +183,7 @@ def _full_code_table_text() -> str:
 
 
 def _pasa_code_table_text() -> str:
-    from eukan.gencode import GeneticCode, _PASA_NAMES
+    from eukan.gencode import _PASA_NAMES, GeneticCode
 
     lines = ["Genetic codes supported by PASA:", ""]
     for cid in sorted(_PASA_NAMES):
@@ -577,7 +577,6 @@ def func_annot(
 )
 def gff3toseq(genome: Path, gff3: Path, output: str, code: int) -> None:
     """Extract protein or cDNA sequences from GFF3 + genome."""
-    from Bio import SeqIO
 
     from eukan.gff.io import extract_sequences
 
@@ -633,7 +632,7 @@ def db_fetch(output_dir: Path, force: bool, database: tuple[str, ...]) -> None:
 )
 def check(subcommands: tuple[str, ...], db_dir: Path) -> None:
     """Verify Python deps, external tools, and databases."""
-    from eukan.check import run_checks, format_results
+    from eukan.check import format_results, run_checks
 
     passed, failed, db_results, python_results = run_checks(
         list(subcommands) if subcommands else None,
@@ -659,7 +658,7 @@ def check(subcommands: tuple[str, ...], db_dir: Path) -> None:
 )
 def status(work_dir: Path) -> None:
     """Show the status of a pipeline run."""
-    from eukan.infra.manifest import load_manifest, format_status
+    from eukan.infra.manifest import format_status, load_manifest
 
     manifest = load_manifest(work_dir.resolve())
     if not manifest:

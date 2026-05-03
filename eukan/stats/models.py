@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields
 from typing import NamedTuple
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -270,9 +269,12 @@ def gene_stats_from_records(
         elif cls == "novel":
             stats.novel += 1
 
-        # Overlap metrics for matched genes (exact + inexact)
+        # Overlap metrics for matched genes (exact + inexact).
+        # sn/sp/f1 are set as a triple by FeatureRecord.from_match, so a
+        # single None check on sn implies the others are also non-None.
         if cls in ("exact", "inexact") and r.sn is not None:
             stats.sn_values.append(r.sn)
+            assert r.sp is not None and r.f1 is not None
             stats.sp_values.append(r.sp)
             stats.f1_values.append(r.f1)
     return stats
@@ -293,6 +295,7 @@ def subfeature_stats_from_records(
         if cls == "match":
             stats.match += 1
             if r.sn is not None:
+                assert r.sp is not None and r.f1 is not None
                 stats.sn_values.append(r.sn)
                 stats.sp_values.append(r.sp)
                 stats.f1_values.append(r.f1)

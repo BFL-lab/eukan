@@ -39,13 +39,15 @@ def _load_digital_sequences(fasta_path: Path) -> list[pyhmmer.easel.DigitalSeque
     """Load protein sequences from a FASTA file into pyhmmer digital format."""
     alphabet = pyhmmer.easel.Alphabet.amino()
     with pyhmmer.easel.SequenceFile(str(fasta_path), digital=True, alphabet=alphabet) as sf:
-        return list(sf)
+        seqs: list[pyhmmer.easel.DigitalSequence] = list(sf)  # type: ignore[arg-type]
+    return seqs
 
 
 def _load_hmm_db(hmm_path: Path) -> list[pyhmmer.plan7.HMM]:
     """Load HMM profiles from a pressed Pfam database."""
     with pyhmmer.plan7.HMMFile(str(hmm_path)) as hf:
-        return list(hf)
+        hmms: list[pyhmmer.plan7.HMM] = list(hf)
+    return hmms
 
 
 # ---------------------------------------------------------------------------

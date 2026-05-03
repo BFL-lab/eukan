@@ -7,9 +7,6 @@ import sys
 if sys.version_info >= (3, 11):
     import tomllib
 else:
-    try:
-        import tomllib
-    except ImportError:
-        import tomli as tomllib  # type: ignore[no-redef]
+    import tomli as tomllib  # type: ignore[import-not-found,no-redef,unused-ignore]
 
 __all__ = ["tomllib"]

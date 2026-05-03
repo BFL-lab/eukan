@@ -5,8 +5,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from eukan.infra.runner import run_cmd
 from eukan.infra.logging import get_logger
+from eukan.infra.runner import run_cmd
 from eukan.settings import AssemblyConfig
 
 log = get_logger(__name__)
@@ -187,7 +187,7 @@ def _build_transcript_hints(wd: Path) -> None:
 
             # Also write as hint
             hint_attrs = f"pri=3;src=E;group={transcript_id}"
-            hint_cols = cols[:8] + [hint_attrs]
+            hint_cols = [*cols[:8], hint_attrs]
             hints_out.write("\t".join(hint_cols) + "\n")
 
     # Merge all hints

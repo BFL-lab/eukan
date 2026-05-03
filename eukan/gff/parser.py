@@ -18,7 +18,6 @@ from pathlib import Path
 import gffutils
 from Bio import SeqIO
 
-
 # ---------------------------------------------------------------------------
 # GTF ↔ GFF3 conversion
 # ---------------------------------------------------------------------------
@@ -162,8 +161,7 @@ def fix_CDS_phases(
         yield gene
         for mRNA in gff3.children(gene, featuretype="mRNA"):
             yield mRNA
-            for exon in gff3.children(mRNA, featuretype="exon"):
-                yield exon
+            yield from gff3.children(mRNA, featuretype="exon")
 
             reverse = mRNA.strand == "-"
             all_cds = list(

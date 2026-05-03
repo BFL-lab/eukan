@@ -18,10 +18,10 @@ from eukan.gff import create_gff_db
 from eukan.gff import intersecter as gffintersecter
 from eukan.gff import parser as gffparser
 from eukan.gff.io import featuredb2gff3_file
+from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_piped
 from eukan.infra.steps import step_dir
 from eukan.infra.utils import symlink
-from eukan.infra.logging import get_logger
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
@@ -49,7 +49,7 @@ def _splice_type_to_augustus(name: str) -> str | None:
     return None
 
 
-def _get_splice_sites_flag(config: "PipelineConfig") -> list[str]:
+def _get_splice_sites_flag(config: PipelineConfig) -> list[str]:
     """Build ``--allow_hinted_splicesites`` flag from STAR splice site evidence.
 
     Reads ``splice_site_summary.json`` (written by the assembly pipeline)
@@ -169,9 +169,9 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
 
         # Report training set size
         with open(sdir / "genbank.gb.train") as fh:
-            train_count = sum(1 for l in fh if l.startswith("LOCUS"))
+            train_count = sum(1 for line in fh if line.startswith("LOCUS"))
         with open(sdir / "genbank.gb.test") as fh:
-            test_count = sum(1 for l in fh if l.startswith("LOCUS"))
+            test_count = sum(1 for line in fh if line.startswith("LOCUS"))
         total = train_count + test_count
         if total <= 500:
             log.warning(
@@ -238,12 +238,13 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
         "augustus", f"--species={config.name}",
         f"--extrinsicCfgFile={Path(config_path) / 'extrinsic' / ext_cfg}",
         "--hintsfile=hints_all.gff", "--softmasking=1", "--UTR=off",
-    ] + splice_sites_flag
+        *splice_sites_flag,
+    ]
 
     # Run splits -- each writes stdout to its own .gff3 file
     def _run_split(split: Path) -> None:
         run_cmd(
-            base_cmd + [str(split)],
+            [*base_cmd, str(split)],
             cwd=sdir, out_file=f"{split.name}.gff3",
         )
 
@@ -268,8 +269,8 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
     featuredb2gff3_file(aug_out, sdir / output)
 
     # Cleanup splits
-    for f in splits:
-        f.unlink(missing_ok=True)
-        (sdir / f"{f.name}.gff3").unlink(missing_ok=True)
+    for split in splits:
+        split.unlink(missing_ok=True)
+        (sdir / f"{split.name}.gff3").unlink(missing_ok=True)
 
     return sdir / output

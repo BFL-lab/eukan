@@ -17,10 +17,10 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any
 
-from eukan.infra.logging import get_logger
-
 from pydantic import Field, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from eukan.infra.logging import get_logger
 
 
 def _rand_string(length: int = 5) -> str:
@@ -48,7 +48,6 @@ def _pyproject_settings_sources(toml_key: str | None = None):
         toml_key: Sub-key under [tool.eukan] (e.g., "assemble").
             If None, reads directly from [tool.eukan].
     """
-    @classmethod
     def settings_customise_sources(cls, settings_cls, **kwargs):
         from pydantic_settings import PydanticBaseSettingsSource
 
@@ -69,7 +68,7 @@ def _pyproject_settings_sources(toml_key: str | None = None):
             PyprojectSource(settings_cls),
         )
 
-    return settings_customise_sources
+    return classmethod(settings_customise_sources)
 
 
 class Kingdom(str, Enum):
@@ -93,15 +92,20 @@ class _StepRunSettings(BaseSettings):
     """
 
     work_dir: Path = Field(default_factory=Path.cwd)
-    manifest_dir: Path | None = None  # defaults to work_dir if not set
+    # Filled in from work_dir by _default_manifest_dir if not provided;
+    # always a Path after construction.
+    manifest_dir: Path = Field(default_factory=Path.cwd)
     num_cpu: int = Field(default_factory=lambda: os.cpu_count() or 1)
     genetic_code: str = "1"
 
-    @model_validator(mode="after")
-    def _default_manifest_dir(self):
-        if not self.manifest_dir:
-            object.__setattr__(self, "manifest_dir", self.work_dir)
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def _default_manifest_dir(cls, data: Any) -> Any:
+        # Run before field validation so manifest_dir can be a non-Optional
+        # Path -- mypy then sees it as guaranteed throughout the codebase.
+        if isinstance(data, dict) and not data.get("manifest_dir"):
+            data["manifest_dir"] = data.get("work_dir") or Path.cwd()
+        return data
 
     @cached_property
     def genetic_code_obj(self):
@@ -168,13 +172,13 @@ class PipelineConfig(_StepRunSettings):
     # --- Validators ------------------------------------------------------
 
     @model_validator(mode="after")
-    def _derive_name(self) -> "PipelineConfig":
+    def _derive_name(self) -> PipelineConfig:
         if not self.name:
             object.__setattr__(self, "name", self.genome.stem)
         return self
 
     @model_validator(mode="after")
-    def _discover_assembly_outputs(self) -> "PipelineConfig":
+    def _discover_assembly_outputs(self) -> PipelineConfig:
         """Auto-discover assembly outputs in work_dir when not explicitly provided."""
         log = get_logger(__name__)
 
