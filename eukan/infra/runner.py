@@ -29,6 +29,7 @@ def run_cmd(
     *,
     cwd: Path,
     out_file: str | None = None,
+    err_file: str | None = None,
     binary: bool = False,
     timeout: int | None = None,
     extra_env: dict[str, str] | None = None,
@@ -39,6 +40,8 @@ def run_cmd(
         cmd: Command as a list of strings (never a shell string).
         cwd: Working directory for the subprocess.
         out_file: If set, stdout is written to this filename within *cwd*.
+        err_file: If set, stderr is written to this filename within *cwd*
+            instead of being captured into the exception on failure.
         binary: If True, capture stdout as bytes (for BAM, gzip, etc.).
         timeout: Optional timeout in seconds.
         extra_env: Additional environment variables merged on top of
@@ -54,36 +57,56 @@ def run_cmd(
     log.debug("Running: %s (cwd=%s)", cmd_str, cwd)
 
     stdout_path = cwd / out_file if out_file else None
+    stderr_path = cwd / err_file if err_file else None
+
+    # When err_file is set, write stderr directly to the file via Popen's
+    # stdout= mechanism. We open the file in binary mode and let the child
+    # write to its file descriptor — saves loading stderr into Python.
+    stderr_target: int | None
+    err_handle = None
+    if stderr_path:
+        # File handle's lifetime is the subprocess call; closed in finally.
+        err_handle = open(stderr_path, "wb")  # noqa: SIM115
+        stderr_target = err_handle.fileno()
+    else:
+        stderr_target = subprocess.PIPE
 
     try:
-        result = subprocess.run(
-            cmd,
-            cwd=cwd,
-            env=_subprocess_env(extra_env),
-            stdout=subprocess.PIPE if stdout_path else subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=not binary,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise ExternalToolError(
-            f"{_tool_name(cmd)} timed out after {timeout}s",
-            tool=_tool_name(cmd),
-            returncode=-1,
-            cmd=cmd,
-            stderr_snippet=str(exc),
-        ) from exc
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=cwd,
+                env=_subprocess_env(extra_env),
+                stdout=subprocess.PIPE if stdout_path else subprocess.DEVNULL,
+                stderr=stderr_target,
+                text=not binary,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ExternalToolError(
+                f"{_tool_name(cmd)} timed out after {timeout}s",
+                tool=_tool_name(cmd),
+                returncode=-1,
+                cmd=cmd,
+                stderr_snippet=str(exc),
+            ) from exc
+    finally:
+        if err_handle is not None:
+            err_handle.close()
 
     if stdout_path and result.stdout:
         mode = "wb" if binary else "w"
         with open(stdout_path, mode) as f:
             f.write(result.stdout)
 
-    stderr_text = (
-        result.stderr
-        if isinstance(result.stderr, str)
-        else result.stderr.decode(errors="replace")
-    )
+    if result.stderr is None:
+        stderr_text = ""
+    else:
+        stderr_text = (
+            result.stderr
+            if isinstance(result.stderr, str)
+            else result.stderr.decode(errors="replace")
+        )
     if stderr_text:
         log.debug("stderr from %s:\n%s", _tool_name(cmd), stderr_text)
 

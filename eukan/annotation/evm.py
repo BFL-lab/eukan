@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -12,6 +13,59 @@ from eukan.infra.utils import symlink
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
+
+
+def _parse_evm_command(
+    cmd_str: str,
+) -> tuple[list[str], Path | None, str | None, str | None] | None:
+    """Parse a single line of EVM's commands.list.
+
+    Returns ``(argv, cwd, stdout_file, stderr_file)`` if the line can be
+    represented as a plain run_cmd call (handles trailing ``> OUT`` and
+    ``2> ERR`` redirects and an optional leading ``cd PATH &&``).  Returns
+    ``None`` for anything else, signalling the caller to fall back to a
+    shell.
+    """
+    try:
+        tokens = shlex.split(cmd_str)
+    except ValueError:
+        return None
+
+    if not tokens:
+        return None
+
+    cwd: Path | None = None
+    # Leading "cd PATH && rest..." → strip and set cwd.
+    if len(tokens) >= 3 and tokens[0] == "cd" and tokens[2] == "&&":
+        cwd = Path(tokens[1])
+        tokens = tokens[3:]
+
+    # Walk from the right end, peeling off `> file` and `2> file`.
+    stdout_file: str | None = None
+    stderr_file: str | None = None
+    while len(tokens) >= 2:
+        op = tokens[-2]
+        target = tokens[-1]
+        if op == ">":
+            if stdout_file is not None:
+                return None
+            stdout_file = target
+            tokens = tokens[:-2]
+        elif op == "2>":
+            if stderr_file is not None:
+                return None
+            stderr_file = target
+            tokens = tokens[:-2]
+        else:
+            break
+
+    # Reject anything that still contains shell metacharacters we can't handle.
+    if any(t in {"&&", "||", "|", ";", "<", ">>", "2>>"} for t in tokens):
+        return None
+    if not tokens:
+        return None
+
+    return tokens, cwd, stdout_file, stderr_file
 
 
 def run_evm(config: PipelineConfig, evidence: list[Path]) -> Path:
@@ -73,8 +127,11 @@ def run_evm(config: PipelineConfig, evidence: list[Path]) -> Path:
         out_file="commands.list",
     )
 
-    # Run EVM commands in parallel batches
-    # Commands contain shell redirections (> and 2>) so run via shell
+    # Run EVM commands in parallel.
+    # Each line in commands.list looks roughly like
+    #   evidence_modeler.pl --genome ... > consensus.out 2> consensus.err
+    # so we parse out > / 2> redirects and call run_cmd directly to avoid
+    # forking a shell per partition (thousands for large genomes).
     evm_cmds = [
         line.rstrip()
         for line in (sdir / "commands.list").read_text().splitlines()
@@ -82,7 +139,18 @@ def run_evm(config: PipelineConfig, evidence: list[Path]) -> Path:
     ]
 
     def _run_evm_cmd(cmd_str: str) -> None:
-        run_shell(cmd_str, cwd=sdir)
+        parsed = _parse_evm_command(cmd_str)
+        if parsed is None:
+            # Fallback for any line we can't safely strip-and-tokenize
+            run_shell(cmd_str, cwd=sdir)
+            return
+        argv, run_cwd, stdout_file, stderr_file = parsed
+        run_cmd(
+            argv,
+            cwd=run_cwd or sdir,
+            out_file=stdout_file,
+            err_file=stderr_file,
+        )
 
     with ThreadPoolExecutor(max_workers=config.num_cpu) as pool:
         list(pool.map(_run_evm_cmd, evm_cmds))
