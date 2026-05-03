@@ -19,6 +19,7 @@ Usage::
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from pathlib import Path
 
 from eukan.infra.tools_registry import Tool, load_tools
@@ -78,6 +79,26 @@ def configure_process_env() -> None:
         _apply_path_dirs(tool, prefix, os.environ)  # type: ignore[arg-type]
 
 
+@lru_cache(maxsize=4)
+def _subprocess_lib_dirs(prefix: str) -> tuple[str, ...]:
+    """Resolve and cache the LD_LIBRARY_PATH additions for *prefix*.
+
+    Cached because the tool registry and conda prefix don't change during
+    a process lifetime, but ``subprocess_env`` is called for every
+    external command — for pipelines that fan out to thousands of EVM or
+    AUGUSTUS partitions this work would otherwise repeat constantly.
+    """
+    if not prefix:
+        return ()
+    additions: list[str] = []
+    for tool in load_tools():
+        for rel in tool.conda_lib_dirs:
+            resolved = _resolve(prefix, rel)
+            if resolved is not None:
+                additions.append(resolved)
+    return tuple(additions)
+
+
 def subprocess_env(extra: dict[str, str] | None = None) -> dict[str, str] | None:
     """Build an environment dict for subprocess execution.
 
@@ -89,17 +110,14 @@ def subprocess_env(extra: dict[str, str] | None = None) -> dict[str, str] | None
     inherit the parent environment directly.
     """
     prefix = os.environ.get("CONDA_PREFIX", "")
+    additions = _subprocess_lib_dirs(prefix)
 
-    if not prefix and not extra:
+    if not additions and not extra:
         return None
 
     env = {**os.environ, **(extra or {})}
 
-    if prefix:
-        for tool in load_tools():
-            for rel in tool.conda_lib_dirs:
-                resolved = _resolve(prefix, rel)
-                if resolved is not None:
-                    _prepend(env, "LD_LIBRARY_PATH", resolved)
+    for resolved in additions:
+        _prepend(env, "LD_LIBRARY_PATH", resolved)
 
     return env
