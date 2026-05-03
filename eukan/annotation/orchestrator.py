@@ -259,86 +259,100 @@ def _expected_steps(config: PipelineConfig) -> list[str]:
 
 
 def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
-    """Execute all pipeline steps with manifest tracking and concurrency."""
+    """Execute annotation steps in dependency phases.
+
+    Phases run sequentially; within a phase, independent steps run
+    concurrently. Behavior matrix preserved verbatim from the previous
+    nested form:
+
+      - has_transcripts + is_fungus
+            ORF || GeneMark, then spaln (intron-hinted), AUGUSTUS,
+            SNAP || CodingQuarry, EVM(spaln, augustus, snap, cq, trans)
+      - has_transcripts + not is_fungus
+            ORF || GeneMark, spaln, AUGUSTUS, *no SNAP/CodingQuarry*,
+            EVM(spaln, augustus, trans)
+      - no transcripts + (is_fungus | is_protist)
+            GeneMark, spaln, AUGUSTUS, SNAP || CodingQuarry,
+            EVM(spaln, augustus, snap, cq)
+      - no transcripts + neither
+            GeneMark, spaln, AUGUSTUS, SNAP, EVM(spaln, augustus, snap, genemark)
+    """
+    has_t = config.has_transcripts
     ev: dict[str, Path] = {}
 
-    if config.has_transcripts:
-        # ORF finding and GeneMark are independent -- run concurrently
-        concurrent = _run_concurrent_steps(config, manifest, [
+    # Phase 1: ORF finding (transcripts only) and GeneMark, concurrent when both run.
+    if has_t:
+        assert config.transcripts_gff is not None and config.rnaseq_hints is not None
+        results = _run_concurrent_steps(config, manifest, [
             ("orf_finder", find_orfs, (config.transcripts_gff,), {}),
             ("genemark", run_genemark, (config.rnaseq_hints,), {}),
         ])
-        ev["transcriptORFs"] = concurrent["orf_finder"]
-        ev["genemark"] = concurrent["genemark"]
-        _log_prediction_count("GeneMark", ev["genemark"])
-
-        intron_hints = config.work_dir / "genemark" / "introns.gff"
-        prot_align_step = "prot_align_ssp" if config.spaln_ssp else "prot_align"
-        ev["spaln"] = _run_step(
-            config, manifest, prot_align_step, align_proteins,
-            ev["genemark"], config.proteins,
-            intron_hints if intron_hints.exists() else None,
-        )
-        ev["augustus"] = _run_step(
-            config, manifest, "augustus", run_augustus,
-            ev["genemark"], ev["spaln"], ev["transcriptORFs"],
-        )
-        _log_prediction_count("AUGUSTUS", ev["augustus"])
-
-        if config.is_fungus:
-            # SNAP and CodingQuarry are independent -- run concurrently
-            concurrent = _run_concurrent_steps(config, manifest, [
-                ("snap", run_snap, (ev["augustus"], ev["spaln"], ev["transcriptORFs"]), {}),
-                ("codingquarry", run_codingquarry, (config.transcripts_gff,), {}),
-            ])
-            ev["snap"] = concurrent["snap"]
-            ev["codingquarry"] = concurrent["codingquarry"]
-            _log_prediction_count("SNAP", ev["snap"])
-            _log_prediction_count("CodingQuarry", ev["codingquarry"])
-            return _run_step(
-                config, manifest, "evm_consensus_models", build_consensus_models,
-                ev["spaln"], ev["augustus"], ev["snap"],
-                ev["codingquarry"], config.transcripts_gff,
-            )
-        else:
-            return _run_step(
-                config, manifest, "evm_consensus_models", build_consensus_models,
-                ev["spaln"], ev["augustus"], config.transcripts_gff,
-            )
+        ev["transcriptORFs"] = results["orf_finder"]
+        ev["genemark"] = results["genemark"]
     else:
         ev["genemark"] = _run_step(config, manifest, "genemark", run_genemark)
-        _log_prediction_count("GeneMark", ev["genemark"])
-        prot_align_step = "prot_align_ssp" if config.spaln_ssp else "prot_align"
-        ev["spaln"] = _run_step(
-            config, manifest, prot_align_step, align_proteins,
-            ev["genemark"], config.proteins,
-        )
-        ev["augustus"] = _run_step(
-            config, manifest, "augustus", run_augustus,
-            ev["genemark"], ev["spaln"],
-        )
-        _log_prediction_count("AUGUSTUS", ev["augustus"])
+    _log_prediction_count("GeneMark", ev["genemark"])
 
-        if config.is_fungus or config.is_protist:
-            concurrent = _run_concurrent_steps(config, manifest, [
-                ("snap", run_snap, (ev["augustus"], ev["spaln"]), {}),
-                ("codingquarry", run_codingquarry, (ev["augustus"],), {}),
-            ])
-            ev["snap"] = concurrent["snap"]
-            ev["codingquarry"] = concurrent["codingquarry"]
-            _log_prediction_count("SNAP", ev["snap"])
-            _log_prediction_count("CodingQuarry", ev["codingquarry"])
-            return _run_step(
-                config, manifest, "evm_consensus_models", build_consensus_models,
-                ev["spaln"], ev["augustus"], ev["snap"], ev["codingquarry"],
-            )
-        else:
-            ev["snap"] = _run_step(
-                config, manifest, "snap", run_snap,
-                ev["augustus"], ev["spaln"],
-            )
-            _log_prediction_count("SNAP", ev["snap"])
-            return _run_step(
-                config, manifest, "evm_consensus_models", build_consensus_models,
-                ev["spaln"], ev["augustus"], ev["snap"], ev["genemark"],
-            )
+    # Phase 2: Protein alignment.
+    prot_step = "prot_align_ssp" if config.spaln_ssp else "prot_align"
+    spaln_extra: tuple = ()
+    if has_t:
+        intron_hints = config.work_dir / "genemark" / "introns.gff"
+        spaln_extra = (intron_hints if intron_hints.exists() else None,)
+    ev["spaln"] = _run_step(
+        config, manifest, prot_step, align_proteins,
+        ev["genemark"], config.proteins, *spaln_extra,
+    )
+
+    # Phase 3: AUGUSTUS.
+    aug_extra: tuple = (ev["transcriptORFs"],) if has_t else ()
+    ev["augustus"] = _run_step(
+        config, manifest, "augustus", run_augustus,
+        ev["genemark"], ev["spaln"], *aug_extra,
+    )
+    _log_prediction_count("AUGUSTUS", ev["augustus"])
+
+    # Phase 4: SNAP (and CodingQuarry, for fungus/protist).
+    if has_t and config.is_fungus:
+        assert config.transcripts_gff is not None
+        results = _run_concurrent_steps(config, manifest, [
+            ("snap", run_snap, (ev["augustus"], ev["spaln"], ev["transcriptORFs"]), {}),
+            ("codingquarry", run_codingquarry, (config.transcripts_gff,), {}),
+        ])
+        ev["snap"] = results["snap"]
+        ev["codingquarry"] = results["codingquarry"]
+        _log_prediction_count("SNAP", ev["snap"])
+        _log_prediction_count("CodingQuarry", ev["codingquarry"])
+    elif not has_t and (config.is_fungus or config.is_protist):
+        results = _run_concurrent_steps(config, manifest, [
+            ("snap", run_snap, (ev["augustus"], ev["spaln"]), {}),
+            ("codingquarry", run_codingquarry, (ev["augustus"],), {}),
+        ])
+        ev["snap"] = results["snap"]
+        ev["codingquarry"] = results["codingquarry"]
+        _log_prediction_count("SNAP", ev["snap"])
+        _log_prediction_count("CodingQuarry", ev["codingquarry"])
+    elif not has_t:
+        ev["snap"] = _run_step(
+            config, manifest, "snap", run_snap, ev["augustus"], ev["spaln"],
+        )
+        _log_prediction_count("SNAP", ev["snap"])
+    # else: has_t but not fungus -- SNAP/CodingQuarry are skipped entirely.
+
+    # Phase 5: EVM consensus. Argument order varies with which evidence ran.
+    evm_args: list[Path] = [ev["spaln"], ev["augustus"]]
+    if "snap" in ev:
+        evm_args.append(ev["snap"])
+    if "codingquarry" in ev:
+        evm_args.append(ev["codingquarry"])
+    if has_t:
+        assert config.transcripts_gff is not None
+        evm_args.append(config.transcripts_gff)
+    elif "snap" in ev and not (config.is_fungus or config.is_protist):
+        # Protein-only non-fungus/protist: also pass GeneMark as transcript-style evidence.
+        evm_args.append(ev["genemark"])
+
+    return _run_step(
+        config, manifest, "evm_consensus_models", build_consensus_models,
+        *evm_args,
+    )
