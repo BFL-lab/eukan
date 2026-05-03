@@ -80,11 +80,42 @@ class Kingdom(str, Enum):
 
 
 # ---------------------------------------------------------------------------
+# Shared base for configs that drive multi-step jobs out of a work_dir
+# ---------------------------------------------------------------------------
+
+
+class _StepRunSettings(BaseSettings):
+    """Common fields, validators, and accessors shared by step-driven configs.
+
+    Subclasses (PipelineConfig, AssemblyConfig) provide their own
+    ``model_config`` (env_prefix, settings sources) and may override
+    field defaults (e.g. ``genetic_code``).
+    """
+
+    work_dir: Path = Field(default_factory=Path.cwd)
+    manifest_dir: Path | None = None  # defaults to work_dir if not set
+    num_cpu: int = Field(default_factory=lambda: os.cpu_count() or 1)
+    genetic_code: str = "1"
+
+    @model_validator(mode="after")
+    def _default_manifest_dir(self):
+        if not self.manifest_dir:
+            object.__setattr__(self, "manifest_dir", self.work_dir)
+        return self
+
+    @cached_property
+    def genetic_code_obj(self):
+        """Return a :class:`~eukan.gencode.GeneticCode` for this config's code."""
+        from eukan.gencode import GeneticCode
+        return GeneticCode(self.genetic_code)
+
+
+# ---------------------------------------------------------------------------
 # Pipeline settings (eukan annotate)
 # ---------------------------------------------------------------------------
 
 
-class PipelineConfig(BaseSettings):
+class PipelineConfig(_StepRunSettings):
     """Configuration for the annotation pipeline.
 
     Fields can be set via:
@@ -112,13 +143,10 @@ class PipelineConfig(BaseSettings):
     proteins: list[Path]
 
     # --- Defaulted (overridable via config/env/CLI) ---
-    work_dir: Path = Field(default_factory=Path.cwd)
-    manifest_dir: Path | None = None  # defaults to work_dir if not set
     name: str = ""  # derived from genome stem if not set
     shortname: str = Field(default_factory=_rand_string)
     kingdom: Kingdom | None = None
-    num_cpu: int = Field(default_factory=lambda: os.cpu_count() or 1)
-    genetic_code: str = "11"
+    genetic_code: str = "11"  # override base default
     weights: list[int] = Field(default_factory=lambda: [2, 1, 3])
     spaln_ssp: bool = False
     allow_noncanonical_splice: bool = False
@@ -138,12 +166,6 @@ class PipelineConfig(BaseSettings):
     }
 
     # --- Validators ------------------------------------------------------
-
-    @model_validator(mode="after")
-    def _default_manifest_dir(self) -> "PipelineConfig":
-        if not self.manifest_dir:
-            object.__setattr__(self, "manifest_dir", self.work_dir)
-        return self
 
     @model_validator(mode="after")
     def _derive_name(self) -> "PipelineConfig":
@@ -198,12 +220,6 @@ class PipelineConfig(BaseSettings):
 
     # --- Computed properties --------------------------------------------
 
-    @cached_property
-    def genetic_code_obj(self):
-        """Return a :class:`~eukan.gencode.GeneticCode` for this config's code."""
-        from eukan.gencode import GeneticCode
-        return GeneticCode(self.genetic_code)
-
     @computed_field  # type: ignore[prop-decorator]
     @property
     def is_fungus(self) -> bool:
@@ -227,7 +243,7 @@ class PipelineConfig(BaseSettings):
 # ---------------------------------------------------------------------------
 
 
-class AssemblyConfig(BaseSettings):
+class AssemblyConfig(_StepRunSettings):
     """Configuration for transcriptome assembly."""
 
     model_config = SettingsConfigDict(
@@ -236,32 +252,16 @@ class AssemblyConfig(BaseSettings):
     )
 
     genome: Path
-    work_dir: Path = Field(default_factory=Path.cwd)
-    manifest_dir: Path | None = None  # defaults to work_dir if not set
     left_reads: Path | None = None
     right_reads: Path | None = None
     single_reads: Path | None = None
     min_intron_len: int = 20
     max_intron_len: int = 5000
     phred_quality: int = 33
-    num_cpu: int = Field(default_factory=lambda: os.cpu_count() or 1)
     strand_specific: str | None = None
     align_mode: str = "Local"
     jaccard_clip: bool = False
-    genetic_code: str = "1"
     splice_permissive: bool = False
-
-    @model_validator(mode="after")
-    def _default_manifest_dir(self) -> "AssemblyConfig":
-        if not self.manifest_dir:
-            object.__setattr__(self, "manifest_dir", self.work_dir)
-        return self
-
-    @cached_property
-    def genetic_code_obj(self):
-        """Return a :class:`~eukan.gencode.GeneticCode` for this config's code."""
-        from eukan.gencode import GeneticCode
-        return GeneticCode(self.genetic_code)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
