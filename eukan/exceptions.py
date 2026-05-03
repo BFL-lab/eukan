@@ -45,10 +45,6 @@ class InvalidOptionError(ConfigurationError):
 class ValidationError(EukanError):
     """Invalid input files."""
 
-
-class _PathValidationError(ValidationError):
-    """Base for file-format validation errors that carry a path."""
-
     _kind: str = "input"
 
     def __init__(self, path: str | Path, message: str = "", **kwargs) -> None:
@@ -59,13 +55,13 @@ class _PathValidationError(ValidationError):
         super().__init__(msg, **kwargs)
 
 
-class FastaValidationError(_PathValidationError):
+class FastaValidationError(ValidationError):
     """Unparseable, empty, or malformed FASTA file."""
 
     _kind = "FASTA"
 
 
-class GFFValidationError(_PathValidationError):
+class GFFValidationError(ValidationError):
     """Structural problems in a GFF3 file."""
 
     _kind = "GFF3"
