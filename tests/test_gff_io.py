@@ -1,19 +1,11 @@
 """Tests for eukan.gff.io — GFF3 serialization and sequence extraction."""
 
 
-import gffutils
-
 from eukan.gff.io import extract_sequences, featuredb2gff3_file
 
 
-def _db_from_string(gff_string: str) -> gffutils.FeatureDB:
-    return gffutils.create_db(
-        gff_string, ":memory:", from_string=True, merge_strategy="create_unique"
-    )
-
-
 class TestFeaturedb2Gff3File:
-    def test_writes_hierarchical_gff3(self, tmp_path):
+    def test_writes_hierarchical_gff3(self, tmp_path, db_from_string):
         """Output should contain gene > mRNA > exon + CDS hierarchy."""
         gff = (
             "chr1\ttest\tgene\t100\t400\t.\t+\t.\tID=gene1\n"
@@ -21,7 +13,7 @@ class TestFeaturedb2Gff3File:
             "chr1\ttest\texon\t100\t400\t.\t+\t.\tID=exon1;Parent=mrna1\n"
             "chr1\ttest\tCDS\t100\t400\t.\t+\t0\tID=cds1;Parent=mrna1\n"
         )
-        db = _db_from_string(gff)
+        db = db_from_string(gff)
         out_path = tmp_path / "test.gff3"
         featuredb2gff3_file(db, out_path)
 
