@@ -18,7 +18,7 @@ from eukan.gff import create_gff_db, transform_db
 from eukan.gff import parser as gffparser
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.runner import run_cmd, run_shell
-from eukan.infra.steps import step_complete, step_dir
+from eukan.infra.steps import step_dir
 from eukan.infra.utils import symlink
 from eukan.infra.logging import get_logger
 from eukan.settings import PipelineConfig
@@ -35,10 +35,6 @@ def align_proteins(
     """Spliced alignment of protein sequences to the genome."""
     output = "prot.gff3"
     step_name = "prot_align_ssp" if config.spaln_ssp else "prot_align"
-    existing = step_complete(config.work_dir, step_name, output)
-    if existing:
-        return existing
-
     sdir = step_dir(config.work_dir, step_name)
     log.info("Running protein alignment...")
 

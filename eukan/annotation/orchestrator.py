@@ -18,7 +18,7 @@ from eukan.infra.manifest import (
     ANNOTATION, RunManifest, get_or_create_manifest, run_orchestrated_step,
     save_manifest, step_key, validate_step_outputs,
 )
-from eukan.infra.steps import step_complete, step_dir
+from eukan.infra.steps import step_dir
 from eukan.annotation.orf import create_transcriptome_orf_db
 from eukan.settings import PipelineConfig
 
@@ -35,10 +35,6 @@ def find_orfs(config: PipelineConfig, trans_gff3: Path) -> Path:
     from eukan.infra.logging import validate_gff
 
     output = "transcript_orfs.gff3"
-    existing = step_complete(config.work_dir, "orf_finder", output)
-    if existing:
-        return existing
-
     sdir = step_dir(config.work_dir, "orf_finder")
     log.info("Finding ORFs in transcript assemblies...")
     validate_gff(trans_gff3)

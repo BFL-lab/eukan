@@ -19,7 +19,7 @@ from eukan.gff import intersecter as gffintersecter
 from eukan.gff import parser as gffparser
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.runner import run_cmd, run_piped
-from eukan.infra.steps import step_complete, step_dir
+from eukan.infra.steps import step_dir
 from eukan.infra.utils import symlink
 from eukan.infra.logging import get_logger
 from eukan.settings import PipelineConfig
@@ -126,10 +126,6 @@ def build_training_set(
 def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
     """Train and run AUGUSTUS gene prediction."""
     output = "augustus.gff3"
-    existing = step_complete(config.work_dir, "augustus", output)
-    if existing:
-        return existing
-
     sdir = step_dir(config.work_dir, "augustus")
     log.info("Running AUGUSTUS training and prediction...")
 

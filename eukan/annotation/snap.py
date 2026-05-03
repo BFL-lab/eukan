@@ -11,7 +11,7 @@ from eukan.gff import GFF3_DIALECT, create_gff_db, transform_db
 from eukan.gff import parser as gffparser
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.runner import run_cmd
-from eukan.infra.steps import step_complete, step_dir
+from eukan.infra.steps import step_dir
 from eukan.infra.utils import symlink
 from eukan.infra.logging import get_logger
 from eukan.settings import PipelineConfig
@@ -22,10 +22,6 @@ log = get_logger(__name__)
 def run_snap(config: PipelineConfig, *evidence: Path) -> Path:
     """Train and run SNAP gene prediction."""
     output = "snap.gff3"
-    existing = step_complete(config.work_dir, "snap", output)
-    if existing:
-        return existing
-
     sdir = step_dir(config.work_dir, "snap")
     log.info("Running SNAP training and prediction...")
     symlink(config.genome, sdir / "genome.dna")
@@ -65,10 +61,6 @@ def run_snap(config: PipelineConfig, *evidence: Path) -> Path:
 def run_codingquarry(config: PipelineConfig, evidence: Path) -> Path:
     """Run CodingQuarry gene prediction (fungi/protists)."""
     output = "codingquarry.gff3"
-    existing = step_complete(config.work_dir, "codingquarry", output)
-    if existing:
-        return existing
-
     sdir = step_dir(config.work_dir, "codingquarry")
     log.info("Running CodingQuarry gene prediction...")
 

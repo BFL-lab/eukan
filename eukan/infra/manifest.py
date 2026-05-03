@@ -26,7 +26,7 @@ from typing import Any, Iterator
 
 from pydantic import BaseModel, Field
 
-from eukan.infra.logging import get_logger, md5_file
+from eukan.infra.logging import get_logger, md5_file, validate_gff
 
 log = get_logger(__name__)
 
@@ -329,10 +329,11 @@ def validate_step_outputs(
     expected_steps: list[str],
     step_to_flag: dict[str, str] | None = None,
 ) -> list[str]:
-    """Validate that completed steps have non-empty output files.
+    """Validate that completed steps have valid output files.
 
     Checks each expected step in the manifest: if marked completed,
-    verifies the output file exists and is non-empty. Returns a list
+    verifies the output file exists and is non-empty. For GFF outputs,
+    additionally verifies the file is structurally valid. Returns a list
     of error messages (empty if all OK).
 
     Args:
@@ -341,6 +342,8 @@ def validate_step_outputs(
         step_to_flag: Optional mapping of step key to CLI flag for
             actionable error messages. Falls back to the raw step key.
     """
+    from eukan.exceptions import GFFValidationError
+
     errors: list[str] = []
     flag_map = step_to_flag or {}
     for step_key in expected_steps:
@@ -350,13 +353,25 @@ def validate_step_outputs(
         if not record.output_file:
             continue
         output = Path(record.output_file)
+        flag = flag_map.get(step_key, f"(step: {step_key})")
+
         if not output.exists() or output.stat().st_size == 0:
-            flag = flag_map.get(step_key, f"(step: {step_key})")
             state = "empty" if output.exists() else "missing"
             errors.append(
                 f"Step '{step_key}' is marked complete but output is "
                 f"{state}: {output}. Re-run with: {flag}"
             )
+            continue
+
+        if output.suffix in (".gff", ".gff3"):
+            try:
+                validate_gff(output)
+            except GFFValidationError as exc:
+                errors.append(
+                    f"Step '{step_key}' is marked complete but output is "
+                    f"unparseable: {exc}. Re-run with: {flag}"
+                )
+
     return errors
 
 

@@ -11,7 +11,7 @@ from eukan.gff import transform_db
 from eukan.gff import parser as gffparser
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.runner import run_cmd
-from eukan.infra.steps import step_complete, step_dir
+from eukan.infra.steps import step_dir
 from eukan.infra.logging import get_logger
 from eukan.settings import PipelineConfig
 
@@ -21,10 +21,6 @@ log = get_logger(__name__)
 def run_genemark(config: PipelineConfig, hints: Path | None = None) -> Path:
     """Run GeneMark-ES/ET gene prediction."""
     output = "genemark.gff3"
-    existing = step_complete(config.work_dir, "genemark", output)
-    if existing:
-        return existing
-
     sdir = step_dir(config.work_dir, "genemark")
     log.info("Running GeneMark gene prediction...")
 

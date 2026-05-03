@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from eukan.infra.runner import run_cmd, run_shell
-from eukan.infra.steps import step_complete, step_dir
+from eukan.infra.steps import step_dir
 from eukan.infra.utils import symlink
 from eukan.infra.logging import get_logger
 from eukan.settings import PipelineConfig
@@ -16,11 +16,6 @@ log = get_logger(__name__)
 
 def run_evm(config: PipelineConfig, evidence: list[Path]) -> Path:
     """Run EVidenceModeler to build consensus gene models."""
-    output = f"{config.name}.gff3"
-    existing = step_complete(config.work_dir, "evm_consensus_models", output)
-    if existing:
-        return existing
-
     sdir = step_dir(config.work_dir, "evm_consensus_models")
     log.info("Running EVidenceModeler consensus building...")
     run_cmd(["cdbfasta", str(config.genome)], cwd=sdir)
