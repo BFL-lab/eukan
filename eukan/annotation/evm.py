@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shlex
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -85,14 +86,15 @@ def run_evm(config: PipelineConfig, evidence: list[Path]) -> Path:
     }
 
     with open(sdir / "weights.txt", "w") as wf, \
-         open(sdir / "gene_predictions.gff3", "w") as pf:
+         open(sdir / "gene_predictions.gff3", "wb") as pf:
         for ev in evidence:
             ev_name = ev.name
             symlink(ev, sdir / ev_name)
             if ev_name in weights_map:
                 wf.write("\t".join(weights_map[ev_name]) + "\n")
             if ev_name not in ("nr_transcripts.gff3", "prot.gff3"):
-                pf.write(ev.read_text())
+                with open(ev, "rb") as ef:
+                    shutil.copyfileobj(ef, pf)
 
     # Partition and run EVM
     run_cmd(
@@ -176,8 +178,9 @@ def run_evm(config: PipelineConfig, evidence: list[Path]) -> Path:
 
     # Gather all consensus GFF3 files
     cons_files = sorted(sdir.rglob("consensus_models.out.gff3"))
-    with open(sdir / "consensus_models.gff3", "w") as outfile:
+    with open(sdir / "consensus_models.gff3", "wb") as outfile:
         for f in cons_files:
-            outfile.write(f.read_text())
+            with open(f, "rb") as fh:
+                shutil.copyfileobj(fh, outfile)
 
     return sdir / "consensus_models.gff3"

@@ -187,28 +187,17 @@ def annotate_fasta(
 
     Returns path to the annotated output file.
     """
-    recs = SeqIO.to_dict(SeqIO.parse(str(proteins), "fasta"))
-
     phmmer_fmt = _format_results(phmmer_res, marginal_label="hypothetical protein [{desc}]")
     hmmscan_fmt = _format_results(hmmscan_res, marginal_label="{desc} [marginal domain hit]")
 
-    for key, rec in recs.items():
-        parts = []
-        if key in phmmer_fmt:
-            parts.append(phmmer_fmt[key])
-        else:
-            parts.append("hypothetical protein")
-        parts.append(f"length={len(rec.seq)}")
-        if key in hmmscan_fmt:
-            parts.append(hmmscan_fmt[key])
-        rec.description = " ;; ".join(parts)
-
-    stem = proteins.stem
-    suffix = proteins.suffix
-    output_path = proteins.parent / f"{stem}.mod{suffix}"
+    output_path = proteins.parent / f"{proteins.stem}.mod{proteins.suffix}"
 
     with open(output_path, "w") as f:
-        for rec in recs.values():
+        for rec in SeqIO.parse(str(proteins), "fasta"):
+            parts = [phmmer_fmt.get(rec.id, "hypothetical protein"), f"length={len(rec.seq)}"]
+            if rec.id in hmmscan_fmt:
+                parts.append(hmmscan_fmt[rec.id])
+            rec.description = " ;; ".join(parts)
             SeqIO.write(rec, f, "fasta")
 
     return output_path
