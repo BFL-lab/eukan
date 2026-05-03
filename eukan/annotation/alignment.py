@@ -7,10 +7,10 @@ import re
 import shutil
 import statistics
 import time
+from collections import Counter
 from pathlib import Path
 
 import gffutils
-import pandas as pd
 
 from eukan.annotation.validation import validate_fasta
 from eukan.exceptions import ExternalToolError
@@ -139,9 +139,20 @@ def _run_spaln(
 
 def _run_fitild(intron_hints_path: Path, sdir: Path) -> str:
     """Compute intron length distribution via fitild. Returns the -yI parameter string."""
-    introns = pd.read_csv(intron_hints_path, sep="\t", header=None)
-    intron_lens = (introns[4] - introns[3]).value_counts().reset_index().sort_values("index")
-    intron_lens.to_csv(sdir / "introns.ild", sep=" ", header=None, index=False)
+    counts: Counter[int] = Counter()
+    with open(intron_hints_path) as fin:
+        for line in fin:
+            cols = line.split("\t")
+            if len(cols) < 5:
+                continue
+            try:
+                length = int(cols[4]) - int(cols[3])
+            except ValueError:
+                continue
+            counts[length] += 1
+    with open(sdir / "introns.ild", "w") as fout:
+        for length in sorted(counts):
+            fout.write(f"{length} {counts[length]}\n")
 
     run_cmd(["fitild", "-d", "IldModel.txt", "introns.ild"], cwd=sdir, out_file="fitild.out")
 

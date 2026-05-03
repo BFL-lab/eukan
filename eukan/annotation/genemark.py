@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import gffutils
-import pandas as pd
 
 from eukan.infra.logging import validate_gff
 from eukan.gff import transform_db
@@ -37,10 +36,14 @@ def run_genemark(config: PipelineConfig, hints: Path | None = None) -> Path:
     # Determine training mode: ES (self-training) or ET (with RNA-seq intron hints)
     has_intron_hints = False
     if hints is not None:
-        hints_df = pd.read_csv(hints, sep="\t", header=None, low_memory=False)
-        introns = hints_df[hints_df[2] == "intron"]
-        introns.to_csv(sdir / "introns.gff", sep="\t", header=None, index=False)
-        has_intron_hints = len(introns) >= 150
+        intron_count = 0
+        with open(hints) as fin, open(sdir / "introns.gff", "w") as fout:
+            for line in fin:
+                cols = line.split("\t")
+                if len(cols) >= 3 and cols[2] == "intron":
+                    fout.write(line)
+                    intron_count += 1
+        has_intron_hints = intron_count >= 150
 
     if has_intron_hints:
         training_type = ["--ET=introns.gff", "--et_score=3"]
