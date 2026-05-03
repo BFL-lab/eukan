@@ -21,7 +21,7 @@ from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_piped
 from eukan.infra.steps import step_dir
-from eukan.infra.utils import symlink
+from eukan.infra.utils import concat_files, symlink
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
@@ -217,11 +217,7 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
         run_cmd(["etraining", f"--species={config.name}", "genbank.gb.train"], cwd=sdir)
         run_cmd(["augustus", f"--species={config.name}", "genbank.gb.test"], cwd=sdir)
 
-    # Merge hints
-    with open(sdir / "hints_all.gff", "w") as outfile:
-        for fname in hint_files:
-            with open(fname) as infile:
-                outfile.write(infile.read())
+    concat_files(hint_files, sdir / "hints_all.gff")
 
     # Split genome for parallel prediction
     assembly_size = sum(len(rec) for rec in SeqIO.parse(str(config.genome), "fasta"))

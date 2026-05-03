@@ -21,7 +21,7 @@ from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_shell
 from eukan.infra.steps import step_dir
-from eukan.infra.utils import symlink
+from eukan.infra.utils import concat_files, symlink
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
@@ -39,10 +39,7 @@ def align_proteins(
     sdir = step_dir(config.work_dir, step_name)
     log.info("Running protein alignment...")
 
-    # Concatenate all protein files
-    with open(sdir / "prots.faa", "w") as outfile:
-        for prot_file in proteins:
-            outfile.write(prot_file.read_text())
+    concat_files(proteins, sdir / "prots.faa")
 
     validate_fasta(sdir / "prots.faa")
     symlink(config.genome, sdir / "genome")

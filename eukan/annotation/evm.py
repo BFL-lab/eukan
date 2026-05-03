@@ -10,7 +10,7 @@ from pathlib import Path
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_shell
 from eukan.infra.steps import step_dir
-from eukan.infra.utils import symlink
+from eukan.infra.utils import concat_files, symlink
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
@@ -177,10 +177,9 @@ def run_evm(config: PipelineConfig, evidence: list[Path]) -> Path:
     )
 
     # Gather all consensus GFF3 files
-    cons_files = sorted(sdir.rglob("consensus_models.out.gff3"))
-    with open(sdir / "consensus_models.gff3", "wb") as outfile:
-        for f in cons_files:
-            with open(f, "rb") as fh:
-                shutil.copyfileobj(fh, outfile)
+    concat_files(
+        sorted(sdir.rglob("consensus_models.out.gff3")),
+        sdir / "consensus_models.gff3",
+    )
 
     return sdir / "consensus_models.gff3"
