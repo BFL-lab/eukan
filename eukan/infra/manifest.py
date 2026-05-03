@@ -130,13 +130,36 @@ def save_manifest(work_dir: Path, manifest: RunManifest) -> None:
     """Save the run manifest to disk atomically.
 
     Writes to a temp file first, then renames -- prevents corruption
-    if the process crashes mid-write. Thread-safe via lock.
+    if the process crashes mid-write.  Thread-safe within a process via
+    ``_manifest_lock``; cross-process safe via an fcntl lock on the
+    target path so two simultaneous ``eukan`` invocations against the
+    same work_dir don't tear writes.
+
+    The fcntl import is local because Windows ships without it; on
+    Windows we fall back to in-process locking only.
     """
+    payload = manifest.model_dump_json(indent=2) + "\n"
+    target = work_dir / MANIFEST_FILE
+    tmp = target.with_suffix(".tmp")
+
     with _manifest_lock:
-        target = work_dir / MANIFEST_FILE
-        tmp = target.with_suffix(".tmp")
-        tmp.write_text(manifest.model_dump_json(indent=2) + "\n")
-        tmp.replace(target)
+        try:
+            import fcntl
+        except ImportError:
+            tmp.write_text(payload)
+            tmp.replace(target)
+            return
+
+        # Lock a sidecar file (target itself may not exist yet, and we
+        # don't want to hold a fd to the file we're about to replace).
+        lock_path = target.with_suffix(".lock")
+        with open(lock_path, "w") as lock_fh:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+            try:
+                tmp.write_text(payload)
+                tmp.replace(target)
+            finally:
+                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
 
 def init_manifest(config: Any) -> RunManifest:
