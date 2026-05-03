@@ -1,15 +1,44 @@
-"""Tests for eukan.dbfetch — manifest tracking and integrity checks."""
+"""Tests for eukan.dbfetch — manifest tracking, integrity, and resumable downloads."""
 
-from pathlib import Path
+from unittest.mock import patch
 
+from eukan.functional import dbfetch
 from eukan.functional.dbfetch import (
     DatabaseEntry,
+    _download_file,
     _is_current,
-    load_db_manifest as load_manifest,
-    save_db_manifest as save_manifest,
     check_databases,
 )
+from eukan.functional.dbfetch import (
+    load_db_manifest as load_manifest,
+)
+from eukan.functional.dbfetch import (
+    save_db_manifest as save_manifest,
+)
 from eukan.infra.logging import md5_file
+
+
+class _FakeResponse:
+    """Stand-in for requests.Response usable as a context manager."""
+
+    def __init__(self, body: bytes, status_code: int = 200, headers: dict[str, str] | None = None):
+        self.body = body
+        self.status_code = status_code
+        self.headers = headers or {"content-length": str(len(body))}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def iter_content(self, chunk_size: int):
+        for i in range(0, len(self.body), chunk_size):
+            yield self.body[i : i + chunk_size]
 
 
 class TestMd5:
@@ -103,3 +132,79 @@ class TestCheckDatabases:
         results = check_databases(tmp_path)
         uniprot_result = [r for r in results if r[0] == "uniprot"][0]
         assert uniprot_result[2]  # OK
+
+
+class TestDownloadResume:
+    """Cover the Range-header resume logic in _download_file."""
+
+    def test_fresh_download_writes_full_body(self, tmp_path):
+        dest = tmp_path / "file.bin"
+        body = b"x" * (dbfetch.CHUNK_SIZE * 2 + 17)
+
+        captured: dict = {}
+
+        def fake_get(url, stream, allow_redirects, timeout, headers):
+            captured["headers"] = headers
+            return _FakeResponse(body, status_code=200)
+
+        with patch.object(dbfetch.requests, "get", side_effect=fake_get):
+            _download_file("https://example.com/file.bin", dest)
+
+        assert dest.read_bytes() == body
+        assert not dest.with_suffix(dest.suffix + ".partial").exists()
+        assert captured["headers"] == {}
+
+    def test_resume_sends_range_header_and_appends(self, tmp_path):
+        dest = tmp_path / "file.bin"
+        partial = dest.with_suffix(dest.suffix + ".partial")
+        already = b"head" * 10
+        partial.write_bytes(already)
+        rest = b"tail" * 50
+
+        captured: dict = {}
+
+        def fake_get(url, stream, allow_redirects, timeout, headers):
+            captured["headers"] = headers
+            return _FakeResponse(rest, status_code=206)
+
+        with patch.object(dbfetch.requests, "get", side_effect=fake_get):
+            _download_file("https://example.com/file.bin", dest)
+
+        assert captured["headers"]["Range"] == f"bytes={len(already)}-"
+        assert dest.read_bytes() == already + rest
+        assert not partial.exists()
+
+    def test_server_ignoring_range_restarts_cleanly(self, tmp_path):
+        """If the server returns 200 instead of 206, drop partial and restart."""
+        dest = tmp_path / "file.bin"
+        partial = dest.with_suffix(dest.suffix + ".partial")
+        partial.write_bytes(b"stale-bytes-from-prior-attempt")
+        body = b"complete-body"
+
+        def fake_get(url, stream, allow_redirects, timeout, headers):
+            # Server signals it sent the full body, not a partial range.
+            return _FakeResponse(body, status_code=200)
+
+        with patch.object(dbfetch.requests, "get", side_effect=fake_get):
+            _download_file("https://example.com/file.bin", dest)
+
+        assert dest.read_bytes() == body  # no "stale-bytes" prefix
+        assert not partial.exists()
+
+    def test_atomic_rename_only_after_success(self, tmp_path):
+        dest = tmp_path / "file.bin"
+        partial = dest.with_suffix(dest.suffix + ".partial")
+
+        class BoomResponse(_FakeResponse):
+            def iter_content(self, chunk_size: int):
+                yield b"first-chunk"
+                raise RuntimeError("network died mid-stream")
+
+        with patch.object(dbfetch.requests, "get", return_value=BoomResponse(b"")):
+            try:
+                _download_file("https://example.com/file.bin", dest)
+            except RuntimeError:
+                pass
+
+        assert not dest.exists()
+        assert partial.exists() and partial.read_bytes() == b"first-chunk"
