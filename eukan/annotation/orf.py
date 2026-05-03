@@ -34,14 +34,15 @@ def fetch_aligned_sequences(
     Returns:
         List of (mRNA_id, strand, sequence) tuples.
     """
-    from Bio import SeqIO as _SeqIO
+    from Bio import SeqIO
 
-    contigs = _SeqIO.to_dict(_SeqIO.parse(str(fasta), "fasta"))
-    result = []
+    contigs = SeqIO.to_dict(SeqIO.parse(str(fasta), "fasta"))
+    result: list[tuple[str, str, str]] = []
 
     for mRNA in gff3db.features_of_type("mRNA"):
+        contig = contigs[mRNA.chrom].seq
         seq_parts = [
-            child.sequence(str(fasta), use_strand=False).upper()
+            str(contig[child.start - 1 : child.end]).upper()
             for child in gff3db.children(mRNA, featuretype=featuretype)
         ]
         seq = "".join(seq_parts)
