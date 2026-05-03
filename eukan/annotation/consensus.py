@@ -46,44 +46,64 @@ def add_utrs_from_pasa(config: PipelineConfig, sdir: Path, pasa_db: Path) -> Non
     )
 
 
+def _resolve_consensus_path(sdir: Path) -> Path:
+    """Pick the latest PASA-updated GFF3 if present, else raw EVM consensus."""
+    pasa_outputs = sorted(sdir.glob("*gene_structures_post_PASA_updates.*.gff3"))
+    return pasa_outputs[0] if pasa_outputs else sdir / "consensus_models.gff3"
+
+
+def _patch_in_unmatched_orfs(consdb, orf_path: Path):
+    """Add transcript ORFs that don't overlap any consensus gene.
+
+    Returns either the original ``consdb`` (no changes) or a new FeatureDB
+    with the missing ORFs merged in.
+    """
+    if not orf_path.exists():
+        return consdb
+    orf_db = create_gff_db(orf_path)
+    missing = gffintersecter.find_nonoverlapping_genes(orf_db, consdb)
+    if not missing:
+        return consdb
+    log.info("Reintroduced %d transcript ORFs not overlapping EVM consensus", len(missing))
+    all_features = [*consdb.all_features(), *missing]
+    return create_gff_db(all_features, merge_strategy="merge")
+
+
+def _write_prettified_gff3(consdb, shortname: str, out_path: Path) -> None:
+    """Fix CDS phases, assign locus tags, and write the final GFF3."""
+    consdb.dialect["order"].append("locus_tag")
+    consdb = create_gff_db(gffparser.fix_CDS_phases(consdb), merge_strategy="merge")
+    with open(out_path, "w") as outfile:
+        for feature in gffparser.prettify_gff3(consdb, shortname):
+            outfile.write(f"{feature}\n")
+
+
 def build_consensus_models(config: PipelineConfig, *evidence: Path) -> Path:
-    """Build final consensus models from all predictions using EVM."""
+    """Build final consensus models from all predictions.
+
+    Phases:
+      1. EVM merges all evidence into consensus_models.gff3
+      2. (optional) PASA UTR/altsplice update if config.utrs_db is set
+      3. Patch in transcript ORFs that don't overlap any consensus gene
+      4. Recompute CDS phases, assign locus tags, write final.gff3
+    """
     sdir = step_dir(config.work_dir, "evm_consensus_models")
     log.info("Building consensus gene models...")
 
     run_evm(config, list(evidence))
-
-    evm_genes = count_gff3_features(sdir / "consensus_models.gff3")
-    log.info("EVM consensus: %d genes", evm_genes)
+    log.info(
+        "EVM consensus: %d genes",
+        count_gff3_features(sdir / "consensus_models.gff3"),
+    )
 
     if config.utrs_db:
         add_utrs_from_pasa(config, sdir, config.utrs_db)
 
-    pasa_outputs = sorted(sdir.glob("*gene_structures_post_PASA_updates.*.gff3"))
-    consensus_path = pasa_outputs[0] if pasa_outputs else sdir / "consensus_models.gff3"
-
-    # Format the final GFF3
-    consdb = create_gff_db(consensus_path)
-
-    # Patch in transcript ORFs that don't overlap consensus models
-    orf_path = config.work_dir / "orf_finder" / "transcript_orfs.gff3"
-    if orf_path.exists():
-        orf_db = create_gff_db(orf_path)
-        missing = gffintersecter.find_nonoverlapping_genes(orf_db, consdb)
-        if missing:
-            log.info("Reintroduced %d transcript ORFs not overlapping EVM consensus", len(missing))
-        all_features = [*consdb.all_features(), *missing]
-        consdb = create_gff_db(all_features, merge_strategy="merge")
-
-    consdb.dialect["order"].append("locus_tag")
-    consdb = create_gff_db(
-        gffparser.fix_CDS_phases(consdb), merge_strategy="merge",
+    consdb = create_gff_db(_resolve_consensus_path(sdir))
+    consdb = _patch_in_unmatched_orfs(
+        consdb, config.work_dir / "orf_finder" / "transcript_orfs.gff3",
     )
-    prettified = gffparser.prettify_gff3(consdb, config.shortname)
 
     final_path = config.work_dir / "final.gff3"
-    with open(final_path, "w") as outfile:
-        for feature in prettified:
-            outfile.write(f"{feature}\n")
-
+    _write_prettified_gff3(consdb, config.shortname, final_path)
     return final_path
