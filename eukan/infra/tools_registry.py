@@ -31,12 +31,13 @@ install tree (e.g., ``$PASAHOME/scripts``).
 
 from __future__ import annotations
 
-import os
 import tomllib
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+from eukan.infra.utils import find_resource
 
 
 @dataclass(frozen=True)
@@ -71,13 +72,7 @@ class Tool:
 
 def _find_tools_toml() -> Path | None:
     """Locate tools.toml by checking EUKAN_ROOT, the package root, and cwd."""
-    candidates: list[Path] = []
-    eukan_root = os.environ.get("EUKAN_ROOT")
-    if eukan_root:
-        candidates.append(Path(eukan_root) / "tools.toml")
-    candidates.append(Path(__file__).resolve().parent.parent.parent / "tools.toml")
-    candidates.append(Path.cwd() / "tools.toml")
-    return next((c for c in candidates if c.exists()), None)
+    return find_resource("tools.toml")
 
 
 def _parse_tool(name: str, cfg: dict[str, Any]) -> Tool:
