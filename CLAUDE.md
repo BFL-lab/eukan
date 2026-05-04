@@ -11,8 +11,8 @@ Eukan is a eukaryotic genome annotation pipeline that integrates ab initio gene 
 Uses Poetry for package management. The pipeline runs inside Docker with a GeneMark-ES/ET/EP+ license required.
 
 ```bash
-# Install locally for development
-poetry install
+# Install locally for development (pulls in pytest, ruff, mypy)
+poetry install --with dev
 
 # Run tests
 poetry run pytest tests/ -v

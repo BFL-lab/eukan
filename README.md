@@ -62,12 +62,14 @@ Two tools require manual installation after creating the environment. A helper s
 
 ### Local development
 
-Requires Python >= 3.10 and [Poetry](https://python-poetry.org/). External tools must be installed separately (via conda or Docker):
+Requires Python >= 3.11 and [Poetry](https://python-poetry.org/). External tools must be installed separately (via conda or Docker):
 
 ```bash
-poetry install
+poetry install --with dev   # omit --with dev for a runtime-only install
 poetry run eukan --help
 ```
+
+The `dev` group adds `pytest`, `ruff`, and `mypy`.
 
 ### Dependencies
 
