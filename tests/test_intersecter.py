@@ -1,6 +1,7 @@
 """Tests for eukan.gff.intersecter — interval operations with pure gffutils."""
 
 import gffutils
+import pytest
 
 from eukan.gff.intersecter import (
     _cds_boundaries_match,
@@ -12,12 +13,6 @@ from eukan.gff.intersecter import (
     find_nonoverlapping_genes,
     merge_fully_overlapping_transcript_genes,
 )
-
-
-def _db(gff_string: str) -> gffutils.FeatureDB:
-    return gffutils.create_db(
-        gff_string, ":memory:", from_string=True, merge_strategy="create_unique"
-    )
 
 
 def _feature(chrom, start, end, strand="+", featuretype="gene", id="g1", **attrs):
@@ -33,41 +28,32 @@ def _feature(chrom, start, end, strand="+", featuretype="gene", id="g1", **attrs
 # ---------------------------------------------------------------------------
 
 
-class TestFeaturesOverlap:
-    def test_overlapping(self):
-        a = _feature("chr1", 100, 500, "+")
-        b = _feature("chr1", 400, 800, "+")
-        assert _features_overlap(a, b)
-
-    def test_non_overlapping(self):
-        a = _feature("chr1", 100, 300, "+")
-        b = _feature("chr1", 400, 800, "+")
-        assert not _features_overlap(a, b)
-
-    def test_different_strand(self):
-        a = _feature("chr1", 100, 500, "+")
-        b = _feature("chr1", 100, 500, "-")
-        assert not _features_overlap(a, b)
-
-    def test_different_chrom(self):
-        a = _feature("chr1", 100, 500, "+")
-        b = _feature("chr2", 100, 500, "+")
-        assert not _features_overlap(a, b)
-
-    def test_adjacent_not_overlapping(self):
-        a = _feature("chr1", 100, 200, "+")
-        b = _feature("chr1", 201, 300, "+")
-        assert not _features_overlap(a, b)
-
-    def test_touching(self):
-        a = _feature("chr1", 100, 200, "+")
-        b = _feature("chr1", 200, 300, "+")
-        assert _features_overlap(a, b)
+@pytest.mark.parametrize(
+    ("a", "b", "expected"),
+    [
+        (("chr1", 100, 500, "+"), ("chr1", 400, 800, "+"), True),
+        (("chr1", 100, 300, "+"), ("chr1", 400, 800, "+"), False),
+        (("chr1", 100, 500, "+"), ("chr1", 100, 500, "-"), False),
+        (("chr1", 100, 500, "+"), ("chr2", 100, 500, "+"), False),
+        (("chr1", 100, 200, "+"), ("chr1", 201, 300, "+"), False),
+        (("chr1", 100, 200, "+"), ("chr1", 200, 300, "+"), True),
+    ],
+    ids=[
+        "overlapping",
+        "non_overlapping",
+        "different_strand",
+        "different_chrom",
+        "adjacent",
+        "touching",
+    ],
+)
+def test_features_overlap(a, b, expected):
+    assert _features_overlap(_feature(*a), _feature(*b)) == expected
 
 
 class TestFindOverlappingGenes:
-    def test_two_overlapping(self):
-        db = _db(
+    def test_two_overlapping(self, db_from_string):
+        db = db_from_string(
             "chr1\ttest\tgene\t100\t500\t.\t+\t.\tID=g1\n"
             "chr1\ttest\tgene\t300\t700\t.\t+\t.\tID=g2\n"
         )
@@ -75,16 +61,16 @@ class TestFindOverlappingGenes:
         assert len(clusters) == 1
         assert len(clusters[0]) == 2
 
-    def test_no_overlap(self):
-        db = _db(
+    def test_no_overlap(self, db_from_string):
+        db = db_from_string(
             "chr1\ttest\tgene\t100\t200\t.\t+\t.\tID=g1\n"
             "chr1\ttest\tgene\t500\t700\t.\t+\t.\tID=g2\n"
         )
         clusters = _find_overlapping_genes(db)
         assert len(clusters) == 0
 
-    def test_different_strands_not_merged(self):
-        db = _db(
+    def test_different_strands_not_merged(self, db_from_string):
+        db = db_from_string(
             "chr1\ttest\tgene\t100\t500\t.\t+\t.\tID=g1\n"
             "chr1\ttest\tgene\t100\t500\t.\t-\t.\tID=g2\n"
         )
@@ -146,8 +132,8 @@ class TestCdsBoundaryMatch:
 
 
 class TestMergeOverlappingGenes:
-    def test_reparents_mrna(self):
-        db = _db(
+    def test_reparents_mrna(self, db_from_string):
+        db = db_from_string(
             "chr1\ttest\tgene\t100\t500\t.\t+\t.\tID=g1\n"
             "chr1\ttest\tmRNA\t100\t500\t.\t+\t.\tID=m1;Parent=g1\n"
             "chr1\ttest\tgene\t200\t500\t.\t+\t.\tID=g2\n"
@@ -171,8 +157,8 @@ class TestMergeOverlappingGenes:
 
 
 class TestFindNonoverlapping:
-    def test_finds_non_overlapping_with_orf(self):
-        db1 = _db(
+    def test_finds_non_overlapping_with_orf(self, db_from_string):
+        db1 = db_from_string(
             "chr1\ttest\tgene\t100\t300\t.\t+\t.\tID=g1\n"
             "chr1\ttest\tmRNA\t100\t300\t.\t+\t.\tID=m1;Parent=g1\n"
             "chr1\ttest\tCDS\t100\t300\t.\t+\t0\tID=c1;Parent=m1\n"
@@ -180,7 +166,7 @@ class TestFindNonoverlapping:
             "chr1\ttest\tmRNA\t800\t1000\t.\t+\t.\tID=m2;Parent=g2\n"
             "chr1\ttest\tCDS\t800\t1000\t.\t+\t0\tID=c2;Parent=m2\n"
         )
-        db2 = _db(
+        db2 = db_from_string(
             "chr1\ttest\tgene\t100\t300\t.\t+\t.\tID=t1\n"
         )
         result = find_nonoverlapping_genes(db1, db2)
@@ -189,30 +175,30 @@ class TestFindNonoverlapping:
         assert "g2" in gene_ids
         assert "g1" not in gene_ids
 
-    def test_skips_genes_without_cds(self):
-        db1 = _db(
+    def test_skips_genes_without_cds(self, db_from_string):
+        db1 = db_from_string(
             "chr1\ttest\tgene\t800\t1000\t.\t+\t.\tID=g1\n"
             "chr1\ttest\tmRNA\t800\t1000\t.\t+\t.\tID=m1;Parent=g1\n"
             "chr1\ttest\texon\t800\t1000\t.\t+\t.\tID=e1;Parent=m1\n"
         )
-        db2 = _db(
+        db2 = db_from_string(
             "chr1\ttest\tgene\t100\t300\t.\t+\t.\tID=t1\n"
         )
         result = find_nonoverlapping_genes(db1, db2)
         assert len([f for f in result if f.featuretype == "gene"]) == 0
 
-    def test_long_spanning_target_engulfs_source(self):
+    def test_long_spanning_target_engulfs_source(self, db_from_string):
         """A long-spanning target before short non-overlapping ones must
         still be detected as overlapping. Exercises the prefix-max-end
         bound used by the index."""
-        db_source = _db(
+        db_source = db_from_string(
             "chr1\ttest\tgene\t5000\t5100\t.\t+\t.\tID=src\n"
             "chr1\ttest\tmRNA\t5000\t5100\t.\t+\t.\tID=m;Parent=src\n"
             "chr1\ttest\tCDS\t5000\t5100\t.\t+\t0\tID=c;Parent=m\n"
         )
         # Long-spanning gene starts well before src and engulfs it.
         # Several short genes with start > src.end serve as decoys.
-        db_target = _db(
+        db_target = db_from_string(
             "chr1\ttest\tgene\t100\t9000\t.\t+\t.\tID=engulf\n"
             "chr1\ttest\tgene\t6000\t6100\t.\t+\t.\tID=after1\n"
             "chr1\ttest\tgene\t7000\t7100\t.\t+\t.\tID=after2\n"
@@ -291,12 +277,12 @@ class TestFindConcordantModels:
 
 
 class TestCombineNonredundant:
-    def test_deduplicates_by_id(self):
-        db1 = _db(
+    def test_deduplicates_by_id(self, db_from_string):
+        db1 = db_from_string(
             "chr1\ttest\tgene\t100\t300\t.\t+\t.\tID=g1\n"
             "chr1\ttest\tmRNA\t100\t300\t.\t+\t.\tID=m1;Parent=g1\n"
         )
-        db2 = _db(
+        db2 = db_from_string(
             "chr1\ttest\tgene\t100\t300\t.\t+\t.\tID=g1\n"
             "chr1\ttest\tmRNA\t100\t300\t.\t+\t.\tID=m1;Parent=g1\n"
             "chr1\ttest\tgene\t500\t700\t.\t+\t.\tID=g2\n"
