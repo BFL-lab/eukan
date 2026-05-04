@@ -247,6 +247,33 @@ class PipelineConfig(_StepRunSettings):
 # ---------------------------------------------------------------------------
 
 
+def _default_trinity_memory_gb(meminfo_path: str = "/proc/meminfo") -> int:
+    """Safe default for Trinity ``--max_memory``, in GiB.
+
+    Trinity (Jellyfish in genome-guided mode, Inchworm in de novo) reliably
+    overshoots its ``--max_memory`` soft cap during k-mer counting. We size
+    the cap from ``MemAvailable`` (the kernel's estimate of memory free for
+    new processes) rather than ``MemTotal``, so the cap reflects what the
+    machine can actually spare. Falls back to half of ``MemTotal``, then to
+    4 GiB. Always at least 4 GiB — Trinity needs that much to run at all.
+    """
+    try:
+        avail_kb = total_kb = 0
+        with open(meminfo_path) as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    avail_kb = int(line.split()[1])
+                elif line.startswith("MemTotal:"):
+                    total_kb = int(line.split()[1])
+        if avail_kb > 0:
+            return max(4, int(avail_kb * 0.6 / (1024 * 1024)))
+        if total_kb > 0:
+            return max(4, total_kb // (2 * 1024 * 1024))
+    except (OSError, ValueError):
+        pass
+    return 4
+
+
 class AssemblyConfig(_StepRunSettings):
     """Configuration for transcriptome assembly."""
 
@@ -290,18 +317,10 @@ class AssemblyConfig(_StepRunSettings):
             return ["--single", str(self.single_reads)]
         raise ValueError("No read files provided")
 
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def memory_gb(self) -> str:
-        try:
-            with open("/proc/meminfo") as f:
-                for line in f:
-                    if line.startswith("MemTotal:"):
-                        kb = int(line.split()[1])
-                        return f"{kb // (2 * 1024 * 1024)}G"
-        except (FileNotFoundError, ValueError):
-            pass
-        return "4G"
+    memory_gb: int = Field(
+        default_factory=lambda: _default_trinity_memory_gb(),
+        description="Trinity --max_memory cap in GiB.",
+    )
 
     settings_customise_sources = _pyproject_settings_sources("assemble")
 

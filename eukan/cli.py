@@ -415,6 +415,11 @@ def annotate(
 @optgroup.option("--max-intron", "-M", type=int, default=5000, show_default=True, help="Maximum intron length.")
 @optgroup.option("--phred", type=click.Choice(["33", "64"]), default="33", show_default=True, help="Phred quality score.")
 @optgroup.option("--jaccard-clip", "-j", is_flag=True, help="Enable jaccard clipping.")
+@optgroup.option(
+    "--memory-gb", type=int, default=None,
+    help="Trinity --max_memory cap in GiB. Defaults to 60 percent of "
+         "currently-available memory (floored at 4 GiB).",
+)
 @optgroup.group("Re-run steps")
 @optgroup.option("--run-star", "-A", is_flag=True, help="Force re-run STAR read mapping.")
 @optgroup.option("--run-trinity", "-T", is_flag=True, help="Force re-run Trinity assembly.")
@@ -437,6 +442,7 @@ def assemble(
     jaccard_clip: bool,
     splice_permissive: bool,
     genetic_code: str,
+    memory_gb: int | None,
     force: bool,
 ) -> None:
     """Assemble transcriptome from RNA-seq reads.
@@ -484,6 +490,10 @@ def assemble(
         kwargs["single_reads"] = single.resolve()
     if strand_specific:
         kwargs["strand_specific"] = strand_specific
+    if memory_gb is not None:
+        if memory_gb < 1:
+            raise click.UsageError("--memory-gb must be at least 1 GiB.")
+        kwargs["memory_gb"] = memory_gb
 
     config = AssemblyConfig(**kwargs)
 

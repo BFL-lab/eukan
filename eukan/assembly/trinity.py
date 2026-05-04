@@ -29,7 +29,7 @@ def run_trinity(config: AssemblyConfig) -> None:
                 "Trinity",
                 "--genome_guided_bam", "STAR_Aligned.sortedByCoord.out.bam",
                 "--genome_guided_max_intron", str(config.max_intron_len),
-                "--max_memory", config.memory_gb,
+                "--max_memory", f"{config.memory_gb}G",
                 "--CPU", str(config.num_cpu),
                 "--full_cleanup",
                 "--output", "trinity-gg",
@@ -56,7 +56,7 @@ def run_trinity(config: AssemblyConfig) -> None:
             [
                 "Trinity",
                 "--seqType", "fq",
-                "--max_memory", config.memory_gb,
+                "--max_memory", f"{config.memory_gb}G",
                 *config.reads_args_trinity,
                 "--CPU", str(config.num_cpu),
                 "--output", "trinity-denovo",
