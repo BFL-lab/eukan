@@ -154,7 +154,7 @@ class TestPrettifyGFF3:
 
         genes = [f for f in features if f.featuretype == "gene"]
         assert len(genes) == 2
-        # gffutils stores attribute values as lists
-        assert genes[0].attributes["ID"] in ("TEST_00001", ["TEST_00001"])
-        assert genes[1].attributes["ID"] in ("TEST_00002", ["TEST_00002"])
+        # gffutils stores attribute values as lists.
+        assert genes[0].attributes["ID"] == ["TEST_00001"]
+        assert genes[1].attributes["ID"] == ["TEST_00002"]
         assert all(f.source == "eukannotpass" for f in features)
