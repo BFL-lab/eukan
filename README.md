@@ -259,17 +259,30 @@ Downloads and prepares:
 
 ### `eukan compare`
 
-Compare predicted gene models against a reference or previous annotation to assess annotation quality. Reports gene-level classification (exact, inexact, missing, merged, fragmented, novel), subfeature-level metrics (mRNA, CDS, intron), and overlap-based sensitivity/specificity/F1 scores.
+Compare predicted gene models against a reference or previous annotation to assess annotation quality. Reports gene-level classification (exact, inexact, missing, merged, fragmented, novel), subfeature-level metrics (mRNA, CDS, intron), and overlap-based sensitivity/specificity/F1 scores. Repeat `--predicted` to compare several predictions against the same reference and add inter-prediction statistical tests.
 
 ```
 Usage: eukan compare [OPTIONS]
 
 Required input:
-  -r, --reference PATH    Reference GFF3 file.
-  -p, --predicted PATH    Predicted GFF3 file to evaluate.
+  -r, --reference PATH       Reference GFF3 file.
+  -p, --predicted PATH       Predicted GFF3 file. Repeat to compare multiple
+                             predictions against the same reference.
+
+Pipeline parameters:
+  -L, --label TEXT           Short label per --predicted (must appear once
+                             per --predicted, or be omitted to use file
+                             stems).
+  --ecdf-metrics [sn|sp|f1]  Metrics to test pairwise via KS on the ECDFs of
+                             matched features (multi-prediction only).
+                             [default: f1]
 
 Output options:
-  -o, --output-file PATH  Write per-feature details to a TSV file.
+  -o, --output-file PATH     Write per-feature details to a TSV file. In
+                             multi-prediction mode a leading 'prediction'
+                             column is prepended.
+  --stats-file PATH          Write pairwise statistical-test results to a
+                             long-form TSV (multi-prediction only).
 ```
 
 The classification system and metrics are further described in the paper referenced in [Citation](#citation). Gene-level classifications:
@@ -283,12 +296,35 @@ The classification system and metrics are further described in the paper referen
 For matched features, reports overlap-based sensitivity (overlap / reference length), specificity (overlap / prediction length), and F1 score. Boundary differences (5' and 3') are reported for inexact matches.
 
 ```bash
-# Basic comparison
+# Single prediction
 eukan compare -r reference.gff3 -p predicted.gff3
 
-# With per-feature TSV output
+# Single prediction with per-feature TSV
 eukan compare -r reference.gff3 -p predicted.gff3 -o details.tsv
+
+# Multiple predictions against the same reference
+eukan compare -r reference.gff3 \
+    -p eukan.gff3 -p braker.gff3 -p maker.gff3 \
+    -L Eukan -L Braker -L Maker \
+    -o details.tsv --stats-file stats.tsv
 ```
+
+#### Multi-prediction mode
+
+When two or more `--predicted` inputs are supplied, the report adds a comparative summary on top of the per-prediction breakdowns:
+
+- **F1 by level / prediction** — count-based F1 at gene, mRNA, CDS, and intron level for each prediction, side by side.
+- **Cohen's kappa matrix (gene level)** — pairwise agreement between predictions on the per-reference-gene classification (exact / inexact / missing / merged / fragmented).
+- **Powerset of gene-level matches** — for each reference gene, the (sorted) tuple of prediction labels that classified it as exact or inexact. Full enumeration up to N=6 predictions; condensed (matched-by-all / matched-by-none / uniquely-matched-per-pred) above.
+- **Pairwise significance tests** — for each pair of predictions and each level:
+  - Two-sample Kolmogorov-Smirnov tests on the ECDFs of the requested matched-feature metrics (`--ecdf-metrics`, default `f1`).
+  - Chi-squared tests on the classification proportions (gene categories or match/missing/fp for subfeatures).
+
+  P-values are Benjamini-Hochberg adjusted within each `(level, test)` family. The terminal report shows only rows with `p_adj < 0.05`; the full long-form table is written to `--stats-file` when supplied.
+
+`--label` defaults to each prediction's filename stem; if two predictions share a stem they are auto-numbered with a warning. Use `--label` to set explicit names; counts must match `--predicted`.
+
+The N=1 path is unchanged from earlier releases — the comparative section is omitted entirely and the per-feature TSV keeps the legacy schema.
 
 ### `eukan check`
 

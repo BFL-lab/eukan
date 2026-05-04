@@ -236,6 +236,56 @@ class ComparisonResult:
     ref_path: str
     pred_path: str
     records: list[FeatureRecord] = field(default_factory=list)
+    # Short identifier used in multi-prediction output. Defaults to the
+    # prediction file's stem in ``compare_annotations``; the multi-driver
+    # may override with a user-supplied label.
+    label: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Multi-prediction result
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class PairTest:
+    """One pairwise statistical test between two predictions at one feature level.
+
+    For ``test="ks_*"``, ``n_a``/``n_b`` are the matched-feature sample sizes
+    feeding the ECDFs. For ``test="chi2_classification"`` they are the
+    per-prediction row totals of the contingency table.
+    """
+
+    pred_a: str
+    pred_b: str
+    level: str        # "gene" | "mRNA" | "CDS" | "intron"
+    test: str         # "ks_sn" | "ks_sp" | "ks_f1" | "chi2_classification"
+    statistic: float
+    p_value: float
+    p_adj: float
+    n_a: int
+    n_b: int
+
+
+@dataclass
+class MultiComparisonResult:
+    """Per-prediction comparison results plus inter-prediction summaries."""
+
+    ref_path: str
+    per_prediction: list[ComparisonResult]
+    # All pairwise tests, BH-adjusted within (level, test) families.
+    pair_tests: list[PairTest] = field(default_factory=list)
+    # Off-diagonal Cohen's kappa at gene level. Key is ``(a, b)`` with
+    # ``a < b`` lexicographically.
+    kappa_matrix: dict[tuple[str, str], float] = field(default_factory=dict)
+    # Among ref genes (gene-level), the count matched (exact|inexact) by
+    # exactly that subset of predictions. Subsets are sorted tuples of
+    # labels; the empty tuple counts genes no prediction matched.
+    powerset_matched: dict[tuple[str, ...], int] = field(default_factory=dict)
+
+
+# Long-form TSV columns for the pairwise stats output.
+PAIR_TEST_TSV_COLUMNS: tuple[str, ...] = tuple(f.name for f in fields(PairTest))
 
 
 # ---------------------------------------------------------------------------

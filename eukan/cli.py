@@ -679,6 +679,23 @@ def status(work_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _derive_compare_labels(paths: tuple[Path, ...]) -> list[str]:
+    """Default labels for --predicted: file stems, dedup'd by numeric suffix."""
+    stems = [p.stem for p in paths]
+    counts: dict[str, int] = {}
+    for stem in stems:
+        counts[stem] = counts.get(stem, 0) + 1
+    seen: dict[str, int] = {}
+    out: list[str] = []
+    for stem in stems:
+        if counts[stem] > 1:
+            seen[stem] = seen.get(stem, 0) + 1
+            out.append(f"{stem}_{seen[stem]}")
+        else:
+            out.append(stem)
+    return out
+
+
 @cli.command(cls=_PreformattedEpilogCommand)
 @optgroup.group("Required input")
 @optgroup.option(
@@ -687,27 +704,116 @@ def status(work_dir: Path) -> None:
     help="Reference GFF3 file.",
 )
 @optgroup.option(
-    "--predicted", "-p", required=True,
+    "--predicted", "-p", required=True, multiple=True,
     type=click.Path(exists=True, path_type=Path),
-    help="Predicted GFF3 file to evaluate.",
+    help="Predicted GFF3 file. Repeat to compare multiple predictions "
+         "against the same reference.",
+)
+@optgroup.group("Pipeline parameters")
+@optgroup.option(
+    "--label", "-L", multiple=True,
+    help="Short label per --predicted (must appear once per --predicted, "
+         "or be omitted to use file stems).",
+)
+@optgroup.option(
+    "--ecdf-metrics", multiple=True,
+    type=click.Choice(["sn", "sp", "f1"]),
+    default=("f1",), show_default=True,
+    help="Metrics to test pairwise via KS on the ECDFs of matched features "
+         "(multi-prediction only).",
 )
 @optgroup.group("Output options")
 @optgroup.option(
     "--output-file", "-o", type=click.Path(path_type=Path), default=None,
-    help="Write per-feature details to a TSV file.",
+    help="Write per-feature details to a TSV file. In multi-prediction mode "
+         "a leading 'prediction' column is prepended.",
 )
-def compare(reference: Path, predicted: Path, output_file: Path | None) -> None:
-    """Compare predicted gene models against a reference GFF3. The reference can
-    be manually curated models, or predictions from another tool or pipeline.
+@optgroup.option(
+    "--stats-file", type=click.Path(path_type=Path), default=None,
+    help="Write pairwise statistical-test results to a long-form TSV "
+         "(multi-prediction only).",
+)
+def compare(
+    reference: Path,
+    predicted: tuple[Path, ...],
+    label: tuple[str, ...],
+    ecdf_metrics: tuple[str, ...],
+    output_file: Path | None,
+    stats_file: Path | None,
+) -> None:
+    """Compare predicted gene models against a reference GFF3. The reference
+    can be manually curated models, or predictions from another tool or
+    pipeline.
 
     \b
-    Computes quality metrics at gene, mRNA, CDS, and intron levels.
-    Use --output-file to write a per-feature TSV for further analysis.
-    """
-    from eukan.stats import compare_annotations, format_results, write_details_tsv
+    Computes quality metrics at gene, mRNA, CDS, and intron levels. Repeat
+    --predicted to evaluate multiple predictions against the same reference;
+    this adds pairwise KS tests on per-feature F1 (or Sn/Sp) ECDFs,
+    chi-squared tests on classification proportions, gene-level Cohen's
+    kappa, and a powerset summary of per-gene matches.
 
-    result = compare_annotations(reference.resolve(), predicted.resolve())
-    click.echo(format_results(result))
+    \b
+    Use --output-file to write a per-feature TSV for further analysis.
+    Use --stats-file to write pairwise statistical tests as a long-form TSV.
+    """
+    from eukan.stats import (
+        compare_annotations,
+        compare_multiple,
+        format_multi_results,
+        format_results,
+        write_details_tsv,
+        write_stats_tsv,
+    )
+
+    n = len(predicted)
+    if label and len(label) != n:
+        raise click.UsageError(
+            f"--label specified {len(label)} times but --predicted "
+            f"specified {n} times; counts must match"
+        )
+    if stats_file is not None and n < 2:
+        raise click.UsageError(
+            "--stats-file requires two or more --predicted inputs"
+        )
+
+    # Single-prediction path: byte-identical to the legacy behaviour.
+    if n == 1:
+        if label:
+            click.echo(
+                "Note: --label is only used in multi-prediction mode; ignored.",
+                err=True,
+            )
+        pred = predicted[0]
+        single = compare_annotations(reference.resolve(), pred.resolve())
+        click.echo(format_results(single))
+        if output_file is not None:
+            tsv_path = write_details_tsv(single, output_file.resolve())
+            click.echo(f"\nDetails written to {tsv_path}")
+        return
+
+    labels = list(label) if label else _derive_compare_labels(predicted)
+    if len(set(labels)) != len(labels):
+        # Only reachable when user supplied colliding --label values.
+        raise click.UsageError("--label values must be unique")
+    if not label:
+        # Auto-derived labels could collide on stems; warn if dedup happened.
+        original_stems = [p.stem for p in predicted]
+        if len(set(original_stems)) != len(original_stems):
+            click.echo(
+                "Note: --predicted files share stems; labels auto-numbered. "
+                "Use --label to override.",
+                err=True,
+            )
+
+    multi = compare_multiple(
+        reference.resolve(),
+        [(la, p.resolve()) for la, p in zip(labels, predicted, strict=True)],
+        ecdf_metrics=tuple(ecdf_metrics) or ("f1",),
+    )
+    click.echo(format_multi_results(multi))
     if output_file is not None:
-        tsv_path = write_details_tsv(result, output_file.resolve())
+        tsv_path = write_details_tsv(multi, output_file.resolve())
         click.echo(f"\nDetails written to {tsv_path}")
+    if stats_file is not None:
+        stats_path = write_stats_tsv(multi, stats_file.resolve())
+        click.echo(f"Pairwise stats written to {stats_path}")
