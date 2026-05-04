@@ -126,6 +126,8 @@ def check_python_deps() -> list[PythonCheckResult]:
         "eukan.assembly", "eukan.assembly.orchestrator",
         "eukan.functional", "eukan.functional.orchestrator", "eukan.functional.dbfetch",
         "eukan.gff.parser", "eukan.gff.intersecter", "eukan.gff.io",
+        "eukan.stats", "eukan.stats.compare", "eukan.stats.format",
+        "eukan.stats.inference", "eukan.stats.models",
     ]
     import_failures = []
     for mod in modules:
@@ -195,6 +197,23 @@ def check_python_deps() -> list[PythonCheckResult]:
         results.append(PythonCheckResult("pydantic-settings", True, "config loads OK"))
     except Exception as e:
         results.append(PythonCheckResult("pydantic-settings", False, str(e)))
+
+    # scipy functional check (used by `eukan compare` for inter-prediction stats)
+    try:
+        from scipy.stats import (
+            chi2_contingency,
+            false_discovery_control,
+            ks_2samp,
+        )
+        d, _ = ks_2samp([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
+        assert 0.0 <= d <= 1.0
+        chi2_res = chi2_contingency([[10, 20], [30, 40]])
+        assert int(chi2_res.dof) == 1
+        adj = false_discovery_control([0.01, 0.5], method="bh")
+        assert len(adj) == 2
+        results.append(PythonCheckResult("scipy", True, "ks_2samp/chi2/BH work"))
+    except Exception as e:
+        results.append(PythonCheckResult("scipy", False, str(e)))
 
     # Tool registry
     try:
