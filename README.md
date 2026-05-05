@@ -44,7 +44,7 @@ cp conda-activate.sh $CONDA_PREFIX/etc/conda/activate.d/eukan.sh
 conda deactivate && conda activate eukan
 ```
 
-The `environment.yml` is auto-generated from `tools.toml`. To regenerate after modifying tool versions: `python scripts/generate-env.py`.
+The `environment.yml` is auto-generated from `eukan/data/tools.toml`. To regenerate after modifying tool versions: `python scripts/generate-env.py`.
 
 Two tools require manual installation after creating the environment. A helper script handles both:
 
@@ -259,7 +259,7 @@ Downloads and prepares:
 
 ### `eukan compare`
 
-Compare predicted gene models against a reference or previous annotation to assess annotation quality. Reports gene-level classification (exact, inexact, missing, merged, fragmented, novel), subfeature-level metrics (mRNA, CDS, intron), and overlap-based sensitivity/specificity/F1 scores. Repeat `--predicted` to compare several predictions against the same reference and add inter-prediction statistical tests.
+Compare predicted gene models against a reference or previous annotation to assess annotation quality. Reports gene-level classification (exact, inexact, missing, merged, fragmented, novel), subfeature-level metrics (mRNA, CDS, intron), and overlap-based sensitivity/specificity/F1 scores. Repeat `--predicted` to compare several predictions against the same reference and tabulate, per gene-level classification, which subsets of predictions agreed.
 
 ```
 Usage: eukan compare [OPTIONS]
@@ -273,16 +273,11 @@ Pipeline parameters:
   -L, --label TEXT           Short label per --predicted (must appear once
                              per --predicted, or be omitted to use file
                              stems).
-  --ecdf-metrics [sn|sp|f1]  Metrics to test pairwise via KS on the ECDFs of
-                             matched features (multi-prediction only).
-                             [default: f1]
 
 Output options:
   -o, --output-file PATH     Write per-feature details to a TSV file. In
                              multi-prediction mode a leading 'prediction'
                              column is prepended.
-  --stats-file PATH          Write pairwise statistical-test results to a
-                             long-form TSV (multi-prediction only).
 ```
 
 The classification system and metrics are further described in the paper referenced in [Citation](#citation). Gene-level classifications:
@@ -306,7 +301,7 @@ eukan compare -r reference.gff3 -p predicted.gff3 -o details.tsv
 eukan compare -r reference.gff3 \
     -p eukan.gff3 -p braker.gff3 -p maker.gff3 \
     -L Eukan -L Braker -L Maker \
-    -o details.tsv --stats-file stats.tsv
+    -o details.tsv
 ```
 
 #### Multi-prediction mode
@@ -314,13 +309,7 @@ eukan compare -r reference.gff3 \
 When two or more `--predicted` inputs are supplied, the report adds a comparative summary on top of the per-prediction breakdowns:
 
 - **F1 by level / prediction** — count-based F1 at gene, mRNA, CDS, and intron level for each prediction, side by side.
-- **Cohen's kappa matrix (gene level)** — pairwise agreement between predictions on the per-reference-gene classification (exact / inexact / missing / merged / fragmented).
-- **Powerset of gene-level matches** — for each reference gene, the (sorted) tuple of prediction labels that classified it as exact or inexact. Full enumeration up to N=6 predictions; condensed (matched-by-all / matched-by-none / uniquely-matched-per-pred) above.
-- **Pairwise significance tests** — for each pair of predictions and each level:
-  - Two-sample Kolmogorov-Smirnov tests on the ECDFs of the requested matched-feature metrics (`--ecdf-metrics`, default `f1`).
-  - Chi-squared tests on the classification proportions (gene categories or match/missing/fp for subfeatures).
-
-  P-values are Benjamini-Hochberg adjusted within each `(level, test)` family. The terminal report shows only rows with `p_adj < 0.05`; the full long-form table is written to `--stats-file` when supplied.
+- **Per-class powerset** — for each gene-level classification (`match` = exact|inexact, `missing`, `merged`, `fragmented`), and for each reference gene, records the sorted tuple of prediction labels whose classification of that gene was that class, then tallies these tuples. Counts within a class sum to the number of reference genes; the `(none)` row counts genes no prediction assigned to that class. Full enumeration up to N=6 predictions; condensed (shared-by-all / shared-by-none / uniquely-per-pred) above.
 
 `--label` defaults to each prediction's filename stem; if two predictions share a stem they are auto-numbered with a warning. Use `--label` to set explicit names; counts must match `--predicted`.
 

@@ -26,7 +26,7 @@ poetry run eukan gff3toseq -g genome.fa -i genes.gff3 -o protein
 poetry run eukan db-fetch -o databases/
 poetry run eukan compare -r ref.gff3 -p pred.gff3                # single
 poetry run eukan compare -r ref.gff3 -p p1.gff3 -p p2.gff3 -p p3.gff3 \
-    --stats-file stats.tsv -o details.tsv                          # multi-pred + stats
+    -o details.tsv                                                 # multi-pred + per-feature TSV
 
 # Dev tooling (not exposed via main CLI)
 python tests/run_pipeline.py setup-test-data
@@ -88,9 +88,8 @@ eukan/
 │
 └── stats/              # Annotation comparison (eukan compare)
     ├── compare.py      # compare_annotations() single-pred + compare_multiple() driver
-    ├── inference.py    # scipy adapters: KS, chi-squared, BH FDR, Cohen's kappa
-    ├── format.py       # Terminal report + TSV writers (single + multi)
-    └── models.py       # ComparisonResult, MultiComparisonResult, PairTest
+    ├── format.py       # Terminal report + per-feature TSV writer (single + multi)
+    └── models.py       # ComparisonResult, MultiComparisonResult, FeatureRecord
 ```
 
 ### Pipeline Flow

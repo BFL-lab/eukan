@@ -23,20 +23,17 @@ from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
-from itertools import combinations, permutations
+from itertools import permutations
 from pathlib import Path
 
-from eukan.stats.inference import bh_fdr, chi2_contingency, cohen_kappa, ks_2samp
 from eukan.stats.models import (
     FRAG_THRESHOLD,
     MERGE_THRESHOLD,
+    POWERSET_CLASSES,
     ComparisonResult,
     FeatureRecord,
-    GeneStats,
     Interval,
     MultiComparisonResult,
-    PairTest,
-    SubfeatureStats,
     gene_stats_from_records,
     subfeature_stats_from_records,
 )
@@ -541,51 +538,6 @@ def compare_annotations(ref_path: Path, pred_path: Path) -> ComparisonResult:
 # ---------------------------------------------------------------------------
 
 
-_LEVELS: tuple[str, ...] = ("gene", "mrna", "cds", "intron")
-_GENE_CATEGORIES: tuple[str, ...] = (
-    "exact", "inexact", "missing", "merged", "fragmented", "novel",
-)
-_SUBFEAT_CATEGORIES: tuple[str, ...] = ("match", "missing", "fp")
-_VALID_METRICS: frozenset[str] = frozenset({"sn", "sp", "f1"})
-
-
-def _stats_for_level(
-    result: ComparisonResult, level: str,
-) -> GeneStats | SubfeatureStats:
-    if level == "gene":
-        return result.gene_stats
-    if level == "mrna":
-        return result.mrna_stats
-    if level == "cds":
-        return result.cds_stats
-    if level == "intron":
-        return result.intron_stats
-    raise ValueError(f"unknown level: {level!r}")
-
-
-def _matched_metric_values(
-    result: ComparisonResult, level: str, metric: str,
-) -> list[float]:
-    """Per-feature metric values from matched features at this level.
-
-    For ``gene``: exact + inexact matches. For subfeatures: match. The
-    underlying stats objects already filter to these classifications, so
-    we just read the appropriate ``*_values`` list.
-    """
-    stats = _stats_for_level(result, level)
-    return list(getattr(stats, f"{metric}_values"))
-
-
-def _classification_counts(result: ComparisonResult, level: str) -> list[int]:
-    """Count of each classification category at this level."""
-    if level == "gene":
-        gs = result.gene_stats
-        return [gs.exact, gs.inexact, gs.missing, gs.merged, gs.fragmented, gs.novel]
-    ss = _stats_for_level(result, level)
-    assert isinstance(ss, SubfeatureStats)
-    return [ss.match, ss.missing, ss.fp]
-
-
 def _gene_classifications_by_ref(result: ComparisonResult) -> dict[str, str]:
     """Map of reference gene id -> classification under this prediction."""
     return {
@@ -595,43 +547,36 @@ def _gene_classifications_by_ref(result: ComparisonResult) -> dict[str, str]:
     }
 
 
-def _bh_adjust_in_place(family: list[PairTest]) -> None:
-    """Replace ``p_adj`` on each test in the family with the BH-adjusted value."""
-    if not family:
-        return
-    adj = bh_fdr([t.p_value for t in family])
-    for t, a in zip(family, adj, strict=True):
-        t.p_adj = float(a)
+def _coerce_class(c: str | None) -> str | None:
+    """Collapse ``exact``/``inexact`` into ``match``; pass others through.
+
+    Returns ``None`` for refs absent from a prediction's classification map
+    (defensive — every ref normally gets a record).
+    """
+    if c == "exact" or c == "inexact":
+        return "match"
+    return c
 
 
 def compare_multiple(
     ref_path: Path,
     predictions: list[tuple[str, Path]],
-    ecdf_metrics: tuple[str, ...] = ("f1",),
 ) -> MultiComparisonResult:
-    """Compare a reference GFF3 against N predictions; compute inter-pred stats.
+    """Compare a reference GFF3 against N predictions.
 
     For each prediction, runs :func:`compare_annotations` and stamps the
-    user-supplied label onto the result. Then computes:
+    user-supplied label onto the result. Builds a per-class powerset:
+    for each gene-level classification in :data:`POWERSET_CLASSES`
+    (``match``, ``missing``, ``merged``, ``fragmented``), records — for
+    each reference gene — the sorted tuple of prediction labels whose
+    classification of that gene was that class, and tallies these tuples
+    across all reference genes.
 
-    * pairwise KS tests on each requested ECDF metric (``sn``/``sp``/``f1``),
-      one BH family per ``(level, metric)``;
-    * pairwise chi-squared tests on classification proportions, one BH family
-      per ``level``;
-    * gene-level Cohen's kappa for every off-diagonal pair;
-    * gene-level powerset tally — for each reference gene, the (sorted) tuple
-      of prediction labels that classified it as exact/inexact.
-
-    The reference GFF3 is re-parsed once per prediction in v1.
+    Within each class the counts sum to the number of reference genes;
+    the empty tuple ``()`` counts genes no prediction assigned that class.
     """
     if not predictions:
         raise ValueError("predictions must be non-empty")
-    for m in ecdf_metrics:
-        if m not in _VALID_METRICS:
-            raise ValueError(
-                f"unknown ECDF metric {m!r}; expected one of "
-                f"{sorted(_VALID_METRICS)}"
-            )
     labels = [label for label, _ in predictions]
     if len(set(labels)) != len(labels):
         raise ValueError("prediction labels must be unique")
@@ -642,69 +587,26 @@ def compare_multiple(
         result.label = label
         per_pred.append(result)
 
-    n = len(per_pred)
-    pair_tests: list[PairTest] = []
-    pair_indices = list(combinations(range(n), 2))
-
-    for level in _LEVELS:
-        for metric in ecdf_metrics:
-            family: list[PairTest] = []
-            for i, j in pair_indices:
-                vi = _matched_metric_values(per_pred[i], level, metric)
-                vj = _matched_metric_values(per_pred[j], level, metric)
-                stat, p = ks_2samp(vi, vj)
-                family.append(PairTest(
-                    pred_a=per_pred[i].label, pred_b=per_pred[j].label,
-                    level=level, test=f"ks_{metric}",
-                    statistic=stat, p_value=p, p_adj=p,
-                    n_a=len(vi), n_b=len(vj),
-                ))
-            _bh_adjust_in_place(family)
-            pair_tests.extend(family)
-
-        family = []
-        for i, j in pair_indices:
-            ca = _classification_counts(per_pred[i], level)
-            cb = _classification_counts(per_pred[j], level)
-            stat, p, _dof = chi2_contingency([ca, cb])
-            family.append(PairTest(
-                pred_a=per_pred[i].label, pred_b=per_pred[j].label,
-                level=level, test="chi2_classification",
-                statistic=stat, p_value=p, p_adj=p,
-                n_a=sum(ca), n_b=sum(cb),
-            ))
-        _bh_adjust_in_place(family)
-        pair_tests.extend(family)
-
-    kappa_matrix: dict[tuple[str, str], float] = {}
-    powerset_matched: dict[tuple[str, ...], int] = {}
-    if n >= 2:
+    powerset_by_class: dict[str, dict[tuple[str, ...], int]] = {}
+    if len(per_pred) >= 2:
         gene_cls = [_gene_classifications_by_ref(p) for p in per_pred]
         all_ref_ids = sorted(set().union(*[set(d.keys()) for d in gene_cls]))
-
-        # The "—" sentinel is purely defensive: every ref gene normally
-        # has a classification under every prediction, since
-        # ``_classify_genes`` emits one record per ref gene.
-        for i, j in pair_indices:
-            labels_i = [gene_cls[i].get(rid, "—") for rid in all_ref_ids]
-            labels_j = [gene_cls[j].get(rid, "—") for rid in all_ref_ids]
-            kap = cohen_kappa(labels_i, labels_j)
-            a, b = sorted([per_pred[i].label, per_pred[j].label])
-            kappa_matrix[(a, b)] = kap
-
         labels_in_order = [p.label for p in per_pred]
+
+        powerset_by_class = {cls: {} for cls in POWERSET_CLASSES}
         for ref_id in all_ref_ids:
-            matchers = tuple(sorted(
-                labels_in_order[i]
-                for i, d in enumerate(gene_cls)
-                if d.get(ref_id) in ("exact", "inexact")
-            ))
-            powerset_matched[matchers] = powerset_matched.get(matchers, 0) + 1
+            per_pred_class = [_coerce_class(d.get(ref_id)) for d in gene_cls]
+            for cls in POWERSET_CLASSES:
+                subset = tuple(sorted(
+                    labels_in_order[i]
+                    for i, c in enumerate(per_pred_class)
+                    if c == cls
+                ))
+                bucket = powerset_by_class[cls]
+                bucket[subset] = bucket.get(subset, 0) + 1
 
     return MultiComparisonResult(
         ref_path=str(ref_path),
         per_prediction=per_pred,
-        pair_tests=pair_tests,
-        kappa_matrix=kappa_matrix,
-        powerset_matched=powerset_matched,
+        powerset_by_class=powerset_by_class,
     )

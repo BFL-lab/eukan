@@ -12,9 +12,8 @@ from eukan.stats import (
     format_multi_results,
     format_results,
     write_details_tsv,
-    write_stats_tsv,
 )
-from eukan.stats.models import PAIR_TEST_TSV_COLUMNS, TSV_COLUMNS
+from eukan.stats.models import TSV_COLUMNS
 
 # Reused fixtures from test_compare; duplicated here to keep test files
 # independent.
@@ -89,13 +88,16 @@ class TestFormatMultiResults:
         out = format_multi_results(two_preds_result)
         assert "COMPARATIVE SUMMARY" in out
         assert "F1 by level" in out
-        assert "Cohen's kappa" in out
-        assert "Powerset of gene-level matches" in out
-        assert "Significance tests" in out
+        assert "Powerset of gene-level classifications" in out
+        # All four classes appear as sub-headers in the powerset block.
+        assert "Match (exact|inexact)" in out
+        assert "Missing (FN)" in out
+        assert "Merged" in out
+        assert "Fragmented" in out
 
     def test_f1_table_has_each_pred_label(self, two_preds_result):
         out = format_multi_results(two_preds_result)
-        f1_section = out.split("F1 by level")[1].split("Cohen's kappa")[0]
+        f1_section = out.split("F1 by level")[1].split("Powerset")[0]
         assert "p1" in f1_section
         assert "p2" in f1_section
 
@@ -145,23 +147,3 @@ class TestWriteDetailsTsvMulti:
         assert len(rows) == expected
 
 
-class TestWriteStatsTsv:
-    def test_columns_match_schema(self, tmp_path):
-        ref = _write(tmp_path / "ref.gff3", _REF_GFF)
-        p1 = _write(tmp_path / "p1.gff3", _REF_GFF)
-        p2 = _write(tmp_path / "p2.gff3", _P_MISSING)
-        result = compare_multiple(ref, [("p1", p1), ("p2", p2)])
-        out_path = tmp_path / "stats.tsv"
-        write_stats_tsv(result, out_path)
-        first_line = out_path.read_text().splitlines()[0]
-        assert first_line.split("\t") == list(PAIR_TEST_TSV_COLUMNS)
-
-    def test_one_row_per_pair_test(self, tmp_path):
-        ref = _write(tmp_path / "ref.gff3", _REF_GFF)
-        p1 = _write(tmp_path / "p1.gff3", _REF_GFF)
-        p2 = _write(tmp_path / "p2.gff3", _P_MISSING)
-        result = compare_multiple(ref, [("p1", p1), ("p2", p2)])
-        out_path = tmp_path / "stats.tsv"
-        write_stats_tsv(result, out_path)
-        n_data_rows = len(out_path.read_text().splitlines()) - 1
-        assert n_data_rows == len(result.pair_tests)

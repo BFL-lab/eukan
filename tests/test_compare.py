@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import pytest
 
 from eukan.stats import compare_annotations, compare_multiple
 from eukan.stats.compare import _stream_features
-from eukan.stats.models import MultiComparisonResult
+from eukan.stats.models import POWERSET_CLASSES, MultiComparisonResult
 
 # A minimal GFF3 with two genes: one single-CDS, one with two CDS (one intron).
 _REF_GFF = """##gff-version 3
@@ -180,68 +179,49 @@ class TestCompareMultiple:
         assert result.per_prediction[2].gene_stats.inexact == 1
         assert result.per_prediction[2].gene_stats.missing == 1
 
-    def test_pair_test_count_default_metric(self, three_preds):
+    def test_powerset_has_all_classes(self, three_preds):
         ref, preds = three_preds
         result = compare_multiple(ref, preds)
-        # 4 levels * 3 pairs * (1 KS metric + 1 chi2) = 24
-        assert len(result.pair_tests) == 4 * 3 * 2
+        assert set(result.powerset_by_class.keys()) == set(POWERSET_CLASSES)
 
-    def test_pair_test_count_three_metrics(self, three_preds):
-        ref, preds = three_preds
-        result = compare_multiple(ref, preds, ecdf_metrics=("sn", "sp", "f1"))
-        # 4 levels * 3 pairs * (3 KS metrics + 1 chi2) = 48
-        assert len(result.pair_tests) == 4 * 3 * 4
-
-    def test_pair_test_p_adj_set(self, three_preds):
+    def test_powerset_sums_to_ref_total_per_class(self, three_preds):
         ref, preds = three_preds
         result = compare_multiple(ref, preds)
-        # p_adj must be set (>= p_value, since BH only inflates)
-        for t in result.pair_tests:
-            assert t.p_adj >= t.p_value - 1e-12
-            assert 0.0 <= t.p_adj <= 1.0
+        # Within each class, every ref gene falls in exactly one bucket.
+        ref_total = result.per_prediction[0].gene_stats.ref_total
+        for cls in POWERSET_CLASSES:
+            assert sum(result.powerset_by_class[cls].values()) == ref_total
 
-    def test_pair_test_levels_and_kinds(self, three_preds):
-        ref, preds = three_preds
-        result = compare_multiple(ref, preds, ecdf_metrics=("f1",))
-        levels = {t.level for t in result.pair_tests}
-        assert levels == {"gene", "mrna", "cds", "intron"}
-        kinds = {t.test for t in result.pair_tests}
-        assert kinds == {"ks_f1", "chi2_classification"}
-
-    def test_kappa_matrix_off_diagonal_pairs(self, three_preds):
-        ref, preds = three_preds
-        result = compare_multiple(ref, preds)
-        # 3 preds -> 3 off-diagonal pairs
-        assert len(result.kappa_matrix) == 3
-        assert set(result.kappa_matrix.keys()) == {
-            ("p1", "p2"), ("p1", "p3"), ("p2", "p3"),
-        }
-        for k in result.kappa_matrix.values():
-            assert -1.0 <= k <= 1.0 or math.isnan(k)
-
-    def test_powerset_sums_to_ref_total(self, three_preds):
-        ref, preds = three_preds
-        result = compare_multiple(ref, preds)
-        # Every ref gene falls in exactly one powerset bucket.
-        total = sum(result.powerset_matched.values())
-        assert total == result.per_prediction[0].gene_stats.ref_total
-
-    def test_powerset_buckets(self, three_preds):
+    def test_powerset_match_buckets(self, three_preds):
         ref, preds = three_preds
         result = compare_multiple(ref, preds)
         # g1, g2 matched by all three preds; g3 matched by all three (p3 inexact);
         # g4 matched only by p1.
-        assert result.powerset_matched[("p1", "p2", "p3")] == 3
-        assert result.powerset_matched[("p1",)] == 1
+        match = result.powerset_by_class["match"]
+        assert match[("p1", "p2", "p3")] == 3
+        assert match[("p1",)] == 1
+
+    def test_powerset_missing_buckets(self, three_preds):
+        ref, preds = three_preds
+        result = compare_multiple(ref, preds)
+        # g4 missing in p2 and p3; g1/g2/g3 missing in nobody.
+        missing = result.powerset_by_class["missing"]
+        assert missing[("p2", "p3")] == 1
+        assert missing[()] == 3
+
+    def test_powerset_merged_and_fragmented_empty_for_clean_inputs(self, three_preds):
+        ref, preds = three_preds
+        result = compare_multiple(ref, preds)
+        # No prediction triggers a merged or fragmented call on this fixture.
+        assert result.powerset_by_class["merged"] == {(): 4}
+        assert result.powerset_by_class["fragmented"] == {(): 4}
 
     def test_n_one_yields_no_inter_pred_stats(self, tmp_path):
         ref = _write(tmp_path / "ref.gff3", _MULTI_REF_GFF)
         p1 = _write(tmp_path / "p1.gff3", _MULTI_P1_GFF)
         result = compare_multiple(ref, [("only", p1)])
         assert len(result.per_prediction) == 1
-        assert result.pair_tests == []
-        assert result.kappa_matrix == {}
-        assert result.powerset_matched == {}
+        assert result.powerset_by_class == {}
 
     def test_empty_predictions_raises(self, tmp_path):
         ref = _write(tmp_path / "ref.gff3", _MULTI_REF_GFF)
@@ -254,9 +234,3 @@ class TestCompareMultiple:
         with pytest.raises(ValueError, match="unique"):
             compare_multiple(ref, [("a", p1), ("a", p1)])
 
-    def test_invalid_metric_raises(self, tmp_path):
-        ref = _write(tmp_path / "ref.gff3", _MULTI_REF_GFF)
-        p1 = _write(tmp_path / "p1.gff3", _MULTI_P1_GFF)
-        p2 = _write(tmp_path / "p2.gff3", _MULTI_P2_GFF)
-        with pytest.raises(ValueError, match="ECDF metric"):
-            compare_multiple(ref, [("a", p1), ("b", p2)], ecdf_metrics=("foo",))

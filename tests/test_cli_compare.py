@@ -82,15 +82,6 @@ class TestSinglePrediction:
         # Click 8.3 captures stderr separately on result.
         assert "ignored" in result.stderr.lower()
 
-    def test_stats_file_with_n1_errors(self, gffs, tmp_path):
-        runner = CliRunner()
-        result = runner.invoke(cli, [
-            "compare", "-r", str(gffs["ref"]), "-p", str(gffs["p1"]),
-            "--stats-file", str(tmp_path / "stats.tsv"),
-        ])
-        assert result.exit_code != 0
-        assert "two or more" in result.output
-
 
 class TestMultiPrediction:
     def test_two_preds_produces_comparative_section(self, gffs):
@@ -102,8 +93,7 @@ class TestMultiPrediction:
         assert result.exit_code == 0, result.output
         assert "(multi-prediction)" in result.output
         assert "COMPARATIVE SUMMARY" in result.output
-        assert "Cohen's kappa" in result.output
-        assert "Powerset of gene-level matches" in result.output
+        assert "Powerset of gene-level classifications" in result.output
 
     def test_labels_appear_in_output(self, gffs):
         runner = CliRunner()
@@ -126,40 +116,19 @@ class TestMultiPrediction:
         assert result.exit_code != 0
         assert "counts must match" in result.output
 
-    def test_writes_multi_details_and_stats_tsv(self, gffs, tmp_path):
+    def test_writes_multi_details_tsv(self, gffs, tmp_path):
         out_path = tmp_path / "details.tsv"
-        stats_path = tmp_path / "stats.tsv"
         runner = CliRunner()
         result = runner.invoke(cli, [
             "compare", "-r", str(gffs["ref"]),
             "-p", str(gffs["p1"]), "-p", str(gffs["p2"]),
-            "-o", str(out_path), "--stats-file", str(stats_path),
+            "-o", str(out_path),
         ])
         assert result.exit_code == 0, result.output
-        assert out_path.exists() and stats_path.exists()
+        assert out_path.exists()
         # Multi-pred TSV has the "prediction" column prepended.
         first_line = out_path.read_text().splitlines()[0]
         assert first_line.startswith("prediction\t")
-        # Stats TSV has the long-form schema.
-        stats_header = stats_path.read_text().splitlines()[0]
-        for col in ("pred_a", "pred_b", "level", "test", "p_adj"):
-            assert col in stats_header
-
-    def test_ecdf_metrics_all_three(self, gffs, tmp_path):
-        stats_path = tmp_path / "stats.tsv"
-        runner = CliRunner()
-        result = runner.invoke(cli, [
-            "compare", "-r", str(gffs["ref"]),
-            "-p", str(gffs["p1"]), "-p", str(gffs["p2"]),
-            "--ecdf-metrics", "sn",
-            "--ecdf-metrics", "sp",
-            "--ecdf-metrics", "f1",
-            "--stats-file", str(stats_path),
-        ])
-        assert result.exit_code == 0, result.output
-        # 4 levels * 1 pair * (3 KS + 1 chi2) = 16 stats rows
-        n_data = len(stats_path.read_text().splitlines()) - 1
-        assert n_data == 16
 
     def test_label_collision_warning_on_same_stem(self, tmp_path):
         # Two pred files with the same stem in different directories.

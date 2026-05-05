@@ -5,7 +5,6 @@ from eukan.stats.format import (
     format_multi_results,
     format_results,
     write_details_tsv,
-    write_stats_tsv,
 )
 
 __all__ = [
@@ -14,5 +13,4 @@ __all__ = [
     "format_multi_results",
     "format_results",
     "write_details_tsv",
-    "write_stats_tsv",
 ]

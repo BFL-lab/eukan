@@ -8,7 +8,7 @@ from pathlib import Path
 from statistics import median
 
 from eukan.stats.models import (
-    PAIR_TEST_TSV_COLUMNS,
+    POWERSET_CLASSES,
     TSV_COLUMNS,
     ComparisonResult,
     GeneStats,
@@ -34,16 +34,6 @@ def _pct(value: float) -> str:
 def _bar(value: float, width: int = 20) -> str:
     filled = int(value * width)
     return f"[{'#' * filled}{'.' * (width - filled)}]"
-
-
-def _significance_marker(p: float) -> str:
-    if p < 0.001:
-        return "***"
-    if p < 0.01:
-        return "**"
-    if p < 0.05:
-        return "*"
-    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -296,116 +286,97 @@ def _comparative_f1_table(result: MultiComparisonResult) -> list[str]:
     return lines
 
 
-def _kappa_matrix_table(result: MultiComparisonResult) -> list[str]:
-    """Cohen's kappa matrix at gene level."""
-    if not result.kappa_matrix:
-        return []
-    labels = [p.label for p in result.per_prediction]
-    cell_w = max(8, *(len(la) + 2 for la in labels))
-    lines = ["", "  Cohen's kappa (gene-level classification, off-diagonal):"]
-    header = "  " + " " * cell_w + "".join(f"{la:>{cell_w}}" for la in labels)
-    lines.append(header)
-    lines.append("  " + "-" * (len(header) - 2))
-    for la in labels:
-        row = f"  {la:<{cell_w}}"
-        for lb in labels:
-            if la == lb:
-                row += f"{'—':>{cell_w}}"
-            else:
-                lo, hi = sorted([la, lb])
-                kap = result.kappa_matrix.get((lo, hi))
-                cell = "—" if kap is None or kap != kap else f"{kap: .3f}"
-                row += f"{cell:>{cell_w}}"
-        lines.append(row)
-    return lines
+_CLASS_DISPLAY: dict[str, str] = {
+    "match": "Match (exact|inexact)",
+    "missing": "Missing (FN)",
+    "merged": "Merged",
+    "fragmented": "Fragmented",
+}
 
 
-def _powerset_table(result: MultiComparisonResult) -> list[str]:
-    """Powerset of prediction subsets that matched each ref gene.
-
-    Full enumeration up to N=6 predictions; condensed (all/none/uniques)
-    above. Subsets are grouped and sorted by descending cardinality.
-    """
-    if not result.powerset_matched:
-        return []
-    n = len(result.per_prediction)
-    total = sum(result.powerset_matched.values()) or 1
-    lines = ["", "  Powerset of gene-level matches (exact|inexact):"]
-    if n <= 6:
+def _format_powerset_buckets(
+    buckets: dict[tuple[str, ...], int],
+    n_preds: int,
+    all_labels: tuple[str, ...],
+) -> list[str]:
+    """Render one class's powerset buckets, full enumeration up to n=6."""
+    total = sum(buckets.values()) or 1
+    lines: list[str] = []
+    if n_preds <= 6:
         by_size: dict[int, list[tuple[tuple[str, ...], int]]] = defaultdict(list)
-        for subset, count in result.powerset_matched.items():
+        for subset, count in buckets.items():
+            if count == 0:
+                continue
             by_size[len(subset)].append((subset, count))
+        if not by_size:
+            lines.append("      (no ref genes in this category)")
+            return lines
         for size in sorted(by_size.keys(), reverse=True):
             for subset, count in sorted(by_size[size], key=lambda x: x[0]):
                 label = "(none)" if not subset else "{" + ", ".join(subset) + "}"
                 lines.append(
-                    f"    {label:<40} {count:>6,}  ({count / total * 100:5.1f}%)"
+                    f"      {label:<40} {count:>6,}  ({count / total * 100:5.1f}%)"
                 )
-    else:
-        labels_set = {p.label for p in result.per_prediction}
-        all_set = tuple(sorted(labels_set))
-        all_count = result.powerset_matched.get(all_set, 0)
-        none_count = result.powerset_matched.get((), 0)
+        return lines
+
+    all_count = buckets.get(all_labels, 0)
+    none_count = buckets.get((), 0)
+    lines.append(
+        f"      Shared by all {n_preds}:".ljust(46)
+        + f" {all_count:>6,}  ({all_count / total * 100:5.1f}%)"
+    )
+    lines.append(
+        "      Shared by none:".ljust(46)
+        + f" {none_count:>6,}  ({none_count / total * 100:5.1f}%)"
+    )
+    lines.append("      Uniquely:")
+    for label in all_labels:
+        uniq = buckets.get((label,), 0)
         lines.append(
-            f"    Matched by all {n}:".ljust(44)
-            + f" {all_count:>6,}  ({all_count / total * 100:5.1f}%)"
+            f"        Only by {label}".ljust(46)
+            + f" {uniq:>6,}  ({uniq / total * 100:5.1f}%)"
         )
-        lines.append(
-            "    Matched by none:".ljust(44)
-            + f" {none_count:>6,}  ({none_count / total * 100:5.1f}%)"
-        )
-        lines.append("    Uniquely matched:")
-        for label in sorted(labels_set):
-            uniq = result.powerset_matched.get((label,), 0)
-            lines.append(
-                f"      Only by {label}".ljust(44)
-                + f" {uniq:>6,}  ({uniq / total * 100:5.1f}%)"
-            )
-        accounted = all_count + none_count + sum(
-            result.powerset_matched.get((la,), 0) for la in labels_set
-        )
-        other = sum(result.powerset_matched.values()) - accounted
-        lines.append(
-            "    Other combinations:".ljust(44)
-            + f" {other:>6,}  ({other / total * 100:5.1f}%)"
-        )
-    lines.append(f"    Total ref genes: {sum(result.powerset_matched.values()):,}")
+    accounted = all_count + none_count + sum(
+        buckets.get((la,), 0) for la in all_labels
+    )
+    other = sum(buckets.values()) - accounted
+    lines.append(
+        "      Other combinations:".ljust(46)
+        + f" {other:>6,}  ({other / total * 100:5.1f}%)"
+    )
     return lines
 
 
-def _significance_table(result: MultiComparisonResult) -> list[str]:
-    """Pairwise significance tests; show only BH-adjusted p < 0.05."""
-    if not result.pair_tests:
+def _powerset_table(result: MultiComparisonResult) -> list[str]:
+    """Per-classification powerset of agreeing predictions per reference gene.
+
+    For each gene-level class (match/missing/merged/fragmented), shows the
+    distribution of subsets of predictions that classified each ref gene
+    that way. Counts per class sum to the number of reference genes;
+    ``(none)`` counts ref genes no prediction classified that way.
+    """
+    if not result.powerset_by_class:
         return []
-    sig = [t for t in result.pair_tests if t.p_adj < 0.05]
+    n = len(result.per_prediction)
+    all_labels = tuple(sorted(p.label for p in result.per_prediction))
+    ref_total = sum(next(iter(result.powerset_by_class.values())).values())
     lines = [
         "",
-        "  Significance tests (BH-adjusted; * <0.05, ** <0.01, *** <0.001):",
+        "  Powerset of gene-level classifications by prediction:",
+        f"    (per class, subsets sum to {ref_total:,} reference genes)",
     ]
-    if not sig:
-        lines.append("    No pairwise tests reached significance after BH adjustment.")
-        return lines
-    header = (
-        f"    {'Level':<8} {'Test':<22} {'Pred A':<14} {'Pred B':<14} "
-        f"{'Stat':>10} {'p_adj':>10}"
-    )
-    lines.append(header)
-    lines.append("    " + "-" * (len(header) - 4))
-    for t in sorted(sig, key=lambda x: (x.level, x.test, x.pred_a, x.pred_b)):
-        marker = _significance_marker(t.p_adj)
-        lines.append(
-            f"    {t.level:<8} {t.test:<22} {t.pred_a:<14} {t.pred_b:<14} "
-            f"{t.statistic:>10.4f} {t.p_adj:>10.4g} {marker}"
-        )
+    for cls in POWERSET_CLASSES:
+        buckets = result.powerset_by_class.get(cls, {})
+        lines.append("")
+        lines.append(f"    {_CLASS_DISPLAY[cls]}:")
+        lines.extend(_format_powerset_buckets(buckets, n, all_labels))
     return lines
 
 
 def _comparative_section(result: MultiComparisonResult, w: int) -> list[str]:
     lines: list[str] = ["", "=" * w, "  COMPARATIVE SUMMARY", "=" * w]
     lines.extend(_comparative_f1_table(result))
-    lines.extend(_kappa_matrix_table(result))
     lines.extend(_powerset_table(result))
-    lines.extend(_significance_table(result))
     lines.append("")
     lines.append("=" * w)
     return lines
@@ -470,24 +441,3 @@ def write_details_tsv(
     if isinstance(result, MultiComparisonResult):
         return _write_multi_details_tsv(result, output_file)
     return _write_single_details_tsv(result, output_file)
-
-
-def write_stats_tsv(result: MultiComparisonResult, output_file: Path) -> Path:
-    """Write pairwise statistical-test results as a long-form TSV."""
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_file, "w") as fh:
-        fh.write("\t".join(PAIR_TEST_TSV_COLUMNS) + "\n")
-        for t in result.pair_tests:
-            row = [
-                t.pred_a,
-                t.pred_b,
-                t.level,
-                t.test,
-                f"{t.statistic:.6f}",
-                f"{t.p_value:.6g}",
-                f"{t.p_adj:.6g}",
-                str(t.n_a),
-                str(t.n_b),
-            ]
-            fh.write("\t".join(row) + "\n")
-    return output_file
