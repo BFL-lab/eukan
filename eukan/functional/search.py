@@ -134,13 +134,15 @@ def run_homology_search(
 ) -> tuple[HitResults, HitResults]:
     """Run phmmer and hmmscan using pyhmmer.
 
-    Both searches are independent and run concurrently, each using
-    half the available CPUs.
+    Stages are run sequentially with the target database released
+    between them: holding both UniProt-SwissProt and Pfam in memory
+    while two searches ran concurrently was OOM-prone on container
+    runtimes.  Each stage uses the full CPU budget.
 
     Returns:
         Tuple of (phmmer_results, hmmscan_results) dicts keyed by query ID.
     """
-    from concurrent.futures import ThreadPoolExecutor
+    import gc
 
     evalue_f = float(evalue)
 
@@ -149,26 +151,23 @@ def run_homology_search(
 
     log.info("Loading UniProt database from %s", uniprot_db)
     targets = _load_digital_sequences(uniprot_db)
+    log.info(
+        "Running phmmer (%d queries vs %d targets, %d CPUs)...",
+        len(queries), len(targets), num_cpu,
+    )
+    phmmer_res = run_phmmer_search(queries, targets, num_cpu, evalue_f)
+    del targets
+    gc.collect()
 
     log.info("Loading Pfam HMMs from %s", pfam_db)
     hmms = _load_hmm_db(pfam_db)
-
-    # Split CPUs between the two searches
-    phmmer_cpus = max(1, num_cpu // 2)
-    hmmscan_cpus = max(1, num_cpu - phmmer_cpus)
-
     log.info(
-        "Running phmmer (%d queries vs %d targets, %d CPUs) and "
-        "hmmscan (%d queries vs %d profiles, %d CPUs) concurrently...",
-        len(queries), len(targets), phmmer_cpus,
-        len(queries), len(hmms), hmmscan_cpus,
+        "Running hmmscan (%d queries vs %d profiles, %d CPUs)...",
+        len(queries), len(hmms), num_cpu,
     )
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        phmmer_future = pool.submit(run_phmmer_search, queries, targets, phmmer_cpus, evalue_f)
-        hmmscan_future = pool.submit(run_hmmscan_search, queries, hmms, hmmscan_cpus, evalue_f)
-        phmmer_res = phmmer_future.result()
-        hmmscan_res = hmmscan_future.result()
+    hmmscan_res = run_hmmscan_search(queries, hmms, num_cpu, evalue_f)
+    del hmms
+    gc.collect()
 
     return phmmer_res, hmmscan_res
 
