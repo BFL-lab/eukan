@@ -25,8 +25,6 @@ WORKDIR /opt/eukan
 COPY environment.yml /opt/eukan/
 COPY pyproject.toml poetry.lock README.md /opt/eukan/
 COPY eukan/ /opt/eukan/eukan/
-COPY tools.toml /opt/eukan/
-COPY configs/ /opt/eukan/configs/
 
 RUN mamba env create -f environment.yml \
     && mamba clean -afy
@@ -123,11 +121,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && groupadd -g ${GROUP_ID} eukan 2>/dev/null || true \
     && useradd -u ${USER_ID} -g ${GROUP_ID} -m eukan 2>/dev/null || true
 
-# Copy the fully-built conda environment from the builder
+# Copy the fully-built conda environment from the builder.
+# eukan itself (including tools.toml + configs/ under eukan/data/) lives in
+# site-packages via `pip install .`, so no separate source copy is needed.
 COPY --link --from=builder /opt/conda/envs/eukan /opt/conda/envs/eukan
-
-# Copy eukan source (tools.toml, configs)
-COPY --link --from=builder /opt/eukan /opt/eukan
 
 # Copy GeneMark key — place in eukan home and /root, world-readable
 COPY --from=builder /root/.gm_key /root/.gm_key
@@ -153,7 +150,6 @@ ENV CONDA_DEFAULT_ENV=eukan \
     ALN_TAB="/opt/conda/envs/eukan/share/spaln/table" \
     ALN_DBS="/opt/conda/envs/eukan/share/spaln/seqdb" \
     PERL5LIB="/opt/conda/envs/eukan/share/spaln/alndbs" \
-    EUKAN_ROOT=/opt/eukan \
     HOME=/home/eukan \
     USER=eukan
 

@@ -2,7 +2,7 @@
 # Post-activation script for the eukan conda environment.
 #
 # NOTE: The `eukan` CLI sets these variables automatically at startup
-# (see [conda_env] in tools.toml and eukan/infra/environ.py).
+# (see eukan/data/tools.toml and eukan/infra/environ.py).
 # This script is only needed if you want to run the underlying tools
 # (SNAP, spaln, EVM, etc.) directly outside of eukan.
 #

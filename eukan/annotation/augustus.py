@@ -21,7 +21,7 @@ from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_piped
 from eukan.infra.steps import step_dir
-from eukan.infra.utils import concat_files, find_resource, symlink
+from eukan.infra.utils import concat_files, package_resource, symlink
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
@@ -145,7 +145,7 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
     # Install custom extrinsic config if not already present
     ext_dest = Path(config_path) / "extrinsic" / ext_cfg
     if not ext_dest.exists():
-        pkg_cfg = find_resource(f"configs/{ext_cfg}")
+        pkg_cfg = package_resource(f"configs/{ext_cfg}")
         if pkg_cfg is not None:
             shutil.copy(pkg_cfg, ext_dest)
             log.info("Installed and using extrinsic config: %s", ext_cfg)

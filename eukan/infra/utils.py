@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 from collections.abc import Iterable
+from importlib.resources import files
 from pathlib import Path
 
 
@@ -14,23 +15,16 @@ def symlink(target: Path, link: Path) -> None:
     os.symlink(target, link)
 
 
-def find_resource(relpath: str) -> Path | None:
-    """Locate a file shipped under the repo root (e.g. ``configs/x.cfg``).
+def package_resource(relpath: str) -> Path | None:
+    """Locate a file shipped under ``eukan/data/`` in the installed package.
 
-    Searches, in order: ``$EUKAN_ROOT/<relpath>`` (set by the Dockerfile),
-    ``<package_parent>/<relpath>`` (working from a source checkout), and
-    ``<cwd>/<relpath>``.  The package-parent fallback is correct only when
-    eukan is run from its source tree — once installed via ``pip install
-    .`` the package lives in site-packages and has no ``configs/`` sibling,
-    which is why the env var is the primary lookup.
+    Returns the filesystem path or None if the resource doesn't exist.
+    Works regardless of install layout (editable, wheel, conda package).
     """
-    candidates: list[Path] = []
-    eukan_root = os.environ.get("EUKAN_ROOT")
-    if eukan_root:
-        candidates.append(Path(eukan_root) / relpath)
-    candidates.append(Path(__file__).resolve().parent.parent.parent / relpath)
-    candidates.append(Path.cwd() / relpath)
-    return next((c for c in candidates if c.exists()), None)
+    parts = relpath.split("/")
+    res = files("eukan").joinpath("data", *parts)
+    p = Path(str(res))
+    return p if p.is_file() else None
 
 
 def concat_files(srcs: Iterable[Path], dest: Path) -> None:

@@ -37,7 +37,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from eukan.infra.utils import find_resource
+from eukan.infra.utils import package_resource
 
 
 @dataclass(frozen=True)
@@ -71,8 +71,8 @@ class Tool:
 
 
 def _find_tools_toml() -> Path | None:
-    """Locate tools.toml by checking EUKAN_ROOT, the package root, and cwd."""
-    return find_resource("tools.toml")
+    """Locate tools.toml shipped under ``eukan/data/``."""
+    return package_resource("tools.toml")
 
 
 def _parse_tool(name: str, cfg: dict[str, Any]) -> Tool:
