@@ -22,6 +22,7 @@ from eukan.cli.db_fetch import db_fetch
 from eukan.cli.func_annot import func_annot
 from eukan.cli.gff3toseq import gff3toseq
 from eukan.cli.mask_repeats import mask_repeats
+from eukan.cli.prep_submission import prep_submission
 from eukan.cli.status import status
 
 
@@ -34,12 +35,13 @@ def cli(verbose: bool, quiet: bool) -> None:
 
     \b
     Typical workflow:
-      1. eukan check         Verify installation and tools
-         eukan db-fetch      Download UniProt + Pfam databases
-      2. eukan mask-repeats  Soft-mask repeats (optional but recommended)
-      3. eukan assemble      Build transcriptome from RNA-seq (optional but recommended)
-      4. eukan annotate      Annotate genome using proteins + assembly (if available)
-      5. eukan func-annot    Add functional info to predicted proteins
+      1. eukan check           Verify installation and tools
+         eukan db-fetch        Download UniProt + Pfam databases
+      2. eukan mask-repeats    Soft-mask repeats (optional but recommended)
+      3. eukan assemble        Build transcriptome from RNA-seq (optional but recommended)
+      4. eukan annotate        Annotate genome using proteins + assembly (if available)
+      5. eukan func-annot      Add functional info to predicted proteins
+      6. eukan prep-submission Validate + package for NCBI submission via table2asn
     \b
     Helpers:
          eukan compare      Compare annotations against a reference/previous annotation
@@ -65,7 +67,7 @@ def cli(verbose: bool, quiet: bool) -> None:
 
 
 for _cmd in (
-    annotate, assemble, mask_repeats, func_annot,
+    annotate, assemble, mask_repeats, func_annot, prep_submission,
     gff3toseq, db_fetch, check, status, compare,
 ):
     cli.add_command(_cmd)

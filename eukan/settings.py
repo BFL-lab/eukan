@@ -375,3 +375,90 @@ class FunctionalConfig(_StepRunSettings):
     evalue: str = "1e-1"
 
     settings_customise_sources = _pyproject_settings_sources("func-annot")
+
+
+# ---------------------------------------------------------------------------
+# Submission-prep settings (eukan prep-submission)
+# ---------------------------------------------------------------------------
+
+
+class SubmissionConfig(_StepRunSettings):
+    """Configuration for NCBI submission preparation (eukan prep-submission).
+
+    Wraps NCBI's table2asn validator. Auto-discovers ``genome`` from
+    ``eukan-run.json`` and ``gff3`` from ``work_dir`` (preferring
+    ``final.mod.gff3`` over ``final.gff3``) when not given explicitly.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="EUKAN_SUBMIT_",
+        extra="ignore",
+    )
+
+    # --- Inputs (auto-discoverable) ---
+    genome: Path | None = None
+    gff3: Path | None = None
+    template: Path  # required, no auto-discovery
+
+    # --- Source qualifiers (one of organism+isolate or source_info required) ---
+    organism: str | None = None
+    isolate: str | None = None
+    source_info: str | None = None  # raw -j override; supersedes organism/isolate
+
+    # --- table2asn flags (defaults match the standard NCBI submission recipe) ---
+    cleanup: str = "befw"
+    mode: str = "n"
+    assembly_type: str = "r10k"
+    locus_tag_prefix: str | None = None
+
+    # --- Output ---
+    output: Path | None = None  # default: <outdir>/<genome-stem>.sqn
+    outdir: Path = Field(default_factory=lambda: Path.cwd() / "submission")
+    extra_args: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _discover_inputs(self) -> SubmissionConfig:
+        log = get_logger(__name__)
+        from eukan.infra.artifacts import Artifact
+        from eukan.infra.manifest import load_manifest
+
+        manifest = None
+
+        if self.genome is None:
+            manifest = load_manifest(self.work_dir)
+            if manifest and manifest.genome:
+                discovered = Path(manifest.genome)
+                object.__setattr__(self, "genome", discovered)
+                log.info("Auto-discovered genome from eukan-run.json: %s", discovered)
+
+        if self.gff3 is None:
+            preferred = self.work_dir / Artifact.FINAL_FUNC_GFF3.value
+            fallback = self.work_dir / Artifact.FINAL_GFF3.value
+            if preferred.exists():
+                object.__setattr__(self, "gff3", preferred)
+                log.info("Auto-discovered annotated GFF3: %s", preferred.name)
+            elif fallback.exists():
+                object.__setattr__(self, "gff3", fallback)
+                log.warning(
+                    "Using %s (no functional annotations). "
+                    "Run `eukan func-annot` first for product names.",
+                    fallback.name,
+                )
+
+        if self.genome is None:
+            raise ValueError(
+                "genome not set and not discoverable. "
+                "Pass --genome or run from a directory containing eukan-run.json."
+            )
+        if self.gff3 is None:
+            raise ValueError(
+                "gff3 not set and not discoverable. "
+                "Pass --gff3 or run `eukan annotate` (and optionally `eukan func-annot`) first."
+            )
+
+        if self.output is None:
+            object.__setattr__(self, "output", self.outdir / f"{self.genome.stem}.sqn")
+
+        return self
+
+    settings_customise_sources = _pyproject_settings_sources("prep-submission")

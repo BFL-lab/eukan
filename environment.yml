@@ -59,6 +59,7 @@ dependencies:
   - snap
   - spaln>=3.0
   - star>=2.7
+  - table2asn>=1.28
   - trf>=4.09
   - trinity>=2.15
   - ucsc-blat

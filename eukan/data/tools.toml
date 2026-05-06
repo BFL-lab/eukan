@@ -349,3 +349,10 @@ binary = "build_comprehensive_transcriptome.dbi"
 version_cmd = ["build_comprehensive_transcriptome.dbi"]
 required_by = ["assemble"]
 # bundled with PASA (under $PASAHOME/scripts/, added to PATH via add_to_path)
+
+[table2asn]
+binary = "table2asn"
+version_cmd = ["table2asn", "-version"]
+required_by = ["prep-submission"]
+conda_package = "table2asn"
+min_version = "1.28"

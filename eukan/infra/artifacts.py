@@ -32,6 +32,10 @@ class Artifact(StrEnum):
     # --- repeats outputs consumed by AUGUSTUS ---
     REPEATMASK_HINTS = "hints_repeatmask.gff"
 
+    # --- annotation outputs (consumed by func-annot and prep-submission) ---
+    FINAL_GFF3      = "final.gff3"
+    FINAL_FUNC_GFF3 = "final.mod.gff3"
+
 
 def find(work_dir: Path, artifact: Artifact) -> Path | None:
     """Resolve an artifact under *work_dir*, returning ``None`` if absent."""

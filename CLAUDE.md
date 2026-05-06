@@ -22,6 +22,7 @@ poetry run eukan --help
 poetry run eukan annotate -g genome.fasta -p proteins.fasta --kingdom protist
 poetry run eukan assemble -g genome.fasta -l left.fq -r right.fq -A -T -P
 poetry run eukan func-annot -p proteins.faa --gff3 genes.gff3
+poetry run eukan prep-submission -t submission.sbt --organism "Genus species"
 poetry run eukan gff3toseq -g genome.fa -i genes.gff3 -o protein
 poetry run eukan db-fetch -o databases/
 poetry run eukan compare -r ref.gff3 -p pred.gff3                # single
@@ -41,16 +42,17 @@ docker build -t eukan -f docker/Dockerfile .
 
 ## Architecture
 
-### CLI (`eukan/cli.py`)
+### CLI (`eukan/cli/`)
 
-Click-based CLI with subcommands: `annotate`, `assemble`, `func-annot`, `gff3toseq`, `db-fetch`, `check`, `status`, `compare`. Entry point defined in `pyproject.toml` as `eukan = "eukan.cli:cli"`. All subcommands use harmonized option groups ("Required input", "Pipeline parameters", "Re-run steps"). Step re-run flags follow the `--run-*` pattern (e.g., `--run-genemark`, `--run-star`).
+Click-based CLI package with subcommands: `annotate`, `assemble`, `mask-repeats`, `func-annot`, `prep-submission`, `gff3toseq`, `db-fetch`, `check`, `status`, `compare`. One file per subcommand under `eukan/cli/`; shared infrastructure (option-group rendering, `numcpu_option`, `genome_option`, error formatting) lives in `eukan/cli/_framework.py`. Entry point defined in `pyproject.toml` as `eukan = "eukan.cli:cli"`. All subcommands use harmonized option groups ("Required input", "Pipeline parameters", "Re-run steps"). Step re-run flags follow the `--run-*` pattern (e.g., `--run-genemark`, `--run-star`).
 
 ### Package Structure
 
 ```
 eukan/
-├── cli.py              # Click CLI entry points
-├── settings.py         # PipelineConfig, AssemblyConfig, FunctionalConfig (pydantic-settings)
+├── cli/                # Click CLI package (one file per subcommand)
+├── settings.py         # PipelineConfig, AssemblyConfig, RepeatsConfig, FunctionalConfig, SubmissionConfig (pydantic-settings)
+├── submission.py       # table2asn wrapper (eukan prep-submission)
 ├── check.py            # Pre-flight checks for external tools and databases
 │
 ├── infra/              # Runtime infrastructure
@@ -104,6 +106,8 @@ eukan/
 6. Consensus model building via EVM, weighted by evidence type
 7. Optional UTR addition via PASA
 8. Final GFF3 formatting with locus tags
+9. Optional functional annotation via `func-annot` (UniProt/Pfam) → `final.mod.gff3`
+10. Optional `prep-submission` runs NCBI's table2asn validator over `final.mod.gff3` to produce a `.sqn` plus `.val/.dr/.stats` reports for iterative GFF3 refinement
 
 ### Run Manifest
 

@@ -11,7 +11,7 @@ import click
 @click.option(
     "--for", "subcommands", multiple=True,
     type=click.Choice(
-        ["annotate", "assemble", "func-annot", "db-fetch", "mask-repeats"],
+        ["annotate", "assemble", "func-annot", "db-fetch", "mask-repeats", "prep-submission"],
         case_sensitive=False,
     ),
     help="Only check tools needed by these subcommands. If omitted, check all.",

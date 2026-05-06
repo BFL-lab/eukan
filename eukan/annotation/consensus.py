@@ -10,6 +10,7 @@ from eukan.gff import create_gff_db
 from eukan.gff import intersecter as gffintersecter
 from eukan.gff import parser as gffparser
 from eukan.gff.io import count_gff3_features
+from eukan.infra.artifacts import Artifact
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_dir
@@ -114,6 +115,6 @@ def build_consensus_models(config: PipelineConfig, *evidence: Path) -> Path:
         consdb, config.work_dir / "orf_finder" / "transcript_orfs.gff3",
     )
 
-    final_path = config.work_dir / "final.gff3"
+    final_path = config.work_dir / Artifact.FINAL_GFF3.value
     _write_prettified_gff3(consdb, config.shortname, final_path)
     return final_path
