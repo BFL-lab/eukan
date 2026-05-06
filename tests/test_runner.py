@@ -6,12 +6,13 @@ import subprocess
 
 import pytest
 
-from eukan.exceptions import ExternalToolError
+from eukan.exceptions import ExternalToolError, MissingToolError
 from eukan.infra.runner import (
     _RUNNING,
     _track,
     _untrack,
     run_cmd,
+    run_piped,
     terminate_all_children,
 )
 
@@ -99,3 +100,35 @@ class TestRunCmd:
         before = len(_RUNNING)
         run_cmd(["true"], cwd=tmp_path)
         assert len(_RUNNING) == before
+
+    def test_missing_binary_raises_missing_tool_error(self, tmp_path):
+        """Tools not on PATH should raise MissingToolError, not FileNotFoundError."""
+        with pytest.raises(MissingToolError) as exc_info:
+            run_cmd(["definitely-not-a-real-binary-xyz"], cwd=tmp_path)
+        assert exc_info.value.tool == "definitely-not-a-real-binary-xyz"
+        assert "not found on PATH" in str(exc_info.value)
+        assert exc_info.value.hint and "eukan check" in exc_info.value.hint
+
+    def test_missing_binary_with_path_uses_basename(self, tmp_path):
+        """Path-style commands surface the binary basename, not the full path."""
+        with pytest.raises(MissingToolError) as exc_info:
+            run_cmd(["/opt/nope/missing-tool"], cwd=tmp_path)
+        assert exc_info.value.tool == "missing-tool"
+
+    def test_missing_cwd_does_not_become_missing_tool_error(self, tmp_path):
+        """A bogus cwd should still surface as FileNotFoundError, not be misclassified."""
+        bogus_cwd = tmp_path / "does_not_exist"
+        with pytest.raises(FileNotFoundError):
+            run_cmd(["true"], cwd=bogus_cwd)
+
+
+class TestRunPiped:
+    def test_missing_first_command_raises_missing_tool_error(self, tmp_path):
+        with pytest.raises(MissingToolError) as exc_info:
+            run_piped(["definitely-not-a-real-binary-xyz"], ["cat"], cwd=tmp_path)
+        assert exc_info.value.tool == "definitely-not-a-real-binary-xyz"
+
+    def test_missing_second_command_raises_missing_tool_error(self, tmp_path):
+        with pytest.raises(MissingToolError) as exc_info:
+            run_piped(["true"], ["definitely-not-a-real-binary-xyz"], cwd=tmp_path)
+        assert exc_info.value.tool == "definitely-not-a-real-binary-xyz"

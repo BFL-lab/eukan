@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 
-from eukan.exceptions import ExternalToolError
+from eukan.exceptions import ExternalToolError, MissingToolError
 from eukan.infra.environ import subprocess_env as _subprocess_env
 from eukan.infra.logging import get_logger
 
@@ -117,16 +117,24 @@ def run_cmd(
     # Run via Popen so we can register the child for SIGINT cleanup.
     # start_new_session=True isolates the child from terminal SIGINT, so
     # only our handler decides when to terminate it.
-    proc = subprocess.Popen(
-        cmd,
-        cwd=cwd,
-        env=_subprocess_env(extra_env),
-        stdin=stdin_target,
-        stdout=stdout_target,
-        stderr=stderr_target,
-        text=not binary,
-        start_new_session=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            env=_subprocess_env(extra_env),
+            stdin=stdin_target,
+            stdout=stdout_target,
+            stderr=stderr_target,
+            text=not binary,
+            start_new_session=True,
+        )
+    except FileNotFoundError as exc:
+        for h in (in_handle, out_handle, err_handle):
+            if h is not None:
+                h.close()
+        if cwd.is_dir():
+            raise MissingToolError(_tool_name(cmd), cmd=cmd) from exc
+        raise
     _track(proc)
     try:
         try:
@@ -193,18 +201,28 @@ def run_piped(
     log.debug("Running pipe: %s", cmd_str)
 
     env = _subprocess_env()
-    p1 = subprocess.Popen(
-        cmd1, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
+    try:
+        p1 = subprocess.Popen(
+            cmd1, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+    except FileNotFoundError as exc:
+        if cwd.is_dir():
+            raise MissingToolError(_tool_name(cmd1), cmd=cmd1) from exc
+        raise
     assert p1.stdout is not None  # PIPE was requested above
     _track(p1)
     p2: subprocess.Popen | None = None
     try:
-        p2 = subprocess.Popen(
-            cmd2, cwd=cwd, env=env, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            start_new_session=True,
-        )
+        try:
+            p2 = subprocess.Popen(
+                cmd2, cwd=cwd, env=env, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+        except FileNotFoundError as exc:
+            if cwd.is_dir():
+                raise MissingToolError(_tool_name(cmd2), cmd=cmd2) from exc
+            raise
         _track(p2)
         p1.stdout.close()
 

@@ -12,6 +12,7 @@ minimal and isinstance-friendly::
     │   ├── FastaValidationError
     │   └── GFFValidationError
     ├── DependencyError
+    │   ├── MissingToolError
     │   └── ToolEnvError
     └── ExternalToolError
 """
@@ -69,6 +70,27 @@ class GFFValidationError(ValidationError):
 
 class DependencyError(EukanError):
     """Missing or broken external tools or databases."""
+
+
+class MissingToolError(DependencyError):
+    """A required external binary is not installed or not on PATH.
+
+    Raised when ``subprocess`` cannot locate the executable for an
+    external tool. Translates the raw ``FileNotFoundError`` from
+    ``Popen`` into an actionable message.
+    """
+
+    def __init__(self, tool: str, *, cmd: list[str] | None = None) -> None:
+        self.tool = tool
+        self.cmd = list(cmd) if cmd else []
+        super().__init__(
+            f"required tool '{tool}' was not found on PATH",
+            hint=(
+                f"Install '{tool}' and ensure it is on PATH, or run inside the "
+                "eukan Docker image where dependencies are pre-installed. "
+                "Run 'eukan check' to verify all required tools and databases."
+            ),
+        )
 
 
 class ToolEnvError(DependencyError):
