@@ -360,7 +360,7 @@ class RepeatsConfig(_StepRunSettings):
 # ---------------------------------------------------------------------------
 
 
-class FunctionalConfig(BaseSettings):
+class FunctionalConfig(_StepRunSettings):
     """Configuration for functional annotation."""
 
     model_config = SettingsConfigDict(
@@ -372,7 +372,6 @@ class FunctionalConfig(BaseSettings):
     uniprot_db: Path = Path("databases/uniprot_sprot.faa")
     pfam_db: Path = Path("databases/Pfam-A.hmm")
     gff3_path: Path | None = None
-    num_cpu: int = Field(default_factory=lambda: os.cpu_count() or 1)
     evalue: str = "1e-1"
 
     settings_customise_sources = _pyproject_settings_sources("func-annot")

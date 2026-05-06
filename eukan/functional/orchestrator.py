@@ -19,6 +19,7 @@ from eukan.infra.manifest import (
     step_key,
     validate_or_raise,
 )
+from eukan.settings import FunctionalConfig
 
 log = get_logger(__name__)
 
@@ -45,44 +46,25 @@ def _search_and_cache(
 
 
 def run_functional_annotation(
-    proteins: Path,
-    uniprot_db: Path | None = None,
-    pfam_db: Path | None = None,
-    gff3_path: Path | None = None,
-    num_cpu: int = 1,
-    evalue: str = "1e-1",
-    force: bool = False,
-    manifest_dir: Path | None = None,
+    config: FunctionalConfig, *, force: bool = False,
 ) -> None:
-    """Run the full functional annotation pipeline.
-
-    If uniprot_db or pfam_db are None, defaults are loaded from
-    FunctionalConfig (pyproject.toml / EUKAN_FUNC_ env vars).
-
-    Args:
-        manifest_dir: Directory for eukan-run.json. Defaults to cwd.
-    """
-    from eukan.settings import FunctionalConfig
-
-    defaults = FunctionalConfig(proteins=proteins)
-    uniprot_db = uniprot_db or defaults.uniprot_db
-    pfam_db = pfam_db or defaults.pfam_db
-
-    work_dir = manifest_dir or Path.cwd()
-    manifest = get_or_create_manifest(work_dir, defaults)
+    """Run the full functional annotation pipeline."""
+    work_dir = config.work_dir
+    manifest = get_or_create_manifest(work_dir, config)
 
     if not force:
         validate_or_raise(manifest, _FUNCTIONAL_STEPS, _FUNCTIONAL_FLAGS)
 
     save_manifest(work_dir, manifest)
 
-    phmmer_json = proteins.parent / f"{proteins.stem}.phmmer.json"
-    hmmscan_json = proteins.parent / f"{proteins.stem}.hmmscan.json"
+    phmmer_json = config.proteins.parent / f"{config.proteins.stem}.phmmer.json"
+    hmmscan_json = config.proteins.parent / f"{config.proteins.stem}.hmmscan.json"
 
     run_orchestrated_step(
         work_dir, manifest, step_key(FUNCTIONAL, "search"),
         _search_and_cache,
-        proteins, uniprot_db, pfam_db, num_cpu, evalue, phmmer_json, hmmscan_json,
+        config.proteins, config.uniprot_db, config.pfam_db,
+        config.num_cpu, config.evalue, phmmer_json, hmmscan_json,
         step_dir=work_dir / "search",
         force=force,
     )
@@ -92,15 +74,15 @@ def run_functional_annotation(
 
     run_orchestrated_step(
         work_dir, manifest, step_key(FUNCTIONAL, "annotate_fasta"),
-        annotate_fasta, proteins, phmmer_res, hmmscan_res,
+        annotate_fasta, config.proteins, phmmer_res, hmmscan_res,
         step_dir=work_dir / "annotate_fasta",
         force=force,
     )
 
-    if gff3_path:
+    if config.gff3_path:
         run_orchestrated_step(
             work_dir, manifest, step_key(FUNCTIONAL, "annotate_gff3"),
-            annotate_gff3, gff3_path, phmmer_res, hmmscan_res,
+            annotate_gff3, config.gff3_path, phmmer_res, hmmscan_res,
             step_dir=work_dir / "annotate_gff3",
             force=force,
         )

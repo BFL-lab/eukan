@@ -619,21 +619,23 @@ def func_annot(
     or to run functional annotation independently of the main pipeline.
     """
     from eukan.functional import run_functional_annotation
+    from eukan.settings import FunctionalConfig
 
     if proteins is None:
         raise click.UsageError(
             "No protein file found. Provide --proteins or run `eukan annotate` first."
         )
 
-    run_functional_annotation(
+    config = FunctionalConfig(**_drop_none(
         proteins=proteins.resolve(),
+        work_dir=Path.cwd(),
+        num_cpu=numcpu,
+        evalue=evalue,
         uniprot_db=uniprot.resolve() if uniprot else None,
         pfam_db=pfam.resolve() if pfam else None,
         gff3_path=gff3.resolve() if gff3 else None,
-        num_cpu=numcpu,
-        evalue=evalue,
-        force=force,
-    )
+    ))
+    run_functional_annotation(config, force=force)
     click.echo("Done.")
 
 

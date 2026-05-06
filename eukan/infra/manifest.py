@@ -191,6 +191,10 @@ def init_manifest(config: Any) -> RunManifest:
     """
     kingdom = getattr(config, "kingdom", None)
     proteins = getattr(config, "proteins", None) or []
+    # Normalize scalar paths (FunctionalConfig has a single `proteins: Path`,
+    # PipelineConfig has `list[Path]`).
+    if isinstance(proteins, (str, Path)):
+        proteins = [proteins]
     return RunManifest(
         started_at=_now(),
         genome=str(getattr(config, "genome", "")),
