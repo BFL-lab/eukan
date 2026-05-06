@@ -15,9 +15,9 @@ import gffutils
 
 from eukan.annotation.validation import validate_fasta
 from eukan.exceptions import ExternalToolError
-from eukan.gff import create_gff_db, transform_db
+from eukan.gff import create_gff_db
 from eukan.gff import parser as gffparser
-from eukan.gff.io import featuredb2gff3_file
+from eukan.gff.normalize import normalize_to_gff3
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_shell
 from eukan.infra.steps import step_dir
@@ -122,13 +122,11 @@ def _run_spaln(
         cwd=sdir, out_file="temp.gff3",
     )
 
-    spaln_out = create_gff_db(sdir / "temp.gff3", transform=gffparser.Spaln.fix_cds_featuretype)
-    spaln_out = transform_db(spaln_out, gffparser.Spaln.fix_ids)
-    spaln_out.update(
-        gffparser.add_missing_feats_to_gff3(spaln_out),
-        merge_strategy="create_unique",
+    normalize_to_gff3(
+        sdir / "temp.gff3", sdir / "prot.gff3",
+        parse_transform=gffparser.Spaln.fix_cds_featuretype,
+        post_transform=gffparser.Spaln.fix_ids,
     )
-    featuredb2gff3_file(spaln_out, sdir / "prot.gff3")
 
 
 def _run_fitild(intron_hints_path: Path, sdir: Path) -> str:
@@ -292,10 +290,8 @@ def _run_gth(sdir: Path) -> None:
         ],
         cwd=sdir,
     )
-    gth_out = create_gff_db(sdir / "gth.gff3", transform=gffparser.Gth.filter)
-    gth_out.update(
-        gffparser.add_missing_feats_to_gff3(gth_out),
-        merge_strategy="create_unique",
+    normalize_to_gff3(
+        sdir / "gth.gff3", sdir / "prot.gff3",
+        parse_transform=gffparser.Gth.filter,
+        post_transform=gffparser.Gth.fix_ids,
     )
-    gth_out = transform_db(gth_out, gffparser.Gth.fix_ids)
-    featuredb2gff3_file(gth_out, sdir / "prot.gff3")

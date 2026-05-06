@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from eukan.infra.artifacts import Artifact
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.settings import AssemblyConfig
@@ -116,11 +117,11 @@ def run_pasa(config: AssemblyConfig) -> None:
     # Deduplicate FASTA
     _deduplicate_fasta(
         wd / "compreh_init_build.fasta",
-        wd / "nr_transcripts.fasta",
+        wd / Artifact.NR_TRANSCRIPTS_FASTA,
     )
 
     # Report non-redundant transcript count
-    nr_path = wd / "nr_transcripts.fasta"
+    nr_path = wd / Artifact.NR_TRANSCRIPTS_FASTA
     if nr_path.exists():
         with open(nr_path) as fh:
             nr_count = sum(1 for line in fh if line.startswith(">"))
@@ -165,7 +166,7 @@ def _build_transcript_hints(wd: Path) -> None:
 
     count = 0
     with open(gff3_in) as fin, \
-         open(wd / "nr_transcripts.gff3", "w") as gff_out, \
+         open(wd / Artifact.NR_TRANSCRIPTS_GFF, "w") as gff_out, \
          open(wd / "hints_transcripts.gff", "w") as hints_out:
         for line in fin:
             if line.startswith("#") or not line.strip():
@@ -197,7 +198,7 @@ def _build_transcript_hints(wd: Path) -> None:
             hints_out.write("\t".join(hint_cols) + "\n")
 
     # Merge all hints
-    with open(wd / "hints_rnaseq.gff", "w") as out:
+    with open(wd / Artifact.RNASEQ_HINTS, "w") as out:
         for hf in ["hints_transcripts.gff", "hints_introns.gff", "hints_coverage.gff"]:
             path = wd / hf
             if path.exists():

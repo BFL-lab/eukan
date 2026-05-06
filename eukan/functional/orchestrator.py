@@ -17,7 +17,7 @@ from eukan.infra.manifest import (
     run_orchestrated_step,
     save_manifest,
     step_key,
-    validate_step_outputs,
+    validate_or_raise,
 )
 
 log = get_logger(__name__)
@@ -69,14 +69,10 @@ def run_functional_annotation(
     pfam_db = pfam_db or defaults.pfam_db
 
     work_dir = manifest_dir or Path.cwd()
-    manifest = get_or_create_manifest(work_dir)
+    manifest = get_or_create_manifest(work_dir, defaults)
 
     if not force:
-        errors = validate_step_outputs(manifest, _FUNCTIONAL_STEPS, _FUNCTIONAL_FLAGS)
-        if errors:
-            for msg in errors:
-                log.error(msg)
-            raise SystemExit(1)
+        validate_or_raise(manifest, _FUNCTIONAL_STEPS, _FUNCTIONAL_FLAGS)
 
     save_manifest(work_dir, manifest)
 

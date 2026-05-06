@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import multiprocessing
 import sys
+from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -29,11 +30,19 @@ class _PreformattedEpilogCommand(click.Command):
     """
 
     def format_epilog(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        if self.epilog and _show_full_help:
-            text = _resolve_epilog(self.epilog)
-            formatter.write("\n")
-            for line in text.split("\n"):
-                formatter.write(f"  {line}\n")
+        # ctx.obj.show_full_help is set by _EukanGroup.parse_args based on
+        # whether --help (verbose) or -h (brief) was used. Walk up the
+        # context chain to find it (subcommand contexts inherit obj).
+        ctx_walk: click.Context | None = ctx
+        while ctx_walk is not None:
+            obj = getattr(ctx_walk, "obj", None)
+            if isinstance(obj, _CLIState) and obj.show_full_help:
+                text = _resolve_epilog(self.epilog or "")
+                formatter.write("\n")
+                for line in text.split("\n"):
+                    formatter.write(f"  {line}\n")
+                return
+            ctx_walk = ctx_walk.parent
 
     def format_options(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         from click_option_group import OptionGroup
@@ -63,8 +72,15 @@ class _PreformattedEpilogCommand(click.Command):
                 formatter.write_dl(section)
 
 
-# Track whether --help (verbose) or -h (brief) was used
-_show_full_help = False
+@dataclass
+class _CLIState:
+    """Per-invocation CLI state, attached to ``ctx.obj``.
+
+    Replaces the previous ``_show_full_help`` module global so concurrent
+    invocations (tests, programmatic use) don't clobber each other.
+    """
+
+    show_full_help: bool = False
 
 
 class _EukanGroup(click.Group):
@@ -75,8 +91,9 @@ class _EukanGroup(click.Group):
     """
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
-        global _show_full_help
-        _show_full_help = "--help" in args
+        # ensure_object so ctx.obj is set even before any callback runs.
+        ctx.ensure_object(_CLIState)
+        ctx.obj.show_full_help = "--help" in args
         return super().parse_args(ctx, args)
 
     def invoke(self, ctx: click.Context):
@@ -98,28 +115,14 @@ class _EukanGroup(click.Group):
                     click.echo(f"  {loc}: {err['msg']}", err=True)
                 raise SystemExit(1) from exc
 
-            from eukan.exceptions import (
-                ConfigurationError,
-                DependencyError,
-                EukanError,
-                ExternalToolError,
-                ValidationError,
-            )
+            from eukan.exceptions import EukanError
             if not isinstance(exc, EukanError):
                 raise
 
-            if isinstance(exc, ExternalToolError):
-                click.secho(f"Error: {exc.tool} failed (exit {exc.returncode})", fg="red", err=True)
-                if exc.step:
-                    click.echo(f"  Step: {exc.step}", err=True)
-                if exc.stderr_snippet:
-                    click.echo(f"  stderr: {exc.stderr_snippet[:300]}", err=True)
-                click.echo("  Run with -v for full command and stderr output.", err=True)
-            elif isinstance(exc, (ValidationError, DependencyError, ConfigurationError)):
-                click.secho(f"Error: {exc}", fg="red", err=True)
-            else:
-                click.secho(f"Error: {exc}", fg="red", err=True)
-
+            title, details = exc.format_for_cli()
+            click.secho(title, fg="red", err=True)
+            for line in details:
+                click.echo(f"  {line}", err=True)
             if exc.hint:
                 click.echo(f"  Hint: {exc.hint}", err=True)
 
@@ -127,6 +130,17 @@ class _EukanGroup(click.Group):
 
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
+
+
+def _drop_none(**kwargs) -> dict:
+    """Build a kwargs dict, dropping keys whose value is ``None``.
+
+    Keeps the CLI → config plumbing terse without losing the ability for
+    pydantic-settings to discover unset fields from pyproject.toml or
+    environment variables: an explicit ``None`` from a missing CLI flag
+    must not overwrite a value those sources would have provided.
+    """
+    return {k: v for k, v in kwargs.items() if v is not None}
 
 
 # Shared option decorators reused across subcommands.
@@ -344,29 +358,22 @@ def annotate(
 
     # Only pass fields explicitly set by the user; pydantic-settings
     # fills the rest from pyproject.toml / env vars / defaults.
-    kwargs: dict = {
-        "genome": genome.resolve(),
-        "proteins": [p.resolve() for p in proteins],
-        "work_dir": Path.cwd(),
-        "num_cpu": numcpu,
-        "genetic_code": str(code),
-        "weights": list(weights),
-        "strand_specific": strand_specific,
-        "allow_noncanonical_splice": splice_permissive,
-        "spaln_ssp": spsp,
-    }
-    if kingdom:
-        kwargs["kingdom"] = kingdom
-    if transcripts_fasta:
-        kwargs["transcripts_fasta"] = transcripts_fasta.resolve()
-    if transcripts_gff:
-        kwargs["transcripts_gff"] = transcripts_gff.resolve()
-    if rnaseq_hints:
-        kwargs["rnaseq_hints"] = rnaseq_hints.resolve()
-    if utrs:
-        kwargs["utrs_db"] = utrs.resolve()
-
-    config = PipelineConfig(**kwargs)
+    config = PipelineConfig(**_drop_none(
+        genome=genome.resolve(),
+        proteins=[p.resolve() for p in proteins],
+        work_dir=Path.cwd(),
+        num_cpu=numcpu,
+        genetic_code=str(code),
+        weights=list(weights),
+        strand_specific=strand_specific,
+        allow_noncanonical_splice=splice_permissive,
+        spaln_ssp=spsp,
+        kingdom=kingdom or None,
+        transcripts_fasta=transcripts_fasta.resolve() if transcripts_fasta else None,
+        transcripts_gff=transcripts_gff.resolve() if transcripts_gff else None,
+        rnaseq_hints=rnaseq_hints.resolve() if rnaseq_hints else None,
+        utrs_db=utrs.resolve() if utrs else None,
+    ))
 
     from eukan.annotation.orchestrator import force_steps_from_run_flags
 
@@ -471,39 +478,33 @@ def assemble(
                 "Single-end strand types (R/F) cannot be used with paired-end reads."
             )
 
-    kwargs: dict = {
-        "genome": genome.resolve(),
-        "work_dir": Path.cwd(),
-        "min_intron_len": min_intron,
-        "max_intron_len": max_intron,
-        "phred_quality": int(phred),
-        "num_cpu": numcpu,
-        "align_mode": align_mode,
-        "jaccard_clip": jaccard_clip,
-        "splice_permissive": splice_permissive,
-        "genetic_code": genetic_code,
-    }
-    if left:
-        kwargs["left_reads"] = left.resolve()
-    if right:
-        kwargs["right_reads"] = right.resolve()
-    if single:
-        kwargs["single_reads"] = single.resolve()
-    if strand_specific:
-        kwargs["strand_specific"] = strand_specific
-    if memory_gb is not None:
-        if memory_gb < 1:
-            raise click.UsageError("--memory-gb must be at least 1 GiB.")
-        kwargs["memory_gb"] = memory_gb
+    if memory_gb is not None and memory_gb < 1:
+        raise click.UsageError("--memory-gb must be at least 1 GiB.")
 
-    config = AssemblyConfig(**kwargs)
+    config = AssemblyConfig(**_drop_none(
+        genome=genome.resolve(),
+        work_dir=Path.cwd(),
+        min_intron_len=min_intron,
+        max_intron_len=max_intron,
+        phred_quality=int(phred),
+        num_cpu=numcpu,
+        align_mode=align_mode,
+        jaccard_clip=jaccard_clip,
+        splice_permissive=splice_permissive,
+        genetic_code=genetic_code,
+        left_reads=left.resolve() if left else None,
+        right_reads=right.resolve() if right else None,
+        single_reads=single.resolve() if single else None,
+        strand_specific=strand_specific,
+        memory_gb=memory_gb,
+    ))
 
-    from eukan.assembly.orchestrator import steps_and_force_from_run_flags
+    from eukan.assembly.orchestrator import force_steps_from_run_flags
 
-    steps, force = steps_and_force_from_run_flags(
+    force_steps = force_steps_from_run_flags(
         run_star=run_star, run_trinity=run_trinity, run_pasa=run_pasa, force=force,
     )
-    run_assembly(config, steps, force=force)
+    run_assembly(config, force_steps=force_steps or None)
     click.echo("Done.")
 
 
@@ -552,24 +553,21 @@ def mask_repeats(
     Pass the masked genome to `eukan annotate -g <stem>.masked.fasta`.
     """
     from eukan.repeats import run_repeats
-    from eukan.repeats.orchestrator import steps_and_force_from_run_flags
+    from eukan.repeats.orchestrator import force_steps_from_run_flags
     from eukan.settings import RepeatsConfig
 
-    kwargs: dict = {
-        "genome": genome.resolve(),
-        "work_dir": Path.cwd(),
-        "num_cpu": numcpu,
-        "engine": engine.lower(),
-    }
-    if lib:
-        kwargs["lib"] = lib.resolve()
+    config = RepeatsConfig(**_drop_none(
+        genome=genome.resolve(),
+        work_dir=Path.cwd(),
+        num_cpu=numcpu,
+        engine=engine.lower(),
+        lib=lib.resolve() if lib else None,
+    ))
 
-    config = RepeatsConfig(**kwargs)
-
-    steps, force = steps_and_force_from_run_flags(
+    force_steps = force_steps_from_run_flags(
         run_modeler=run_modeler, run_masker=run_masker, force=force,
     )
-    masked = run_repeats(config, steps, force=force)
+    masked = run_repeats(config, force_steps=force_steps or None)
     click.echo(f"Done. Masked genome: {masked}")
     click.echo(
         f"Pass it to the next stage with: eukan annotate -g {masked.name} ..."
@@ -764,15 +762,18 @@ def status(work_dir: Path) -> None:
 
 def _derive_compare_labels(paths: tuple[Path, ...]) -> list[str]:
     """Default labels for --predicted: file stems, dedup'd by numeric suffix."""
+    from collections import Counter
+
     stems = [p.stem for p in paths]
-    counts: dict[str, int] = {}
-    for stem in stems:
-        counts[stem] = counts.get(stem, 0) + 1
-    seen: dict[str, int] = {}
+    counts = Counter(stems)
+    if all(c == 1 for c in counts.values()):
+        return stems
+
+    seen: Counter[str] = Counter()
     out: list[str] = []
     for stem in stems:
         if counts[stem] > 1:
-            seen[stem] = seen.get(stem, 0) + 1
+            seen[stem] += 1
             out.append(f"{stem}_{seen[stem]}")
         else:
             out.append(stem)

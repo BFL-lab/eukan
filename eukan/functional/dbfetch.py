@@ -16,7 +16,8 @@ from pathlib import Path
 import pyhmmer
 import requests
 
-from eukan.infra.logging import get_logger, md5_file
+from eukan.infra.logging import get_logger
+from eukan.infra.utils import md5_file
 
 log = get_logger(__name__)
 

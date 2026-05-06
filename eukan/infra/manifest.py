@@ -20,28 +20,44 @@ import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from eukan.infra.logging import get_logger, md5_file, validate_gff
+from eukan.gff.validation import validate_gff
+from eukan.infra.logging import get_logger
+from eukan.infra.utils import md5_file
 
 log = get_logger(__name__)
 
 MANIFEST_FILE = "eukan-run.json"
 SENTINEL = ".running"
 
-# Manifest step keys are prefixed with a pipeline name so the three
-# pipelines can share a single eukan-run.json without colliding.
-ANNOTATION = "annotation"
-ASSEMBLY = "assembly"
-FUNCTIONAL = "functional"
-REPEATS = "repeats"
+
+class PipelineName(StrEnum):
+    """Manifest-key prefix for each pipeline.
+
+    Step keys are prefixed (``annotation/genemark`` etc.) so all pipelines
+    can share a single ``eukan-run.json`` without colliding. Inherits
+    ``StrEnum`` so the value is used in str-context (f-strings, comparisons).
+    """
+
+    ANNOTATION = "annotation"
+    ASSEMBLY = "assembly"
+    FUNCTIONAL = "functional"
+    REPEATS = "repeats"
 
 
-def step_key(pipeline: str, name: str) -> str:
+# Re-exports for callers that prefer the bare-name form.
+ANNOTATION = PipelineName.ANNOTATION
+ASSEMBLY = PipelineName.ASSEMBLY
+FUNCTIONAL = PipelineName.FUNCTIONAL
+REPEATS = PipelineName.REPEATS
+
+
+def step_key(pipeline: str | PipelineName, name: str) -> str:
     """Build a prefixed manifest key, e.g. ``annotation/genemark``."""
     return f"{pipeline}/{name}"
 
@@ -164,15 +180,25 @@ def save_manifest(work_dir: Path, manifest: RunManifest) -> None:
 
 
 def init_manifest(config: Any) -> RunManifest:
-    """Create a new manifest from pipeline config, snapshotting tool versions."""
+    """Create a new manifest from a pipeline config, snapshotting tool versions.
+
+    Defensive against partial configs: only ``PipelineConfig`` carries
+    every field below. ``AssemblyConfig`` / ``RepeatsConfig`` /
+    ``FunctionalConfig`` populate what they have and leave the rest at
+    their defaults — so whichever pipeline runs first in a clean
+    work_dir gets a coherent (if sparse) record. Subsequent pipelines
+    sharing the manifest are free to add their step records.
+    """
+    kingdom = getattr(config, "kingdom", None)
+    proteins = getattr(config, "proteins", None) or []
     return RunManifest(
         started_at=_now(),
-        genome=str(config.genome),
-        proteins=[str(p) for p in config.proteins],
-        kingdom=config.kingdom.value if config.kingdom else None,
-        genetic_code=config.genetic_code,
-        num_cpu=config.num_cpu,
-        has_transcripts=config.has_transcripts,
+        genome=str(getattr(config, "genome", "")),
+        proteins=[str(p) for p in proteins],
+        kingdom=kingdom.value if kingdom else None,
+        genetic_code=getattr(config, "genetic_code", "") or "",
+        num_cpu=getattr(config, "num_cpu", 1),
+        has_transcripts=bool(getattr(config, "has_transcripts", False)),
         tool_versions=_snapshot_tool_versions(),
     )
 
@@ -187,7 +213,7 @@ def get_or_create_manifest(work_dir: Path, config: Any = None) -> RunManifest:
     manifest = load_manifest(work_dir)
     if manifest:
         return manifest
-    if config:
+    if config is not None:
         return init_manifest(config)
     return RunManifest(started_at=_now(), tool_versions=_snapshot_tool_versions())
 
@@ -298,6 +324,7 @@ def run_orchestrated_step(
     if not force:
         cached = is_step_complete(manifest, step_name)
         if cached:
+            log.info("[%s] Already complete, skipping.", step_name)
             return cached
 
     sdir = step_dir if step_dir else manifest_dir / step_name.rsplit("/", 1)[-1]
@@ -322,6 +349,8 @@ def is_step_complete(manifest: RunManifest, step_name: str) -> Path | None:
     """Check if a step was completed in a previous run.
 
     Returns the output path if complete and file exists, else None.
+    Pure predicate: callers are responsible for any user-visible logging
+    that follows from the result.
     """
     record = manifest.steps.get(step_name)
     if not record or record.status != StepStatus.completed:
@@ -330,7 +359,6 @@ def is_step_complete(manifest: RunManifest, step_name: str) -> Path | None:
         return None
     path = Path(record.output_file)
     if path.exists():
-        log.info("[%s] Already complete, skipping.", step_name)
         return path
     return None
 
@@ -346,6 +374,25 @@ def clean_interrupted_step(work_dir: Path, step_name: str, step_dir: Path | None
     sdir = step_dir if step_dir else work_dir / step_name
     if sdir.exists():
         shutil.rmtree(sdir)
+
+
+def validate_or_raise(
+    manifest: RunManifest,
+    expected_steps: list[str],
+    step_to_flag: dict[str, str] | None = None,
+) -> None:
+    """Validate completed step outputs; raise StaleManifestError on any error.
+
+    Replaces the orchestrator-level boilerplate of "log each error then
+    raise SystemExit(1)" — that bypasses the CLI's structured error
+    handling. Use this from inside library code; the CLI handler renders
+    StaleManifestError uniformly.
+    """
+    from eukan.exceptions import StaleManifestError
+
+    errors = validate_step_outputs(manifest, expected_steps, step_to_flag)
+    if errors:
+        raise StaleManifestError(errors)
 
 
 def validate_step_outputs(
@@ -407,15 +454,60 @@ def validate_step_outputs(
 _CONDA_TOOLS = ["samtools", "augustus", "star", "hmmer", "spaln", "snap", "trinity"]
 
 
+def _tool_versions_cache_path() -> Path:
+    """Per-user cache file for the conda tool-version snapshot."""
+    import os
+
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / "eukan" / "tool-versions.json"
+
+
 def _snapshot_tool_versions() -> dict[str, str]:
-    """Capture version strings for key tools via conda. Best-effort, never fails."""
+    """Capture version strings for key tools via conda. Best-effort, never fails.
+
+    Cached in ``$XDG_CACHE_HOME/eukan/tool-versions.json`` (or
+    ``~/.cache/eukan/tool-versions.json``) keyed by ``CONDA_PREFIX`` and
+    its mtime — re-running ``conda list`` on every fresh manifest costs
+    hundreds of milliseconds, and the result only changes when packages
+    are installed or upgraded.
+    """
+    import json
     import os
 
     prefix = os.environ.get("CONDA_PREFIX", "")
     if not prefix:
         return {}
 
-    # Use conda list for clean version strings
+    try:
+        prefix_mtime = Path(prefix).stat().st_mtime
+    except OSError:
+        prefix_mtime = 0.0
+
+    cache_path = _tool_versions_cache_path()
+    if cache_path.exists():
+        try:
+            cached = json.loads(cache_path.read_text())
+            if cached.get("prefix") == prefix and cached.get("mtime") == prefix_mtime:
+                return dict(cached.get("versions") or {})
+        except (OSError, ValueError):
+            pass
+
+    versions = _query_conda_versions(prefix)
+
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(
+            {"prefix": prefix, "mtime": prefix_mtime, "versions": versions},
+            indent=2,
+        ))
+    except OSError:
+        pass  # caching is best-effort
+
+    return versions
+
+
+def _query_conda_versions(prefix: str) -> dict[str, str]:
+    """Run ``conda list`` once and parse version strings for known tools."""
     try:
         result = subprocess.run(
             ["conda", "list", "-p", prefix, "--no-pip"],
@@ -469,6 +561,18 @@ def format_status(manifest: RunManifest) -> str:
         lines.append("Tool versions:")
         for tool, ver in manifest.tool_versions.items():
             lines.append(f"  {tool:<20s} {ver}")
+        lines.append("")
+
+    # Per-pipeline summary above the step detail.
+    pipeline_summaries = [
+        (p, manifest.pipeline_status(p.value)) for p in PipelineName
+    ]
+    if any(status != "pending" for _, status in pipeline_summaries):
+        lines.append("Pipelines:")
+        for pipeline, status in pipeline_summaries:
+            if status == "pending":
+                continue
+            lines.append(f"  {pipeline.value:<12s} {status}")
         lines.append("")
 
     lines.append("Steps:")

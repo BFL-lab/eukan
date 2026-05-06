@@ -15,7 +15,7 @@ from eukan.functional.dbfetch import (
 from eukan.functional.dbfetch import (
     save_db_manifest as save_manifest,
 )
-from eukan.infra.logging import md5_file
+from eukan.infra.utils import md5_file
 
 
 class _FakeResponse:

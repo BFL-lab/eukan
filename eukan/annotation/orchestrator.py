@@ -13,8 +13,9 @@ from eukan.annotation.genemark import run_genemark
 from eukan.annotation.orf import create_transcriptome_orf_db
 from eukan.annotation.snap import run_codingquarry, run_snap
 from eukan.annotation.validation import sanitize_genome_fasta, validate_fasta
-from eukan.gff.io import featuredb2gff3_file
-from eukan.infra.logging import count_gff3_features, get_logger
+from eukan.gff.io import count_gff3_features, featuredb2gff3_file
+from eukan.infra.artifacts import masked_genome
+from eukan.infra.logging import get_logger
 from eukan.infra.manifest import (
     ANNOTATION,
     RunManifest,
@@ -22,7 +23,7 @@ from eukan.infra.manifest import (
     run_orchestrated_step,
     save_manifest,
     step_key,
-    validate_step_outputs,
+    validate_or_raise,
 )
 from eukan.infra.steps import step_dir
 from eukan.settings import PipelineConfig
@@ -37,7 +38,7 @@ log = get_logger(__name__)
 
 def find_orfs(config: PipelineConfig, trans_gff3: Path) -> Path:
     """Find ORFs in transcript assemblies."""
-    from eukan.infra.logging import validate_gff
+    from eukan.gff.validation import validate_gff
 
     output = "transcript_orfs.gff3"
     sdir = step_dir(config.work_dir, "orf_finder")
@@ -131,7 +132,7 @@ def run_annotation_pipeline(
     # unmasked genome, point them at the masked sibling. Don't auto-swap —
     # explicit input is safer than a silent path substitution.
     if not config.genome.name.endswith(".masked.fasta"):
-        masked_sibling = config.work_dir / f"{config.genome.stem}.masked.fasta"
+        masked_sibling = masked_genome(config.work_dir, config.genome.stem)
         if masked_sibling.exists() and masked_sibling != config.genome:
             log.info(
                 "Note: found %s alongside the input genome — pass it via -g for "
@@ -167,11 +168,7 @@ def run_annotation_pipeline(
     else:
         # Validate manifest: check completed steps have valid output
         expected = _expected_steps(config)
-        errors = _validate_step_outputs(manifest, expected)
-        if errors:
-            for msg in errors:
-                log.error(msg)
-            raise SystemExit(1)
+        validate_or_raise(manifest, expected, _STEP_TO_FLAG)
 
         # Check if there's any work to do
         pending = [s for s in expected if s not in manifest.steps]
@@ -251,11 +248,6 @@ def force_steps_from_run_flags(
     return forced
 
 
-def _validate_step_outputs(manifest: RunManifest, expected: list[str]) -> list[str]:
-    """Validate that completed steps have non-empty output files."""
-    return validate_step_outputs(manifest, expected, _STEP_TO_FLAG)
-
-
 def _expected_steps(config: PipelineConfig) -> list[str]:
     """Return the list of manifest step keys expected for this config."""
     prot_align_step = "prot_align_ssp" if config.spaln_ssp else "prot_align"
@@ -273,9 +265,8 @@ def _expected_steps(config: PipelineConfig) -> list[str]:
 def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
     """Execute annotation steps in dependency phases.
 
-    Phases run sequentially; within a phase, independent steps run
-    concurrently. Behavior matrix preserved verbatim from the previous
-    nested form:
+    Each phase reads inputs from ``ev`` and returns the keys it produced.
+    Behavior matrix preserved verbatim from the previous nested form:
 
       - has_transcripts + is_fungus
             ORF || GeneMark, then spaln (intron-hinted), AUGUSTUS,
@@ -289,50 +280,73 @@ def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
       - no transcripts + neither
             GeneMark, spaln, AUGUSTUS, SNAP, EVM(spaln, augustus, snap, genemark)
     """
-    has_t = config.has_transcripts
     ev: dict[str, Path] = {}
+    ev = _phase_orf_and_genemark(config, manifest, ev)
+    ev = _phase_protein_alignment(config, manifest, ev)
+    ev = _phase_augustus(config, manifest, ev)
+    ev = _phase_snap_codingquarry(config, manifest, ev)
+    return _phase_evm(config, manifest, ev)
 
-    # Phase 1: ORF finding (transcripts only) and GeneMark, concurrent when both run.
-    if has_t:
+
+def _phase_orf_and_genemark(
+    config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
+) -> dict[str, Path]:
+    """Phase 1: ORF finding (transcripts only) + GeneMark, run concurrently."""
+    if config.has_transcripts:
         assert config.transcripts_gff is not None and config.rnaseq_hints is not None
         results = _run_concurrent_steps(config, manifest, [
             ("orf_finder", find_orfs, (config.transcripts_gff,), {}),
             ("genemark", run_genemark, (config.rnaseq_hints,), {}),
         ])
-        ev["transcriptORFs"] = results["orf_finder"]
-        ev["genemark"] = results["genemark"]
+        ev = {**ev, "transcriptORFs": results["orf_finder"], "genemark": results["genemark"]}
     else:
-        ev["genemark"] = _run_step(config, manifest, "genemark", run_genemark)
+        ev = {**ev, "genemark": _run_step(config, manifest, "genemark", run_genemark)}
     _log_prediction_count("GeneMark", ev["genemark"])
+    return ev
 
-    # Phase 2: Protein alignment.
+
+def _phase_protein_alignment(
+    config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
+) -> dict[str, Path]:
+    """Phase 2: spliced protein alignment via spaln (intron-hinted) or gth."""
     prot_step = "prot_align_ssp" if config.spaln_ssp else "prot_align"
     spaln_extra: tuple = ()
-    if has_t:
+    if config.has_transcripts:
         intron_hints = config.work_dir / "genemark" / "introns.gff"
         spaln_extra = (intron_hints if intron_hints.exists() else None,)
-    ev["spaln"] = _run_step(
+    spaln_path = _run_step(
         config, manifest, prot_step, align_proteins,
         ev["genemark"], config.proteins, *spaln_extra,
     )
+    return {**ev, "spaln": spaln_path}
 
-    # Phase 3: AUGUSTUS.
-    aug_extra: tuple = (ev["transcriptORFs"],) if has_t else ()
-    ev["augustus"] = _run_step(
+
+def _phase_augustus(
+    config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
+) -> dict[str, Path]:
+    """Phase 3: AUGUSTUS training and prediction."""
+    aug_extra: tuple = (ev["transcriptORFs"],) if config.has_transcripts else ()
+    aug_path = _run_step(
         config, manifest, "augustus", run_augustus,
         ev["genemark"], ev["spaln"], *aug_extra,
     )
-    _log_prediction_count("AUGUSTUS", ev["augustus"])
+    _log_prediction_count("AUGUSTUS", aug_path)
+    return {**ev, "augustus": aug_path}
 
-    # Phase 4: SNAP (and CodingQuarry, for fungus/protist).
+
+def _phase_snap_codingquarry(
+    config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
+) -> dict[str, Path]:
+    """Phase 4: SNAP, plus CodingQuarry for fungus/protist; skipped for has_t & non-fungus."""
+    has_t = config.has_transcripts
+
     if has_t and config.is_fungus:
         assert config.transcripts_gff is not None
         results = _run_concurrent_steps(config, manifest, [
             ("snap", run_snap, (ev["augustus"], ev["spaln"], ev["transcriptORFs"]), {}),
             ("codingquarry", run_codingquarry, (config.transcripts_gff,), {}),
         ])
-        ev["snap"] = results["snap"]
-        ev["codingquarry"] = results["codingquarry"]
+        ev = {**ev, "snap": results["snap"], "codingquarry": results["codingquarry"]}
         _log_prediction_count("SNAP", ev["snap"])
         _log_prediction_count("CodingQuarry", ev["codingquarry"])
     elif not has_t and (config.is_fungus or config.is_protist):
@@ -340,24 +354,30 @@ def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
             ("snap", run_snap, (ev["augustus"], ev["spaln"]), {}),
             ("codingquarry", run_codingquarry, (ev["augustus"],), {}),
         ])
-        ev["snap"] = results["snap"]
-        ev["codingquarry"] = results["codingquarry"]
+        ev = {**ev, "snap": results["snap"], "codingquarry": results["codingquarry"]}
         _log_prediction_count("SNAP", ev["snap"])
         _log_prediction_count("CodingQuarry", ev["codingquarry"])
     elif not has_t:
-        ev["snap"] = _run_step(
+        snap_path = _run_step(
             config, manifest, "snap", run_snap, ev["augustus"], ev["spaln"],
         )
-        _log_prediction_count("SNAP", ev["snap"])
+        ev = {**ev, "snap": snap_path}
+        _log_prediction_count("SNAP", snap_path)
     # else: has_t but not fungus -- SNAP/CodingQuarry are skipped entirely.
 
-    # Phase 5: EVM consensus. Argument order varies with which evidence ran.
+    return ev
+
+
+def _phase_evm(
+    config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
+) -> Path:
+    """Phase 5: EVM consensus. Argument order varies with which evidence ran."""
     evm_args: list[Path] = [ev["spaln"], ev["augustus"]]
     if "snap" in ev:
         evm_args.append(ev["snap"])
     if "codingquarry" in ev:
         evm_args.append(ev["codingquarry"])
-    if has_t:
+    if config.has_transcripts:
         assert config.transcripts_gff is not None
         evm_args.append(config.transcripts_gff)
     elif "snap" in ev and not (config.is_fungus or config.is_protist):

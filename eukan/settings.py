@@ -162,12 +162,16 @@ class PipelineConfig(_StepRunSettings):
     strand_specific: bool = False
     utrs_db: Path | None = None
 
-    # Well-known assembly output filenames
-    _ASSEMBLY_FILES: dict[str, str] = {
-        "transcripts_fasta": "nr_transcripts.fasta",
-        "transcripts_gff": "nr_transcripts.gff3",
-        "rnaseq_hints": "hints_rnaseq.gff",
-    }
+    # Well-known assembly output filenames — sourced from the cross-pipeline
+    # artifact registry so renaming an artifact only edits one file.
+    @staticmethod
+    def _assembly_files() -> dict[str, str]:
+        from eukan.infra.artifacts import Artifact
+        return {
+            "transcripts_fasta": Artifact.NR_TRANSCRIPTS_FASTA.value,
+            "transcripts_gff": Artifact.NR_TRANSCRIPTS_GFF.value,
+            "rnaseq_hints": Artifact.RNASEQ_HINTS.value,
+        }
 
     # --- Validators ------------------------------------------------------
 
@@ -187,9 +191,10 @@ class PipelineConfig(_StepRunSettings):
             return self
 
         # If the user set some but not all explicitly, don't override their intent
+        assembly_files = self._assembly_files()
         explicitly_set = {
             field: getattr(self, field)
-            for field in self._ASSEMBLY_FILES
+            for field in assembly_files
             if getattr(self, field) is not None
         }
         if explicitly_set:
@@ -198,7 +203,7 @@ class PipelineConfig(_StepRunSettings):
         # Scan work_dir for assembly outputs
         found: dict[str, Path] = {}
         missing: list[str] = []
-        for field, filename in self._ASSEMBLY_FILES.items():
+        for field, filename in assembly_files.items():
             path = self.work_dir / filename
             if path.exists():
                 found[field] = path

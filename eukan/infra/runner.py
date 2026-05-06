@@ -6,6 +6,8 @@ import contextlib
 import subprocess
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from eukan.exceptions import ExternalToolError, MissingToolError
@@ -29,6 +31,46 @@ def _track(proc: subprocess.Popen) -> None:
 def _untrack(proc: subprocess.Popen) -> None:
     with _REGISTRY_LOCK:
         _RUNNING.discard(proc)
+
+
+@contextmanager
+def _tracked_popen(
+    cmd: list[str] | str,
+    *,
+    cwd: Path,
+    env: dict[str, str] | None,
+    missing_tool: str | None = None,
+    **popen_kwargs,
+) -> Iterator[subprocess.Popen]:
+    """Spawn a Popen registered for SIGINT cleanup, with isolated session.
+
+    On ``KeyboardInterrupt`` the child is terminated (5s grace) then
+    SIGKILLed; in either case the process is unregistered before the
+    context exits. ``FileNotFoundError`` is translated to
+    :class:`MissingToolError` when *missing_tool* is provided and the
+    cwd actually exists (so a missing cwd surfaces as the original
+    FileNotFoundError, not a misleading "tool not found").
+    """
+    try:
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, env=env, start_new_session=True, **popen_kwargs,
+        )
+    except FileNotFoundError as exc:
+        if missing_tool is not None and cwd.is_dir():
+            raise MissingToolError(missing_tool) from exc
+        raise
+    _track(proc)
+    try:
+        yield proc
+    except KeyboardInterrupt:
+        proc.terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.communicate(timeout=5)
+        if proc.returncode is None:
+            proc.kill()
+        raise
+    finally:
+        _untrack(proc)
 
 
 def terminate_all_children(grace_period: float = 5.0) -> None:
@@ -114,51 +156,30 @@ def run_cmd(
     stdout_target: int = out_handle.fileno() if out_handle else subprocess.DEVNULL
     stderr_target: int = err_handle.fileno() if err_handle else subprocess.PIPE
 
-    # Run via Popen so we can register the child for SIGINT cleanup.
-    # start_new_session=True isolates the child from terminal SIGINT, so
-    # only our handler decides when to terminate it.
+    tool = _tool_name(cmd)
     try:
-        proc = subprocess.Popen(
+        with _tracked_popen(
             cmd,
             cwd=cwd,
             env=_subprocess_env(extra_env),
+            missing_tool=tool,
             stdin=stdin_target,
             stdout=stdout_target,
             stderr=stderr_target,
             text=not binary,
-            start_new_session=True,
-        )
-    except FileNotFoundError as exc:
-        for h in (in_handle, out_handle, err_handle):
-            if h is not None:
-                h.close()
-        if cwd.is_dir():
-            raise MissingToolError(_tool_name(cmd), cmd=cmd) from exc
-        raise
-    _track(proc)
-    try:
-        try:
-            _, stderr = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
-            proc.kill()
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                proc.communicate(timeout=5)
-            raise ExternalToolError(
-                f"{_tool_name(cmd)} timed out after {timeout}s",
-                tool=_tool_name(cmd),
-                returncode=-1,
-                cmd=cmd,
-                stderr_snippet=str(exc),
-            ) from exc
-        except KeyboardInterrupt:
-            proc.terminate()
+        ) as proc:
             try:
-                proc.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
+                _, stderr = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired as exc:
                 proc.kill()
-            raise
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    proc.communicate(timeout=5)
+                raise ExternalToolError(
+                    f"{tool} timed out after {timeout}s",
+                    tool=tool, returncode=-1, cmd=cmd,
+                    stderr_snippet=str(exc),
+                ) from exc
     finally:
-        _untrack(proc)
         for h in (in_handle, out_handle, err_handle):
             if h is not None:
                 h.close()
@@ -168,15 +189,13 @@ def run_cmd(
     else:
         stderr_text = stderr if isinstance(stderr, str) else stderr.decode(errors="replace")
     if stderr_text:
-        log.debug("stderr from %s:\n%s", _tool_name(cmd), stderr_text)
+        log.debug("stderr from %s:\n%s", tool, stderr_text)
 
     if proc.returncode != 0:
         log.error("Command failed (exit %d): %s", proc.returncode, cmd_str)
         raise ExternalToolError(
-            f"{_tool_name(cmd)} failed (exit {proc.returncode})",
-            tool=_tool_name(cmd),
-            returncode=proc.returncode,
-            cmd=cmd,
+            f"{tool} failed (exit {proc.returncode})",
+            tool=tool, returncode=proc.returncode, cmd=cmd,
             stderr_snippet=stderr_text,
         )
 
@@ -201,45 +220,24 @@ def run_piped(
     log.debug("Running pipe: %s", cmd_str)
 
     env = _subprocess_env()
-    try:
-        p1 = subprocess.Popen(
-            cmd1, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            start_new_session=True,
-        )
-    except FileNotFoundError as exc:
-        if cwd.is_dir():
-            raise MissingToolError(_tool_name(cmd1), cmd=cmd1) from exc
-        raise
-    assert p1.stdout is not None  # PIPE was requested above
-    _track(p1)
-    p2: subprocess.Popen | None = None
-    try:
+    with _tracked_popen(
+        cmd1, cwd=cwd, env=env, missing_tool=_tool_name(cmd1),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    ) as p1:
+        assert p1.stdout is not None  # PIPE was requested above
         try:
-            p2 = subprocess.Popen(
-                cmd2, cwd=cwd, env=env, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                start_new_session=True,
-            )
-        except FileNotFoundError as exc:
-            if cwd.is_dir():
-                raise MissingToolError(_tool_name(cmd2), cmd=cmd2) from exc
+            with _tracked_popen(
+                cmd2, cwd=cwd, env=env, missing_tool=_tool_name(cmd2),
+                stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            ) as p2:
+                p1.stdout.close()
+                stdout, stderr = p2.communicate()
+        except BaseException:
+            # Tear down the producer if the consumer raises (or KeyboardInterrupt).
+            p1.kill()
+            p1.wait()
             raise
-        _track(p2)
-        p1.stdout.close()
-
-        stdout, stderr = p2.communicate()
-    except (Exception, KeyboardInterrupt):
-        p1.kill()
-        if p2 is not None:
-            p2.kill()
         p1.wait()
-        if p2 is not None:
-            p2.wait()
-        raise
-    finally:
-        p1.wait()
-        _untrack(p1)
-        if p2 is not None:
-            _untrack(p2)
 
     output = stdout.decode()
 
@@ -276,24 +274,12 @@ def run_shell(
     """
     log.debug("Running (shell): %s (cwd=%s)", cmd_str, cwd)
 
-    proc = subprocess.Popen(
-        cmd_str, shell=True, cwd=cwd, env=_subprocess_env(),
+    with _tracked_popen(
+        cmd_str, cwd=cwd, env=_subprocess_env(),
+        shell=True,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        start_new_session=True,
-    )
-    _track(proc)
-    try:
-        try:
-            stdout, stderr = proc.communicate()
-        except KeyboardInterrupt:
-            proc.terminate()
-            try:
-                proc.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            raise
-    finally:
-        _untrack(proc)
+    ) as proc:
+        stdout, stderr = proc.communicate()
 
     if stderr:
         log.debug("stderr (shell):\n%s", stderr)

@@ -12,7 +12,7 @@ from eukan.infra.manifest import (
     run_orchestrated_step,
     save_manifest,
     step_key,
-    validate_step_outputs,
+    validate_or_raise,
 )
 from eukan.repeats.masker import run_masker
 from eukan.repeats.modeler import run_modeler
@@ -23,22 +23,25 @@ log = get_logger(__name__)
 
 _MODELER = "modeler"
 _MASKER = "masker"
+_ALL_NAMES = (_MODELER, _MASKER)
 
 _STEP_TO_FLAG = {
     step_key(REPEATS, _MODELER): "--run-modeler",
     step_key(REPEATS, _MASKER): "--run-masker",
 }
+_ALL_STEP_KEYS = [step_key(REPEATS, n) for n in _ALL_NAMES]
 
 
-def steps_and_force_from_run_flags(
+def force_steps_from_run_flags(
     *,
     run_modeler: bool = False,
     run_masker: bool = False,
     force: bool = False,
-) -> tuple[list[str], bool]:
-    """Translate per-flag CLI booleans into ``(steps, force)`` for ``run_repeats``.
+) -> list[str]:
+    """Translate ``--run-X`` / ``--force`` flags into manifest keys to force.
 
-    Mirrors ``eukan.assembly.orchestrator.steps_and_force_from_run_flags``.
+    Returns full ``repeats/<step>`` keys, harmonized with the annotation
+    and assembly pipelines' ``force_steps_from_run_flags``.
     """
     selected: list[str] = []
     if run_modeler:
@@ -46,64 +49,79 @@ def steps_and_force_from_run_flags(
     if run_masker:
         selected.append(_MASKER)
     if selected:
-        return selected, True
-    return [_MODELER, _MASKER], force
+        return [step_key(REPEATS, s) for s in selected]
+    if force:
+        return list(_ALL_STEP_KEYS)
+    return []
 
 
 def _modeler_output(config: RepeatsConfig) -> Path:
     """Path to the families library produced by the modeler step."""
-    return config.work_dir / "repeats" / "modeler" / f"{config.name}.replib-families.fa"
+    return config.work_dir / _MODELER / f"{config.name}.replib-families.fa"
 
 
-def run_repeats(config: RepeatsConfig, steps: list[str], force: bool = False) -> Path:
-    """Run repeat masking. Returns the path to the softmasked genome."""
-    manifest = get_or_create_manifest(config.manifest_dir)
+def run_repeats(
+    config: RepeatsConfig,
+    *,
+    force_steps: list[str] | None = None,
+) -> Path:
+    """Run the repeat-masking pipeline.
 
-    if not force:
-        expected = [step_key(REPEATS, s) for s in steps if s != _MODELER or not config.lib]
-        errors = validate_step_outputs(manifest, expected, _STEP_TO_FLAG)
-        if errors:
-            for msg in errors:
-                log.error(msg)
-            raise SystemExit(1)
+    Returns the path to the softmasked genome.
+
+    Args:
+        force_steps: Manifest keys to re-run. ``None`` or empty means
+            "run all pending steps; skip cached". A non-empty list
+            narrows the active step set to just those keys *and* forces
+            re-execution.
+    """
+    manifest = get_or_create_manifest(config.manifest_dir, config)
+    forced = set(force_steps or ())
+
+    if forced:
+        active = [name for name in _ALL_NAMES if step_key(REPEATS, name) in forced]
+    else:
+        active = list(_ALL_NAMES)
+        expected = [step_key(REPEATS, s) for s in active if s != _MODELER or not config.lib]
+        validate_or_raise(manifest, expected, _STEP_TO_FLAG)
 
     save_manifest(config.manifest_dir, manifest)
 
     families: Path | None = None
-    if _MODELER in steps:
+    if _MODELER in active:
         if config.lib:
             log.info("Using user-provided repeat library: %s — skipping RepeatModeler.", config.lib)
             families = config.lib
         else:
             modeler_step = step_key(REPEATS, _MODELER)
-            cached = is_step_complete(manifest, modeler_step) if not force else None
+            cached = is_step_complete(manifest, modeler_step) if modeler_step not in forced else None
             if cached:
                 families = cached
             else:
                 run_orchestrated_step(
                     config.manifest_dir, manifest, modeler_step,
                     _run_modeler_step, config,
-                    step_dir=config.work_dir / "repeats" / _MODELER,
-                    force=force,
+                    step_dir=config.work_dir / _MODELER,
+                    force=modeler_step in forced,
                     output_file=_modeler_output(config),
                 )
                 families = _modeler_output(config)
 
     masked: Path | None = None
-    if _MASKER in steps:
+    if _MASKER in active:
         if families is None:
-            # Masker requested without modeler — pull the library from the
-            # manifest record or from --lib.
+            # Masker requested without modeler — pull the library from
+            # the manifest record or from --lib.
             if config.lib:
                 families = config.lib
             else:
                 cached = is_step_complete(manifest, step_key(REPEATS, _MODELER))
                 if cached is None:
-                    log.error(
-                        "RepeatMasker step requested but no families library found. "
-                        "Run --run-modeler first or pass --lib."
+                    from eukan.exceptions import ConfigurationError
+                    raise ConfigurationError(
+                        "RepeatMasker step requested but no families library found.",
+                        hint="Run --run-modeler first or pass --lib.",
                     )
-                    raise SystemExit(1)
                 families = cached
 
         masker_step = step_key(REPEATS, _MASKER)
@@ -111,8 +129,8 @@ def run_repeats(config: RepeatsConfig, steps: list[str], force: bool = False) ->
         run_orchestrated_step(
             config.manifest_dir, manifest, masker_step,
             _run_masker_step, config, families,
-            step_dir=config.work_dir / "repeats" / _MASKER,
-            force=force,
+            step_dir=config.work_dir / _MASKER,
+            force=masker_step in forced,
             output_file=masked_output,
         )
         masked = masked_output

@@ -1,7 +1,8 @@
-"""GFF3 I/O: serialization and sequence extraction.
+"""GFF3 I/O: serialization, counting, and sequence extraction.
 
-Canonical implementations of featuredb2gff3_file and gff3_to_fasta,
-deduplicated from gffparser.py, func-annot, and gff3toseq.
+Canonical implementations of featuredb2gff3_file, count_gff3_features,
+and extract_sequences, deduplicated from gffparser.py, func-annot, and
+gff3toseq.
 """
 
 from __future__ import annotations
@@ -16,6 +17,22 @@ from Bio.SeqRecord import SeqRecord
 
 from eukan.gff import create_gff_db
 from eukan.infra.genome import ContigIndex
+
+
+def count_gff3_features(gff3_path: Path, feature_type: str = "gene") -> int:
+    """Count features of a given type in a GFF3 file by scanning column 3.
+
+    Fast line-based parsing — does not load the file into a database.
+    """
+    count = 0
+    with open(gff3_path) as f:
+        for line in f:
+            if line.startswith("#") or not line.strip():
+                continue
+            cols = line.split("\t")
+            if len(cols) >= 3 and cols[2] == feature_type:
+                count += 1
+    return count
 
 
 def featuredb2gff3_file(featuredb: gffutils.FeatureDB, out: str | Path) -> None:

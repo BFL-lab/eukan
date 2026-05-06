@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import shlex
 import shutil
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from eukan.infra.concurrency import parallel_map
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_shell
 from eukan.infra.steps import step_dir
@@ -154,8 +154,7 @@ def run_evm(config: PipelineConfig, evidence: list[Path]) -> Path:
             err_file=stderr_file,
         )
 
-    with ThreadPoolExecutor(max_workers=config.num_cpu) as pool:
-        list(pool.map(_run_evm_cmd, evm_cmds))
+    parallel_map(_run_evm_cmd, evm_cmds, max_workers=config.num_cpu)
 
     # Recombine
     run_cmd(

@@ -7,7 +7,8 @@ minimal and isinstance-friendly::
 
     EukanError
     ├── ConfigurationError
-    │   └── InvalidOptionError
+    │   ├── InvalidOptionError
+    │   └── StaleManifestError
     ├── ValidationError
     │   ├── FastaValidationError
     │   └── GFFValidationError
@@ -34,6 +35,16 @@ class EukanError(Exception):
         self.hint = hint
         super().__init__(message)
 
+    def format_for_cli(self) -> tuple[str, list[str]]:
+        """Render this error for the CLI handler.
+
+        Returns ``(title, detail_lines)``. The handler prints *title* in
+        red and each *detail_line* indented; the hint (if any) is added
+        by the handler. Subclasses override to surface their structured
+        fields without the handler having to isinstance-dispatch.
+        """
+        return f"Error: {self}", []
+
 
 class ConfigurationError(EukanError):
     """Bad settings, missing options, or invalid combinations."""
@@ -41,6 +52,28 @@ class ConfigurationError(EukanError):
 
 class InvalidOptionError(ConfigurationError):
     """An option value is out of range or an incompatible combination was given."""
+
+
+class StaleManifestError(ConfigurationError):
+    """A previous run's manifest references outputs that are missing or invalid.
+
+    Raised when ``validate_step_outputs`` finds steps marked complete in
+    ``eukan-run.json`` whose output files have since been deleted or
+    corrupted. Each line of the message lists a specific step plus the
+    re-run flag the user should pass.
+    """
+
+    def __init__(self, errors: list[str]) -> None:
+        self.errors = list(errors)
+        message = "stale manifest entries:\n  " + "\n  ".join(self.errors)
+        super().__init__(
+            message,
+            hint="Re-run with the suggested --run-* flag, or pass --force "
+            "to re-run from scratch.",
+        )
+
+    def format_for_cli(self) -> tuple[str, list[str]]:
+        return "Error: stale manifest entries", list(self.errors)
 
 
 class ValidationError(EukanError):
@@ -80,9 +113,8 @@ class MissingToolError(DependencyError):
     ``Popen`` into an actionable message.
     """
 
-    def __init__(self, tool: str, *, cmd: list[str] | None = None) -> None:
+    def __init__(self, tool: str) -> None:
         self.tool = tool
-        self.cmd = list(cmd) if cmd else []
         super().__init__(
             f"required tool '{tool}' was not found on PATH",
             hint=(
@@ -139,3 +171,13 @@ class ExternalToolError(EukanError):
         if self.step:
             msg += f" during '{self.step}'"
         return msg
+
+    def format_for_cli(self) -> tuple[str, list[str]]:
+        title = f"Error: {self.tool} failed (exit {self.returncode})"
+        details: list[str] = []
+        if self.step:
+            details.append(f"Step: {self.step}")
+        if self.stderr_snippet:
+            details.append(f"stderr: {self.stderr_snippet[:300]}")
+        details.append("Run with -v for full command and stderr output.")
+        return title, details

@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from eukan.infra.artifacts import Artifact, masked_genome
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.settings import RepeatsConfig
@@ -68,9 +69,9 @@ def run_masker(config: RepeatsConfig, families: Path) -> tuple[Path, Path]:
     masked_src = sdir / f"{config.genome.name}.masked"
     repeats_gff_src = sdir / f"{config.genome.name}.out.gff"
 
-    masked_dst = config.work_dir / f"{config.name}.masked.fasta"
+    masked_dst = masked_genome(config.work_dir, config.name)
     repeats_gff_dst = config.work_dir / f"{config.name}.repeats.gff"
-    hints_dst = config.work_dir / "hints_repeatmask.gff"
+    hints_dst = config.work_dir / Artifact.REPEATMASK_HINTS
 
     shutil.copy2(masked_src, masked_dst)
     shutil.copy2(repeats_gff_src, repeats_gff_dst)

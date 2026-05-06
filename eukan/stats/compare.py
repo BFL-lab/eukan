@@ -21,11 +21,11 @@ CDS and intron levels:
 
 from __future__ import annotations
 
-from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from itertools import permutations
 from pathlib import Path
 
+from eukan.gff.intervals import IntervalIndex
 from eukan.stats.models import (
     FRAG_THRESHOLD,
     MERGE_THRESHOLD,
@@ -144,63 +144,6 @@ def _group_by_parent(
 # ---------------------------------------------------------------------------
 
 
-# Spatial index: (chrom, strand) -> (sorted intervals, starts, prefix-max ends)
-_Index = dict[tuple[str, str], tuple[list[Interval], list[int], list[int]]]
-
-
-def _build_index(intervals: list[Interval]) -> _Index:
-    """Build a strand-aware interval index with monotone prefix-max ends.
-
-    ``max_end_to[i]`` is ``max(end[0..i])``.  Because intervals are sorted
-    by start, this array is monotone non-decreasing, so a binary search on
-    it gives the leftmost candidate whose end could reach a query.start.
-    """
-    buckets: dict[tuple[str, str], list[Interval]] = defaultdict(list)
-    for iv in intervals:
-        buckets[(iv.chrom, iv.strand)].append(iv)
-    idx: _Index = {}
-    for key, ivs in buckets.items():
-        ivs.sort(key=lambda x: x.start)
-        starts = [iv.start for iv in ivs]
-        max_end_to: list[int] = []
-        running_max = 0
-        for iv in ivs:
-            if iv.end > running_max:
-                running_max = iv.end
-            max_end_to.append(running_max)
-        idx[key] = (ivs, starts, max_end_to)
-    return idx
-
-
-def _find_overlaps(
-    query: Interval,
-    targets_idx: _Index,
-) -> list[tuple[Interval, int]]:
-    """Find all overlapping targets with overlap bp. Strand-aware.
-
-    Bounds the candidate range with two binary searches:
-    * right bound: first target with ``start > query.end`` (no future overlap)
-    * left bound: first target where ``max_end_to >= query.start``
-      (all earlier targets strictly end before the query)
-    """
-    entry = targets_idx.get((query.chrom, query.strand))
-    if entry is None:
-        return []
-    ivs, starts, max_end_to = entry
-    idx_right = bisect_right(starts, query.end)
-    if idx_right == 0:
-        return []
-    idx_left = bisect_left(max_end_to, query.start)
-    results = []
-    for i in range(idx_left, idx_right):
-        t = ivs[i]
-        if t.end < query.start:
-            continue
-        ovl = min(query.end, t.end) - max(query.start, t.start) + 1
-        results.append((t, ovl))
-    return results
-
-
 def _overlap_bp(a: Interval, b: Interval) -> int:
     if a.chrom != b.chrom or a.strand != b.strand:
         return 0
@@ -309,8 +252,8 @@ def _classify_genes(
     pred_genes: list[Interval],
 ) -> tuple[dict[str, str], list[FeatureRecord]]:
     """Classify genes and return match map + per-feature records."""
-    pred_idx = _build_index(pred_genes)
-    ref_idx = _build_index(ref_genes)
+    pred_idx = IntervalIndex(pred_genes)
+    ref_idx = IntervalIndex(ref_genes)
     records: list[FeatureRecord] = []
 
     # --- Step 1: detect merged predictions ---
@@ -319,7 +262,7 @@ def _classify_genes(
     merging_pred_ids: set[str] = set()
 
     for pred in pred_genes:
-        ref_overlaps = _find_overlaps(pred, ref_idx)
+        ref_overlaps = list(ref_idx.overlapping(pred))
         if len(ref_overlaps) < 2:
             continue
         covered_refs = [
@@ -338,7 +281,7 @@ def _classify_genes(
     for ref in ref_genes:
         if ref.feat_id in merged_ref_ids:
             continue
-        pred_overlaps = _find_overlaps(ref, pred_idx)
+        pred_overlaps = list(pred_idx.overlapping(ref))
         if len(pred_overlaps) < 2:
             continue
         qualifying = [
@@ -364,7 +307,7 @@ def _classify_genes(
             continue
 
         pred_overlaps = [
-            (p, o) for p, o in _find_overlaps(ref, pred_idx)
+            (p, o) for p, o in pred_idx.overlapping(ref)
             if p.feat_id not in excluded_pred_ids
         ]
 
@@ -395,7 +338,7 @@ def _classify_genes(
     # --- Step 4: novel predictions ---
     matched_pred_ids = set(gene_match_map.values()) | excluded_pred_ids
     for pred in pred_genes:
-        if pred.feat_id not in matched_pred_ids and not _find_overlaps(pred, ref_idx):
+        if pred.feat_id not in matched_pred_ids and not ref_idx.has_overlap(pred):
             records.append(FeatureRecord.from_pred("gene", "novel", pred))
 
     return gene_match_map, records

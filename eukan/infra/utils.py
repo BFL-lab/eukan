@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 from collections.abc import Iterable
 from importlib.resources import files
 from pathlib import Path
+
+_MD5_CHUNK_SIZE = 8 * 1024 * 1024  # 8 MiB
+
+
+def md5_file(path: Path) -> str:
+    """Compute MD5 of a file in chunks (never loads entire file into memory)."""
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(_MD5_CHUNK_SIZE), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def symlink(target: Path, link: Path) -> None:

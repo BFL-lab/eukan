@@ -6,10 +6,10 @@ from pathlib import Path
 
 import gffutils
 
-from eukan.annotation.augustus import build_training_set
+from eukan.annotation.training import build_training_set
 from eukan.gff import GFF3_DIALECT, create_gff_db, transform_db
 from eukan.gff import parser as gffparser
-from eukan.gff.io import featuredb2gff3_file
+from eukan.gff.normalize import normalize_to_gff3
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_dir
@@ -17,6 +17,28 @@ from eukan.infra.utils import symlink
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
+
+
+def _read_snap_output(snap_gff: Path) -> gffutils.FeatureDB:
+    """Parse SNAP's faux-GTF output into a normalised GFF3 FeatureDB.
+
+    SNAP emits a flat exon list keyed by gene group; we first relabel
+    every line as ``exon`` with synthetic IDs (the per-call counter in
+    ``Snap.make_featuretype_transform``), then re-parse as GTF so
+    ``Parent=`` is treated as a transcript_id and the gene/mRNA hierarchy
+    is materialised.
+    """
+    snap = create_gff_db(
+        snap_gff, transform=gffparser.Snap.make_featuretype_transform(),
+    )
+    dialect = gffutils.DataIterator(str(snap_gff)).dialect
+    dialect["fmt"] = "gtf"
+    snap = gffutils.create_db(
+        snap, ":memory:", dialect=dialect,
+        gtf_transcript_key="Parent", gtf_gene_key="Parent",
+    )
+    snap.dialect = GFF3_DIALECT
+    return transform_db(snap, gffparser.gff3_it)
 
 
 def run_snap(config: PipelineConfig, *evidence: Path) -> Path:
@@ -38,24 +60,11 @@ def run_snap(config: PipelineConfig, *evidence: Path) -> Path:
         cwd=sdir, out_file="snap.gff",
     )
 
-    snap = create_gff_db(
-        sdir / "snap.gff", transform=gffparser.Snap.make_featuretype_transform(),
+    return normalize_to_gff3(
+        _read_snap_output(sdir / "snap.gff"),
+        sdir / output,
+        post_transform=gffparser.Snap.homogenize_source,
     )
-    dialect = gffutils.DataIterator(str(sdir / "snap.gff")).dialect
-    dialect["fmt"] = "gtf"
-    snap = gffutils.create_db(
-        snap, ":memory:", dialect=dialect,
-        gtf_transcript_key="Parent", gtf_gene_key="Parent",
-    )
-    snap.dialect = GFF3_DIALECT
-    snap = transform_db(snap, gffparser.gff3_it)
-    snap.update(
-        gffparser.add_missing_feats_to_gff3(snap),
-        merge_strategy="create_unique",
-    )
-    snap = transform_db(snap, gffparser.Snap.homogenize_source)
-    featuredb2gff3_file(snap, sdir / output)
-    return sdir / output
 
 
 def run_codingquarry(config: PipelineConfig, evidence: Path) -> Path:
@@ -75,11 +84,8 @@ def run_codingquarry(config: PipelineConfig, evidence: Path) -> Path:
         cwd=sdir,
     )
 
-    cq = create_gff_db(sdir / "out" / "PredictedPass.gff3", transform=gffparser.CodingQuarry.add_mRNA)
-    cq.update(
-        gffparser.add_missing_feats_to_gff3(cq),
-        merge_strategy="create_unique",
+    return normalize_to_gff3(
+        sdir / "out" / "PredictedPass.gff3", sdir / output,
+        parse_transform=gffparser.CodingQuarry.add_mRNA,
+        post_transform=gffparser.CodingQuarry.fix_dup_ids,
     )
-    cq = transform_db(cq, gffparser.CodingQuarry.fix_dup_ids)
-    featuredb2gff3_file(cq, sdir / output)
-    return sdir / output

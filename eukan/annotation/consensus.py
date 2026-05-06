@@ -9,7 +9,8 @@ from eukan.assembly.pasa import write_pasa_configs
 from eukan.gff import create_gff_db
 from eukan.gff import intersecter as gffintersecter
 from eukan.gff import parser as gffparser
-from eukan.infra.logging import count_gff3_features, get_logger
+from eukan.gff.io import count_gff3_features
+from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_dir
 from eukan.settings import PipelineConfig

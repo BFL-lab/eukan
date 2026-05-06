@@ -6,18 +6,19 @@ import json
 import os
 import re
 import shutil
-from concurrent.futures import ThreadPoolExecutor
 from fileinput import FileInput
 from pathlib import Path
 
-import gffutils
 from Bio import SeqIO
 
+from eukan.annotation.training import build_training_set
 from eukan.exceptions import ToolEnvError
 from eukan.gff import create_gff_db
-from eukan.gff import intersecter as gffintersecter
 from eukan.gff import parser as gffparser
 from eukan.gff.io import featuredb2gff3_file
+from eukan.infra.artifacts import Artifact
+from eukan.infra.artifacts import find as find_artifact
+from eukan.infra.concurrency import parallel_map
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_piped
 from eukan.infra.steps import step_dir
@@ -62,10 +63,10 @@ def _get_splice_sites_flag(config: PipelineConfig) -> list[str]:
     Falls back to a blanket allowance when ``allow_noncanonical_splice``
     is set but no summary exists.
     """
-    summary_path = config.work_dir / "splice_site_summary.json"
+    summary_path = find_artifact(config.work_dir, Artifact.SPLICE_SUMMARY)
     allowed: set[str] = set()
 
-    if summary_path.exists():
+    if summary_path is not None:
         with open(summary_path) as f:
             summary = json.load(f)
 
@@ -102,27 +103,6 @@ def _get_splice_sites_flag(config: PipelineConfig) -> list[str]:
     return []
 
 
-def build_training_set(
-    config: PipelineConfig, evidence: tuple[Path, ...], sdir: Path
-) -> None:
-    """Build evidence-driven training set for gene predictors."""
-    training_db = gffintersecter.extract_supported_models(*evidence, output_dir=sdir)
-
-    num_training = max(
-        1, len([f.id for f in training_db.features_of_type("gene")]) // 4
-    )
-
-    gene_db = gffutils.create_db(str(evidence[0]), ":memory:")
-    gene_lengths = [f.end - f.start for f in gene_db.features_of_type("gene")]
-    flank = int(sum(gene_lengths) / len(gene_lengths) / 2)
-
-    run_cmd(
-        ["gff2gbSmallDNA.pl", "training_set.gff3", str(config.genome), str(flank), "genbank.gb"],
-        cwd=sdir,
-    )
-    run_cmd(["randomSplit.pl", "genbank.gb", str(num_training)], cwd=sdir)
-
-
 def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
     """Train and run AUGUSTUS gene prediction."""
     output = "augustus.gff3"
@@ -140,8 +120,8 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
     # Auto-discover RepeatMasker hints from `eukan mask-repeats`. The RM
     # extrinsic source has weights in both our augustus.config and AUGUSTUS's
     # stock extrinsic.MPE.cfg, so the file just needs to be appended.
-    rm_hints = config.work_dir / "hints_repeatmask.gff"
-    if rm_hints.exists():
+    rm_hints = find_artifact(config.work_dir, Artifact.REPEATMASK_HINTS)
+    if rm_hints is not None:
         log.info("Including RepeatMasker hints: %s", rm_hints.name)
         hint_files.append(rm_hints)
 
@@ -252,8 +232,7 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
             cwd=sdir, out_file=f"{split.name}.gff3",
         )
 
-    with ThreadPoolExecutor(max_workers=config.num_cpu) as pool:
-        list(pool.map(_run_split, splits))
+    parallel_map(_run_split, splits, max_workers=config.num_cpu)
 
     # Join predictions
     cat_files = sorted(sdir.glob("genome.split.*.gff3"))

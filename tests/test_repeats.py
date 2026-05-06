@@ -4,7 +4,7 @@ from Bio import SeqIO
 
 from eukan.repeats.masker import gff_to_hints
 from eukan.repeats.modeler import sort_and_uppercase
-from eukan.repeats.orchestrator import steps_and_force_from_run_flags
+from eukan.repeats.orchestrator import force_steps_from_run_flags
 from eukan.settings import RepeatsConfig
 
 
@@ -89,18 +89,22 @@ class TestRepeatsConfig:
         assert config.lib == lib
 
 
-class TestStepsAndForce:
-    def test_default_runs_both(self):
-        steps, force = steps_and_force_from_run_flags()
-        assert steps == ["modeler", "masker"]
-        assert force is False
+class TestForceStepsFromRunFlags:
+    """Mirrors annotation/assembly: ``--run-X`` and ``--force`` translate
+    to a list of full ``repeats/<step>`` manifest keys to force.
+    """
 
-    def test_explicit_run_flag_implies_force(self):
-        steps, force = steps_and_force_from_run_flags(run_masker=True)
-        assert steps == ["masker"]
-        assert force is True
+    def test_no_flags_returns_empty(self):
+        assert force_steps_from_run_flags() == []
 
-    def test_force_alone(self):
-        steps, force = steps_and_force_from_run_flags(force=True)
-        assert steps == ["modeler", "masker"]
-        assert force is True
+    def test_explicit_run_flag_forces_that_step(self):
+        assert force_steps_from_run_flags(run_masker=True) == ["repeats/masker"]
+
+    def test_force_alone_returns_all_keys(self):
+        assert force_steps_from_run_flags(force=True) == [
+            "repeats/modeler", "repeats/masker",
+        ]
+
+    def test_returned_keys_are_prefixed(self):
+        result = force_steps_from_run_flags(run_modeler=True, run_masker=True)
+        assert all(k.startswith("repeats/") for k in result)

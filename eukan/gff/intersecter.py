@@ -7,47 +7,16 @@ detection — all via direct gffutils FeatureDB queries without pybedtools.
 
 from __future__ import annotations
 
-import bisect
-from collections import defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 
 import gffutils
 
 from eukan.gff import create_gff_db
+from eukan.gff._compat import empty_db
+from eukan.gff.intervals import IntervalIndex
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.logging import get_logger
-
-
-def _build_max_end_prefix(ends: Iterable[int]) -> list[int]:
-    """Build a monotone running-max-end array.
-
-    Given interval ends in start-sorted order, returns ``out[i] =
-    max(ends[:i+1])``.  Lets ``bisect_left(out, query.start)`` skip
-    intervals that cannot overlap a query, bounding the candidate set
-    instead of scanning every interval before ``query.end``.
-    """
-    out: list[int] = []
-    running_max = 0
-    for e in ends:
-        if e > running_max:
-            running_max = e
-        out.append(running_max)
-    return out
-
-
-def _empty_db() -> gffutils.FeatureDB:
-    """Create an empty FeatureDB.
-
-    Workaround for gffutils raising EmptyInputError on empty input.
-    Creates a DB with a dummy feature, then deletes it.
-    """
-    db = gffutils.create_db(
-        "chr1\t.\tgene\t1\t1\t.\t+\t.\tID=_empty_placeholder",
-        ":memory:", from_string=True,
-    )
-    db.delete(db["_empty_placeholder"])
-    return db
 
 log = get_logger(__name__)
 
@@ -164,44 +133,11 @@ def find_nonoverlapping_genes(
 
     Returns all features (gene + children) for non-overlapping, ORF-containing genes.
     """
-    # Build a per-(chrom, strand) index: intervals sorted by start, with a
-    # parallel monotone prefix-max of ends. The prefix-max lets us bisect
-    # for the left bound of overlap candidates: any target with
-    # max_end_to[i] < query.start cannot overlap.
-    target_starts: dict[tuple[str, str], list[int]] = defaultdict(list)
-    target_ends: dict[tuple[str, str], list[int]] = defaultdict(list)
-    target_max_end_to: dict[tuple[str, str], list[int]] = {}
-    for gene in db_target.features_of_type("gene"):
-        key = (gene.chrom, gene.strand)
-        target_starts[key].append(gene.start)
-        target_ends[key].append(gene.end)
-
-    for key in target_starts:
-        paired = sorted(zip(target_starts[key], target_ends[key], strict=True))
-        target_starts[key] = [s for s, _ in paired]
-        ends_sorted = [e for _, e in paired]
-        target_ends[key] = ends_sorted
-        target_max_end_to[key] = _build_max_end_prefix(ends_sorted)
-
+    target_index = IntervalIndex(db_target.features_of_type("gene"))
     result: list[gffutils.Feature] = []
 
     for gene in db_source.features_of_type("gene"):
-        key = (gene.chrom, gene.strand)
-        starts = target_starts.get(key)
-        if not starts:
-            overlaps = False
-        else:
-            ends = target_ends[key]
-            max_end_to = target_max_end_to[key]
-            idx_right = bisect.bisect_right(starts, gene.end)
-            if idx_right == 0:
-                overlaps = False
-            else:
-                idx_left = bisect.bisect_left(max_end_to, gene.start)
-                overlaps = any(
-                    ends[i] >= gene.start for i in range(idx_left, idx_right)
-                )
-        if overlaps:
+        if target_index.has_overlap(gene):
             continue
 
         # Check that this gene has CDS children (i.e., contains an ORF)
@@ -296,20 +232,7 @@ def _concordant_features(
     db1 = create_gff_db(gff3_1)
     db2 = create_gff_db(gff3_2)
 
-    # Index db2 mRNAs by (chrom, strand) -- sorted by start with a parallel
-    # monotone prefix-max-end for bounded overlap lookup.
-    db2_buckets: dict[tuple[str, str], list[gffutils.Feature]] = defaultdict(list)
-    for mrna in db2.features_of_type("mRNA"):
-        db2_buckets[(mrna.chrom, mrna.strand)].append(mrna)
-    db2_index: dict[
-        tuple[str, str],
-        tuple[list[gffutils.Feature], list[int], list[int]],
-    ] = {}
-    for key, mrnas in db2_buckets.items():
-        mrnas.sort(key=lambda m: m.start)
-        starts = [m.start for m in mrnas]
-        db2_index[key] = (mrnas, starts, _build_max_end_prefix(m.end for m in mrnas))
-
+    db2_index = IntervalIndex(db2.features_of_type("mRNA"))
     concordant_gene_ids: set[str] = set()
 
     for mrna1 in db1.features_of_type("mRNA"):
@@ -317,21 +240,7 @@ def _concordant_features(
         if not cds1:
             continue
 
-        key = (mrna1.chrom, mrna1.strand)
-        entry = db2_index.get(key)
-        if entry is None:
-            continue
-        mrnas2, starts2, max_end_to2 = entry
-        idx_right = bisect.bisect_right(starts2, mrna1.end)
-        if idx_right == 0:
-            continue
-        idx_left = bisect.bisect_left(max_end_to2, mrna1.start)
-
-        for i in range(idx_left, idx_right):
-            mrna2 = mrnas2[i]
-            if mrna2.end < mrna1.start:
-                continue
-
+        for mrna2, _ovl in db2_index.overlapping(mrna1):
             if not _mrna_spans_match(mrna1, mrna2):
                 continue
 
@@ -371,7 +280,7 @@ def find_concordant_models(
     Returns a FeatureDB containing only the concordant models from gff3_1.
     """
     features = _concordant_features(gff3_1, gff3_2)
-    return create_gff_db(features) if features else _empty_db()
+    return create_gff_db(features) if features else empty_db()
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +311,7 @@ def combine_nonredundant_models(
             all_features.extend(db.children(gene))
 
     log.debug("Combined %d non-redundant gene models from %d sources", len(seen_ids), len(feature_dbs))
-    return create_gff_db(all_features) if all_features else _empty_db()
+    return create_gff_db(all_features) if all_features else empty_db()
 
 
 # ---------------------------------------------------------------------------
@@ -430,19 +339,18 @@ def extract_supported_models(
         # run them concurrently.  Workers return Feature *lists* so the
         # SQLite connections never escape their creating thread; the dbs
         # passed to combine_nonredundant_models are built on this thread.
-        from concurrent.futures import ThreadPoolExecutor
+        from eukan.infra.concurrency import parallel_map
         pairs = [
             (paths[0], paths[1]),
             (paths[0], paths[2]),
             (paths[2], paths[1]),
         ]
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            feat1, feat2, feat3 = pool.map(
-                lambda ab: _concordant_features(*ab), pairs,
-            )
-        pair1 = create_gff_db(feat1) if feat1 else _empty_db()
-        pair2 = create_gff_db(feat2) if feat2 else _empty_db()
-        pair3 = create_gff_db(feat3) if feat3 else _empty_db()
+        feat1, feat2, feat3 = parallel_map(
+            lambda ab: _concordant_features(*ab), pairs,
+        )
+        pair1 = create_gff_db(feat1) if feat1 else empty_db()
+        pair2 = create_gff_db(feat2) if feat2 else empty_db()
+        pair3 = create_gff_db(feat3) if feat3 else empty_db()
         training_set = combine_nonredundant_models(pair1, pair2, pair3)
     else:
         raise ValueError(f"Expected 2 or 3 paths, got {len(paths)}")

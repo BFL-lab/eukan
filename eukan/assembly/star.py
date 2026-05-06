@@ -9,6 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from eukan.exceptions import ExternalToolError
+from eukan.infra.artifacts import Artifact
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.settings import AssemblyConfig
@@ -183,7 +184,7 @@ def _analyze_splice_sites(sj_file: Path, genome: Path, wd: Path) -> None:
             tallies[splice_type]["unique_reads"] += unique
 
     summary = dict(sorted(tallies.items(), key=lambda kv: -kv[1]["count"]))
-    with open(wd / "splice_site_summary.json", "w") as f:
+    with open(wd / Artifact.SPLICE_SUMMARY, "w") as f:
         json.dump(summary, f, indent=2)
 
     # Log summary
