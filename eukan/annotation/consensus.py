@@ -48,9 +48,18 @@ def add_utrs_from_pasa(config: PipelineConfig, sdir: Path, pasa_db: Path) -> Non
 
 
 def _resolve_consensus_path(sdir: Path) -> Path:
-    """Pick the latest PASA-updated GFF3 if present, else raw EVM consensus."""
-    pasa_outputs = sorted(sdir.glob("*gene_structures_post_PASA_updates.*.gff3"))
-    return pasa_outputs[0] if pasa_outputs else sdir / "consensus_models.gff3"
+    """Pick the most-recent PASA-updated GFF3 if present, else raw EVM consensus.
+
+    PASA emits ``<db>.gene_structures_post_PASA_updates.<N>.gff3`` per
+    iteration where ``<N>`` is a process ID; that suffix can vary in
+    width across runs, so a lexicographic sort can put a 4-digit PID
+    after a 5-digit one and pick the wrong file. Sorting by mtime
+    matches the docstring's intent regardless of the suffix format.
+    """
+    pasa_outputs = list(sdir.glob("*gene_structures_post_PASA_updates.*.gff3"))
+    if not pasa_outputs:
+        return sdir / "consensus_models.gff3"
+    return max(pasa_outputs, key=lambda p: p.stat().st_mtime)
 
 
 def _patch_in_unmatched_orfs(consdb, orf_path: Path):
