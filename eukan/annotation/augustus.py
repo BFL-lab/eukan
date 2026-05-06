@@ -137,6 +137,14 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
     else:
         ext_cfg = "extrinsic.MPE.cfg"
 
+    # Auto-discover RepeatMasker hints from `eukan mask-repeats`. The RM
+    # extrinsic source has weights in both our augustus.config and AUGUSTUS's
+    # stock extrinsic.MPE.cfg, so the file just needs to be appended.
+    rm_hints = config.work_dir / "hints_repeatmask.gff"
+    if rm_hints.exists():
+        log.info("Including RepeatMasker hints: %s", rm_hints.name)
+        hint_files.append(rm_hints)
+
     # Create AUGUSTUS species
     config_path = os.environ.get("AUGUSTUS_CONFIG_PATH")
     if not config_path:

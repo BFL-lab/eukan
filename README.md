@@ -200,6 +200,36 @@ Re-run steps:
 
 The pipeline runs STAR mapping, genome-guided + de novo Trinity assembly, and PASA alignment. STAR also profiles splice site types from junction evidence (`splice_site_summary.json`), which the annotation pipeline uses to allow non-canonical splice sites in AUGUSTUS. If no step flags (`-A`, `-T`, `-P`) are given, all steps run.
 
+### `eukan mask-repeats`
+
+Soft-mask repeats with RepeatModeler + RepeatMasker. The de novo families library is inferred by RepeatModeler, then RepeatMasker uses it to lower-case repetitive bases in the genome.
+
+```
+Usage: eukan mask-repeats [OPTIONS]
+
+Required input:
+  -g, --genome PATH               Genome FASTA. [required]
+
+Pipeline parameters:
+  -n, --numcpu INTEGER            Number of CPU threads. [default: all]
+  --engine [rmblast|ncbi]         Search engine. [default: rmblast]
+  --lib PATH                      Pre-built repeat-family library FASTA. When set,
+                                  RepeatModeler is skipped.
+
+Re-run steps:
+  --run-modeler                   Force re-run BuildDatabase + RepeatModeler.
+  --run-masker                    Force re-run RepeatMasker.
+  -f, --force                     Force re-run all steps.
+```
+
+Outputs (in the working directory):
+
+- `<stem>.masked.fasta` — soft-masked genome (lower-case in repeats).
+- `<stem>.repeats.gff` — raw RepeatMasker GFF.
+- `hints_repeatmask.gff` — AUGUSTUS-format `nonexonpart`/`src=RM` hints.
+
+Pass the masked genome to the next stage (`eukan annotate -g <stem>.masked.fasta`); AUGUSTUS auto-discovers `hints_repeatmask.gff` from the working directory and weights it via the `RM` extrinsic source already declared in the shipped `augustus.config`.
+
 ### `eukan func-annot`
 
 Add functional annotations (UniProt + Pfam) to proteins. When run after `eukan annotate` and `eukan db-fetch`, the predicted protein sequences, UniProt, and Pfam databases are discovered automatically.

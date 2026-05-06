@@ -38,6 +38,7 @@ SENTINEL = ".running"
 ANNOTATION = "annotation"
 ASSEMBLY = "assembly"
 FUNCTIONAL = "functional"
+REPEATS = "repeats"
 
 
 def step_key(pipeline: str, name: str) -> str:

@@ -124,6 +124,7 @@ def check_python_deps() -> list[PythonCheckResult]:
         "eukan.infra.runner", "eukan.infra.manifest", "eukan.infra.steps", "eukan.infra.logging", "eukan.infra.environ",
         "eukan.annotation", "eukan.annotation.orchestrator",
         "eukan.assembly", "eukan.assembly.orchestrator",
+        "eukan.repeats", "eukan.repeats.orchestrator", "eukan.repeats.modeler", "eukan.repeats.masker",
         "eukan.functional", "eukan.functional.orchestrator", "eukan.functional.dbfetch",
         "eukan.gff.parser", "eukan.gff.intersecter", "eukan.gff.io",
         "eukan.stats", "eukan.stats.compare", "eukan.stats.format",

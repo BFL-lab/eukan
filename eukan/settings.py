@@ -326,6 +326,31 @@ class AssemblyConfig(_StepRunSettings):
 
 
 # ---------------------------------------------------------------------------
+# Repeat-masking settings (eukan mask-repeats)
+# ---------------------------------------------------------------------------
+
+
+class RepeatsConfig(_StepRunSettings):
+    """Configuration for the repeat-masking pipeline (eukan mask-repeats)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="EUKAN_REPEATS_",
+        extra="ignore",
+    )
+
+    genome: Path
+    lib: Path | None = None  # pre-built families library; skips RepeatModeler when set
+    engine: str = "rmblast"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def name(self) -> str:
+        return self.genome.stem
+
+    settings_customise_sources = _pyproject_settings_sources("mask-repeats")
+
+
+# ---------------------------------------------------------------------------
 # Functional annotation settings (eukan func-annot)
 # ---------------------------------------------------------------------------
 

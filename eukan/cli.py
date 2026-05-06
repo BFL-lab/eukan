@@ -208,11 +208,12 @@ def cli(verbose: bool, quiet: bool) -> None:
 
     \b
     Typical workflow:
-      1. eukan check        Verify installation and tools
-         eukan db-fetch     Download UniProt + Pfam databases
-      2. eukan assemble     Build transcriptome from RNA-seq (optional but recommended)
-      3. eukan annotate     Annotate genome using proteins + assembly (if available)
-      4. eukan func-annot   Add functional info to predicted proteins
+      1. eukan check         Verify installation and tools
+         eukan db-fetch      Download UniProt + Pfam databases
+      2. eukan mask-repeats  Soft-mask repeats (optional but recommended)
+      3. eukan assemble      Build transcriptome from RNA-seq (optional but recommended)
+      4. eukan annotate      Annotate genome using proteins + assembly (if available)
+      5. eukan func-annot    Add functional info to predicted proteins
     \b
     Helpers:
          eukan compare      Compare annotations against a reference/previous annotation
@@ -507,6 +508,75 @@ def assemble(
 
 
 # ---------------------------------------------------------------------------
+# eukan mask-repeats
+# ---------------------------------------------------------------------------
+
+
+@cli.command("mask-repeats", cls=_PreformattedEpilogCommand)
+@optgroup.group("Required input")
+@_genome_option("Genome sequence in FASTA format.")
+@optgroup.group("Pipeline parameters")
+@_numcpu_option
+@optgroup.option(
+    "--engine", type=click.Choice(["rmblast", "ncbi"], case_sensitive=False),
+    default="rmblast", show_default=True,
+    help="Search engine for BuildDatabase / RepeatMasker.",
+)
+@optgroup.option(
+    "--lib", type=click.Path(exists=True, path_type=Path), default=None,
+    help="Pre-built repeat-family library FASTA. When set, RepeatModeler is skipped.",
+)
+@optgroup.group("Re-run steps")
+@optgroup.option("--run-modeler", is_flag=True, help="Force re-run BuildDatabase + RepeatModeler.")
+@optgroup.option("--run-masker", is_flag=True, help="Force re-run RepeatMasker.")
+@_force_option
+def mask_repeats(
+    genome: Path,
+    numcpu: int,
+    engine: str,
+    lib: Path | None,
+    run_modeler: bool,
+    run_masker: bool,
+    force: bool,
+) -> None:
+    """Soft-mask repeats with RepeatModeler + RepeatMasker.
+
+    \b
+    Produces, in the working directory:
+      <stem>.masked.fasta     soft-masked genome (lower-case in repeats)
+      <stem>.repeats.gff      raw RepeatMasker GFF
+      hints_repeatmask.gff    AUGUSTUS-format hints (auto-discovered by
+                              `eukan annotate`)
+
+    \b
+    Pass the masked genome to `eukan annotate -g <stem>.masked.fasta`.
+    """
+    from eukan.repeats import run_repeats
+    from eukan.repeats.orchestrator import steps_and_force_from_run_flags
+    from eukan.settings import RepeatsConfig
+
+    kwargs: dict = {
+        "genome": genome.resolve(),
+        "work_dir": Path.cwd(),
+        "num_cpu": numcpu,
+        "engine": engine.lower(),
+    }
+    if lib:
+        kwargs["lib"] = lib.resolve()
+
+    config = RepeatsConfig(**kwargs)
+
+    steps, force = steps_and_force_from_run_flags(
+        run_modeler=run_modeler, run_masker=run_masker, force=force,
+    )
+    masked = run_repeats(config, steps, force=force)
+    click.echo(f"Done. Masked genome: {masked}")
+    click.echo(
+        f"Pass it to the next stage with: eukan annotate -g {masked.name} ..."
+    )
+
+
+# ---------------------------------------------------------------------------
 # eukan func-annot
 # ---------------------------------------------------------------------------
 
@@ -639,7 +709,10 @@ def db_fetch(output_dir: Path, force: bool, database: tuple[str, ...]) -> None:
 @cli.command()
 @click.option(
     "--for", "subcommands", multiple=True,
-    type=click.Choice(["annotate", "assemble", "func-annot", "db-fetch"], case_sensitive=False),
+    type=click.Choice(
+        ["annotate", "assemble", "func-annot", "db-fetch", "mask-repeats"],
+        case_sensitive=False,
+    ),
     help="Only check tools needed by these subcommands. If omitted, check all.",
 )
 @click.option(

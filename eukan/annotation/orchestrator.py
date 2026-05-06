@@ -127,6 +127,18 @@ def run_annotation_pipeline(
     """
     validate_fasta(config.genome)
 
+    # If the user ran `eukan mask-repeats` previously and is now passing the
+    # unmasked genome, point them at the masked sibling. Don't auto-swap —
+    # explicit input is safer than a silent path substitution.
+    if not config.genome.name.endswith(".masked.fasta"):
+        masked_sibling = config.work_dir / f"{config.genome.stem}.masked.fasta"
+        if masked_sibling.exists() and masked_sibling != config.genome:
+            log.info(
+                "Note: found %s alongside the input genome — pass it via -g for "
+                "repeat-aware prediction.",
+                masked_sibling.name,
+            )
+
     # Sanitize genome headers (strip descriptions that break GFF tools)
     sanitized_genome = sanitize_genome_fasta(config.genome, config.work_dir)
     if sanitized_genome != config.genome:

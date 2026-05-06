@@ -185,9 +185,35 @@ conda_package = "fasta3"
 [trf]
 binary = "trf"
 version_cmd = ["trf", "-v"]
-required_by = ["annotate"]
+required_by = ["annotate", "mask-repeats"]
 conda_package = "trf"
 min_version = "4.09"
+
+[repeatmodeler]
+binary = "RepeatModeler"
+version_cmd = ["RepeatModeler", "-version"]
+required_by = ["mask-repeats"]
+conda_package = "repeatmodeler"
+min_version = "2.0"
+
+[builddatabase]
+binary = "BuildDatabase"
+version_cmd = ["BuildDatabase"]
+required_by = ["mask-repeats"]
+# bundled with RepeatModeler
+
+[repeatmasker]
+binary = "RepeatMasker"
+version_cmd = ["RepeatMasker", "-v"]
+required_by = ["mask-repeats"]
+conda_package = "repeatmasker"
+min_version = "4.1"
+
+[rmblast]
+binary = "rmblastn"
+version_cmd = ["rmblastn", "-version"]
+required_by = ["mask-repeats"]
+conda_package = "rmblast"
 
 [gff2gbSmallDNA]
 binary = "gff2gbSmallDNA.pl"

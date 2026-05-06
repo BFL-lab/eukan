@@ -10,9 +10,28 @@
 #   - cdbfasta: bundled with parent package
 #   - seqclean: bundled with parent package
 #   - jellyfish: bundled with parent package
+#   - BuildDatabase: bundled with parent package
 #   - gff2gbSmallDNA.pl: bundled with parent package
 #   - optimize_augustus.pl: bundled with parent package
 #   - bam2wig: bundled with parent package
+#   - etraining: bundled with parent package
+#   - new_species.pl: bundled with parent package
+#   - randomSplit.pl: bundled with parent package
+#   - splitMfasta.pl: bundled with parent package
+#   - join_aug_pred.pl: bundled with parent package
+#   - gtf2gff.pl: bundled with parent package
+#   - wig2hints.pl: bundled with parent package
+#   - fathom: bundled with parent package
+#   - forge: bundled with parent package
+#   - hmm-assembler.pl: bundled with parent package
+#   - sortgrcd: bundled with parent package
+#   - makblk.pl: bundled with parent package
+#   - gthconsensus: bundled with parent package
+#   - write_EVM_commands.pl: bundled with parent package
+#   - recombine_EVM_partial_outputs.pl: bundled with parent package
+#   - convert_EVM_outputs_to_GFF3.pl: bundled with parent package
+#   - Load_Current_Gene_Annotations.dbi: bundled with parent package
+#   - build_comprehensive_transcriptome.dbi: bundled with parent package
 
 name: eukan
 channels:
@@ -33,6 +52,9 @@ dependencies:
   - genomethreader>=1.7
   - gmap>=2024
   - pasa>=2.5
+  - repeatmasker>=4.1
+  - repeatmodeler>=2.0
+  - rmblast
   - samtools>=1.20
   - snap
   - spaln>=3.0
@@ -53,6 +75,7 @@ dependencies:
   - perl-hash-merge
   - perl-mce
   - perl-parallel-forkmanager
+  - perl-math-utils
 
   # eukan + Python dependencies (installed via pip for version consistency)
   - pip
