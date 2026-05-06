@@ -79,3 +79,39 @@ class TestParseEvmCommand:
         assert result is not None
         argv, _, _, _ = result
         assert argv == ["evidence_modeler.pl", "--weights", "/tmp/with space/w.txt"]
+
+    def test_double_stderr_redirect_returns_none(self):
+        assert _parse_evm_command("a 2> x 2> y") is None
+
+    def test_redirects_in_reverse_order(self):
+        # The peeling walks right to left, so any ordering of > and 2>
+        # at the tail works as long as each appears at most once.
+        result = _parse_evm_command("a 2> err.log > out.gff")
+        assert result is not None
+        argv, _, stdout, stderr = result
+        assert argv == ["a"]
+        assert stdout == "out.gff"
+        assert stderr == "err.log"
+
+    def test_appending_stdout_returns_none(self):
+        assert _parse_evm_command("a >> log") is None
+
+    def test_appending_stderr_returns_none(self):
+        assert _parse_evm_command("a 2>> log") is None
+
+    def test_input_redirect_returns_none(self):
+        assert _parse_evm_command("a < in") is None
+
+    def test_semicolon_returns_none(self):
+        assert _parse_evm_command("a ; b") is None
+
+    def test_logical_and_returns_none(self):
+        # Bare "&&" without a leading "cd PATH &&" is not handled.
+        assert _parse_evm_command("a && b") is None
+
+    def test_logical_or_returns_none(self):
+        assert _parse_evm_command("a || b") is None
+
+    def test_only_redirect_returns_none(self):
+        # After peeling "> out", tokens are empty — argv would be too.
+        assert _parse_evm_command("> out") is None
