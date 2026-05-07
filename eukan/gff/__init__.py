@@ -14,6 +14,7 @@ GFF3_DIALECT: dict[str, object] = {
     "trailing semicolon": True,
     "quoted GFF2 values": False,
     "field separator": ";",
+    "semicolon in quotes": False,
     "keyval separator": "=",
     "multival separator": ",",
     "fmt": "gff3",
