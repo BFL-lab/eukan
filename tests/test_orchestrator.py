@@ -1,11 +1,11 @@
-"""Tests for eukan.{annotation,assembly}.orchestrator — CLI flag → step translation."""
+"""Tests for eukan.{annotation,assembly}.pipeline — CLI flag → step translation."""
 
 from __future__ import annotations
 
 from typing import ClassVar
 
-from eukan.annotation.orchestrator import force_steps_from_run_flags
-from eukan.assembly.orchestrator import (
+from eukan.annotation.pipeline import force_steps_from_run_flags
+from eukan.assembly.pipeline import (
     force_steps_from_run_flags as assembly_force_steps_from_run_flags,
 )
 
@@ -14,7 +14,7 @@ class TestForceStepsFromRunFlags:
     """``--run-*`` CLI flags translate to the right manifest keys.
 
     The CLI surface is the dict of booleans accepted as kwargs here;
-    the orchestrator surface is the list of ``annotation/<step>`` keys
+    the pipeline surface is the list of ``annotation/<step>`` keys
     that get popped from the manifest before re-execution.
     """
 

@@ -4,7 +4,7 @@ from Bio import SeqIO
 
 from eukan.repeats.masker import gff_to_hints
 from eukan.repeats.modeler import sort_and_uppercase
-from eukan.repeats.orchestrator import force_steps_from_run_flags
+from eukan.repeats.pipeline import force_steps_from_run_flags
 from eukan.settings import RepeatsConfig
 
 

@@ -63,7 +63,7 @@ def _run_step(
     *args,
     **kwargs,
 ) -> Path:
-    """Run an annotation step via the shared orchestrator helper.
+    """Run an annotation step via the shared pipeline helper.
 
     All annotation steps produce a GFF3 output, so the result is always
     a Path (never None).

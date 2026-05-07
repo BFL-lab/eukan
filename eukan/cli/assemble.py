@@ -83,7 +83,7 @@ def assemble(
     and --right are required.
     """
     from eukan.assembly import run_assembly
-    from eukan.assembly.orchestrator import force_steps_from_run_flags
+    from eukan.assembly.pipeline import force_steps_from_run_flags
     from eukan.settings import AssemblyConfig
 
     if not left and not right and not single:

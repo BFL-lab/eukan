@@ -56,7 +56,7 @@ def mask_repeats(
     Pass the masked genome to `eukan annotate -g <stem>.masked.fasta`.
     """
     from eukan.repeats import run_repeats
-    from eukan.repeats.orchestrator import force_steps_from_run_flags
+    from eukan.repeats.pipeline import force_steps_from_run_flags
     from eukan.settings import RepeatsConfig
 
     config = RepeatsConfig(**drop_none(

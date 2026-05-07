@@ -387,7 +387,7 @@ def validate_or_raise(
 ) -> None:
     """Validate completed step outputs; raise StaleManifestError on any error.
 
-    Replaces the orchestrator-level boilerplate of "log each error then
+    Replaces the pipeline-level boilerplate of "log each error then
     raise SystemExit(1)" — that bypasses the CLI's structured error
     handling. Use this from inside library code; the CLI handler renders
     StaleManifestError uniformly.

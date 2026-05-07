@@ -113,7 +113,7 @@ def annotate(
     replace the auto-discovered values.
     """
     from eukan.annotation import run_annotation_pipeline
-    from eukan.annotation.orchestrator import force_steps_from_run_flags
+    from eukan.annotation.pipeline import force_steps_from_run_flags
     from eukan.settings import PipelineConfig
 
     # Only pass fields explicitly set by the user; pydantic-settings
