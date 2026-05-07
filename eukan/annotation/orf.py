@@ -15,7 +15,7 @@ import pandas as pd
 from Bio.Data import CodonTable
 from Bio.Seq import Seq
 
-from eukan.gff.intersecter import merge_fully_overlapping_transcript_genes
+from eukan.gff.concordance import merge_fully_overlapping_transcript_genes
 from eukan.gff.transforms import _swap_id_kind, derived_feature, gff3_it
 
 # ---------------------------------------------------------------------------

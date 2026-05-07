@@ -1,6 +1,6 @@
 """Strand-aware interval index with prefix-max-end overlap queries.
 
-Used by both the consensus/concordance routines (``gff/intersecter.py``)
+Used by both the consensus/concordance routines (``gff/concordance.py``)
 and the annotation comparison stats (``stats/compare.py``). Both modules
 previously rolled their own copy of this data structure.
 

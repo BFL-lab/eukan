@@ -12,7 +12,7 @@ from pathlib import Path
 
 import gffutils
 
-from eukan.gff import intersecter as gffintersecter
+from eukan.gff import concordance
 from eukan.infra.runner import run_cmd
 from eukan.settings import PipelineConfig
 
@@ -27,7 +27,7 @@ def build_training_set(
     a quarter of the concordant gene count, with a flank derived from
     the mean gene length of the first evidence source.
     """
-    training_db = gffintersecter.extract_supported_models(*evidence, output_dir=sdir)
+    training_db = concordance.extract_supported_models(*evidence, output_dir=sdir)
 
     num_training = max(
         1, len([f.id for f in training_db.features_of_type("gene")]) // 4

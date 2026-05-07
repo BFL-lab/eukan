@@ -39,7 +39,7 @@ MODULES = [
     "eukan.gff",
     "eukan.gff.transforms",
     "eukan.gff.hierarchy",
-    "eukan.gff.intersecter",
+    "eukan.gff.concordance",
     "eukan.gff.io",
 ]
 
