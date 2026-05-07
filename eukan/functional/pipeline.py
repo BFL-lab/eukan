@@ -1,4 +1,11 @@
-"""Functional annotation pipeline orchestration."""
+"""Functional annotation pipeline: phmmer search → FASTA + GFF3 annotation.
+
+Doesn't fit ``run_simple_pipeline``: the search step writes two JSON
+caches that the FASTA/GFF3 annotation steps read back, so the steps
+aren't independent in the way the linear driver assumes. StepSpec is
+still used for the step declarations to keep the shape consistent with
+the other pipelines.
+"""
 
 from __future__ import annotations
 
@@ -17,20 +24,11 @@ from eukan.infra.manifest import (
     save_manifest,
     step_key,
 )
-from eukan.infra.pipeline import run_orchestrated_step
+from eukan.infra.pipeline import StepSpec, run_orchestrated_step
 from eukan.infra.steps import validate_or_raise
 from eukan.settings import FunctionalConfig
 
 log = get_logger(__name__)
-
-
-_FUNCTIONAL_STEPS = [
-    step_key(FUNCTIONAL, "search"),
-    step_key(FUNCTIONAL, "annotate_fasta"),
-    step_key(FUNCTIONAL, "annotate_gff3"),
-]
-
-_FUNCTIONAL_FLAGS = {s: "--force" for s in _FUNCTIONAL_STEPS}
 
 
 def _search_and_cache(
@@ -45,6 +43,17 @@ def _search_and_cache(
     return phmmer_json
 
 
+# Step specs used for the validate_or_raise stale-output check. fn fields
+# are the inner search/annotate functions; the actual call sites below
+# wrap them with the JSON-cache plumbing that doesn't fit StepSpec's
+# (config) → output contract.
+_STEPS: list[StepSpec] = [
+    StepSpec("search",         _search_and_cache, flag="--force"),
+    StepSpec("annotate_fasta", annotate_fasta,    flag="--force"),
+    StepSpec("annotate_gff3",  annotate_gff3,     flag="--force"),
+]
+
+
 def run_functional_annotation(
     config: FunctionalConfig, *, force: bool = False,
 ) -> None:
@@ -52,8 +61,10 @@ def run_functional_annotation(
     work_dir = config.work_dir
     manifest = get_or_create_manifest(work_dir, config)
 
+    expected = [step_key(FUNCTIONAL, s.name) for s in _STEPS]
+    flag_map = {key: "--force" for key in expected}
     if not force:
-        validate_or_raise(manifest, _FUNCTIONAL_STEPS, _FUNCTIONAL_FLAGS)
+        validate_or_raise(manifest, expected, flag_map)
 
     save_manifest(work_dir, manifest)
 
