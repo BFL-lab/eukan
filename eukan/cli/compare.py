@@ -75,7 +75,7 @@ def compare(
     \b
     Use --output-file to write a per-feature TSV for further analysis.
     """
-    from eukan.stats import (
+    from eukan.compare import (
         compare_annotations,
         compare_multiple,
         format_multi_results,

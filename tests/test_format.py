@@ -1,4 +1,4 @@
-"""Tests for eukan.stats.format — terminal formatting and TSV export."""
+"""Tests for eukan.compare.format — terminal formatting and TSV export."""
 
 from __future__ import annotations
 
@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from eukan.stats import (
+from eukan.compare import (
     compare_annotations,
     compare_multiple,
     format_multi_results,
     format_results,
     write_details_tsv,
 )
-from eukan.stats.models import TSV_COLUMNS
+from eukan.compare.models import TSV_COLUMNS
 
 # Reused fixtures from test_compare; duplicated here to keep test files
 # independent.

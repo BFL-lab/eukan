@@ -128,8 +128,8 @@ def check_python_deps() -> list[PythonCheckResult]:
         "eukan.functional", "eukan.functional.orchestrator", "eukan.functional.dbfetch",
         "eukan.submission",
         "eukan.gff.parser", "eukan.gff.intersecter", "eukan.gff.io",
-        "eukan.stats", "eukan.stats.compare", "eukan.stats.format",
-        "eukan.stats.models",
+        "eukan.compare", "eukan.compare.engine", "eukan.compare.format",
+        "eukan.compare.models",
     ]
     import_failures = []
     for mod in modules:

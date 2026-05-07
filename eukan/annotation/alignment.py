@@ -9,7 +9,7 @@ from pathlib import Path
 
 import gffutils
 
-from eukan.annotation.ssp import build_ssp
+from eukan.annotation.spaln_params import build_ssp
 from eukan.annotation.validation import validate_fasta
 from eukan.gff import create_gff_db
 from eukan.gff import parser as gffparser

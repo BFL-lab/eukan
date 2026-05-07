@@ -7,7 +7,7 @@ from dataclasses import astuple
 from pathlib import Path
 from statistics import median
 
-from eukan.stats.models import (
+from eukan.compare.models import (
     POWERSET_CLASSES,
     TSV_COLUMNS,
     ComparisonResult,

@@ -10,11 +10,8 @@ from pydantic import ValidationError
 
 from eukan.exceptions import ConfigurationError
 from eukan.settings import SubmissionConfig
-from eukan.submission import (
-    _parse_val_report,
-    build_command,
-    shell_repr,
-)
+from eukan.submission import build_command, shell_repr
+from eukan.submission.pipeline import _parse_val_report
 
 # ---------------------------------------------------------------------------
 # Fixtures

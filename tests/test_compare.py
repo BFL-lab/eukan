@@ -1,4 +1,4 @@
-"""Tests for eukan.stats.compare — annotation comparison."""
+"""Tests for eukan.compare.engine — annotation comparison."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from eukan.stats import compare_annotations, compare_multiple
-from eukan.stats.compare import _stream_features
-from eukan.stats.models import POWERSET_CLASSES, MultiComparisonResult
+from eukan.compare import compare_annotations, compare_multiple
+from eukan.compare.engine import _stream_features
+from eukan.compare.models import POWERSET_CLASSES, MultiComparisonResult
 
 # A minimal GFF3 with two genes: one single-CDS, one with two CDS (one intron).
 _REF_GFF = """##gff-version 3

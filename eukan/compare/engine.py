@@ -26,7 +26,7 @@ from itertools import permutations
 from pathlib import Path
 
 from eukan.gff.intervals import IntervalIndex
-from eukan.stats.models import (
+from eukan.compare.models import (
     FRAG_THRESHOLD,
     MERGE_THRESHOLD,
     POWERSET_CLASSES,
