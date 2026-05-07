@@ -5,6 +5,7 @@ gmes_linux_64*.tar.gz
 .claude
 ./databases
 table2asn
+*.sbt
 
 # Test data (downloaded from NCBI, large files)
 tests/data/genome.fasta*

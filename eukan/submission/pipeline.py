@@ -16,6 +16,7 @@ from eukan.exceptions import ConfigurationError
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.settings import SubmissionConfig
+from eukan.submission.cleanup import clean_gff3_for_submission
 
 log = get_logger(__name__)
 
@@ -128,13 +129,23 @@ def run_prep_submission(
     """
     assert config.output is not None  # post-discovery invariant
 
-    cmd = build_command(config)
-    log.info("table2asn command: %s", shell_repr(cmd))
-
     if print_only:
+        cmd = build_command(config)
+        log.info("table2asn command: %s", shell_repr(cmd))
         return config.output
 
     config.outdir.mkdir(parents=True, exist_ok=True)
+
+    if config.cleanup_gff3:
+        assert config.gff3 is not None
+        cleaned = config.outdir / f"{config.gff3.stem}.cleaned.gff3"
+        report = clean_gff3_for_submission(config.gff3, cleaned)
+        log.info("GFF3 cleanup: %s", report.summary())
+        log.info("Cleaned GFF3: %s", cleaned)
+        object.__setattr__(config, "gff3", cleaned)
+
+    cmd = build_command(config)
+    log.info("table2asn command: %s", shell_repr(cmd))
 
     if dry_run:
         log.info("Dry-run requested; skipping table2asn invocation.")

@@ -416,6 +416,9 @@ class SubmissionConfig(_StepRunSettings):
     outdir: Path = Field(default_factory=lambda: Path.cwd() / "submission")
     extra_args: list[str] = Field(default_factory=list)
 
+    # --- GFF3 preprocessing ---
+    cleanup_gff3: bool = True  # strip UniProt cruft, drop CDS-less mRNAs, etc.
+
     @model_validator(mode="after")
     def _discover_inputs(self) -> SubmissionConfig:
         log = get_logger(__name__)

@@ -66,6 +66,11 @@ from eukan.cli._framework import PreformattedEpilogCommand
     help="Extra table2asn arguments, shell-quoted "
          "(e.g. --extra-args '-split-dr -huge').",
 )
+@optgroup.option(
+    "--cleanup-gff3/--no-cleanup-gff3", "cleanup_gff3", default=True, show_default=True,
+    help="Pre-process the GFF3 (strip UniProt cruft, drop CDS-less mRNAs, "
+         "cap inferences) before handing it to table2asn.",
+)
 @optgroup.group("Output options")
 @optgroup.option(
     "--output", "-o", type=click.Path(path_type=Path), default=None,
@@ -95,6 +100,7 @@ def prep_submission(
     mode: str,
     assembly_type: str,
     extra_args: str,
+    cleanup_gff3: bool,
     output: Path | None,
     outdir: Path | None,
     print_command: bool,
@@ -138,6 +144,7 @@ def prep_submission(
         mode=mode,
         assembly_type=assembly_type,
         extra_args=shlex.split(extra_args) if extra_args else None,
+        cleanup_gff3=cleanup_gff3,
         output=output.resolve() if output else None,
         outdir=outdir.resolve() if outdir else None,
     ))
