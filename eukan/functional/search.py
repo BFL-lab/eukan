@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TypedDict
@@ -16,14 +17,33 @@ from eukan.infra.logging import get_logger
 log = get_logger(__name__)
 
 
-def _decode(value: str | bytes) -> str:
+def _decode(value: str | bytes | None) -> str:
     """Decode bytes to str, pass through if already str (pyhmmer compat)."""
+    if value is None:
+        return ""
     return value.decode() if isinstance(value, bytes) else value
 
 
-class HitInfo(TypedDict):
+class HitInfo(TypedDict, total=False):
     description: str
     evalue: float
+    accession: str  # optional — backfilled for legacy caches via _pfam_accession
+
+
+_PFAM_VERSION_RE = re.compile(r"\.\d+$")
+
+
+def _pfam_accession(info: HitInfo, hit_name: str) -> str:
+    """Return the Pfam accession (e.g. ``PF00710``) for an hmmscan hit.
+
+    Strips the trailing version suffix (``PF00710.15`` → ``PF00710``).
+    Falls back to the hit name when the cached result predates accession
+    capture or the HMM has no accession metadata.
+    """
+    acc = info.get("accession", "")
+    if not acc:
+        return hit_name
+    return _PFAM_VERSION_RE.sub("", acc)
 
 
 # query_id -> {hit_id -> HitInfo}
@@ -115,6 +135,7 @@ def run_hmmscan_search(
                 query_hits[hit_name] = {
                     "description": hit_desc,
                     "evalue": hit.evalue,
+                    "accession": _decode(hit.accession),
                 }
                 prev_end = dom_end
 
@@ -281,7 +302,8 @@ def _add_func_info(
 
         if lookup_id and lookup_id in hmmscan_res:
             pfam_inferences = [
-                f"protein motif:PFAM:{k}" for k in hmmscan_res[lookup_id]
+                f"protein motif:PFAM:{_pfam_accession(info, hit_name)}"
+                for hit_name, info in hmmscan_res[lookup_id].items()
             ]
             if "inference" in f.attributes:
                 f.attributes["inference"] = f.attributes["inference"] + pfam_inferences
