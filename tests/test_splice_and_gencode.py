@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from eukan.gencode import GeneticCode
+from eukan.infra.genetic_code import GeneticCode
 
 # ---------------------------------------------------------------------------
 # GeneticCode.genemark_flag

@@ -19,7 +19,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    from eukan.check import generate_environment_yml
+    from eukan.infra.conda_env import generate_environment_yml
 
     content = generate_environment_yml()
     args.output.write_text(content)

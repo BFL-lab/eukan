@@ -22,7 +22,8 @@ MODULES = [
     "eukan",
     "eukan.cli",
     "eukan.settings",
-    "eukan.check",
+    "eukan.infra.health",
+    "eukan.infra.conda_env",
     "eukan.annotation.orf",
     "eukan.infra",
     "eukan.infra.runner",
@@ -200,7 +201,7 @@ def test_functional_config_defaults(tmp_path):
 
 def test_generate_env_no_hmmer():
     """Generated environment.yml should not include hmmer."""
-    from eukan.check import generate_environment_yml
+    from eukan.infra.conda_env import generate_environment_yml
     content = generate_environment_yml()
     assert "hmmer" not in content
     assert "bioconda" in content

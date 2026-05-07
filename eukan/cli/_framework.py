@@ -47,7 +47,7 @@ def _resolve_epilog(value: str) -> str:
 def _full_code_table_text() -> str:
     from Bio.Data import CodonTable
 
-    from eukan.gencode import _PASA_NAMES
+    from eukan.infra.genetic_code import _PASA_NAMES
 
     lines = ["Genetic codes (NCBI translation tables):", ""]
     for cid, table in sorted(CodonTable.unambiguous_dna_by_id.items()):
@@ -59,7 +59,7 @@ def _full_code_table_text() -> str:
 
 
 def _pasa_code_table_text() -> str:
-    from eukan.gencode import _PASA_NAMES, GeneticCode
+    from eukan.infra.genetic_code import _PASA_NAMES, GeneticCode
 
     lines = ["Genetic codes supported by PASA:", ""]
     for cid in sorted(_PASA_NAMES):

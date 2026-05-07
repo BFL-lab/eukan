@@ -1,11 +1,11 @@
-"""Tests for eukan.check — external tool and database pre-flight checks."""
+"""Tests for eukan.infra.health and eukan.infra.conda_env."""
 
 
-from eukan.check import (
+from eukan.infra.conda_env import generate_environment_yml
+from eukan.infra.health import (
     PythonCheckResult,
     check_tool,
     format_results,
-    generate_environment_yml,
     run_checks,
 )
 from eukan.infra.tools_registry import EnvVarSpec, Tool, load_tools
@@ -79,7 +79,7 @@ class TestRunChecks:
 class TestPythonChecks:
     def test_all_pass(self):
         """Python dep checks should pass in a working environment."""
-        from eukan.check import check_python_deps
+        from eukan.infra.health import check_python_deps
         results = check_python_deps()
         assert len(results) > 0
         for r in results:

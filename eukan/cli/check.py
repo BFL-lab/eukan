@@ -22,7 +22,7 @@ import click
 )
 def check(subcommands: tuple[str, ...], db_dir: Path) -> None:
     """Verify Python deps, external tools, and databases."""
-    from eukan.check import format_results, run_checks
+    from eukan.infra.health import format_results, run_checks
 
     passed, failed, db_results, python_results = run_checks(
         list(subcommands) if subcommands else None,

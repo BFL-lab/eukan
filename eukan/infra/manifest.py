@@ -26,7 +26,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from eukan.gff.validation import validate_gff
+from eukan.validation import validate_gff
 from eukan.infra.logging import get_logger
 from eukan.infra.utils import md5_file
 

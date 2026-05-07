@@ -109,8 +109,8 @@ class _StepRunSettings(BaseSettings):
 
     @cached_property
     def genetic_code_obj(self):
-        """Return a :class:`~eukan.gencode.GeneticCode` for this config's code."""
-        from eukan.gencode import GeneticCode
+        """Return a :class:`~eukan.infra.genetic_code.GeneticCode` for this config's code."""
+        from eukan.infra.genetic_code import GeneticCode
         return GeneticCode(self.genetic_code)
 
 

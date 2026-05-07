@@ -10,7 +10,7 @@ from pathlib import Path
 import gffutils
 
 from eukan.annotation.spaln_params import build_ssp
-from eukan.annotation.validation import validate_fasta
+from eukan.validation import validate_fasta
 from eukan.gff import create_gff_db
 from eukan.gff import transforms as gff_transforms
 from eukan.gff.normalize import normalize_to_gff3

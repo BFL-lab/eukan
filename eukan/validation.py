@@ -1,4 +1,7 @@
-"""Input validation and sanitization for the annotation pipeline."""
+"""Input validation and sanitization for FASTA and GFF3 files.
+
+Cross-cutting boundary checks used by every pipeline at the input edge.
+"""
 
 from __future__ import annotations
 
@@ -6,10 +9,15 @@ from pathlib import Path
 
 from Bio import SeqIO
 
-from eukan.exceptions import FastaValidationError
+from eukan.exceptions import FastaValidationError, GFFValidationError
 from eukan.infra.logging import get_logger
 
 log = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# FASTA
+# ---------------------------------------------------------------------------
 
 
 def validate_fasta(path: Path) -> None:
@@ -54,3 +62,34 @@ def sanitize_genome_fasta(genome: Path, work_dir: Path) -> Path:
     return sanitized
 
 
+# ---------------------------------------------------------------------------
+# GFF3
+# ---------------------------------------------------------------------------
+
+
+def validate_gff(path: Path) -> bool:
+    """Check if a file is valid GFF3 by streaming a few features.
+
+    Uses gffutils.DataIterator to parse without building a full SQLite
+    database, making this fast even for large files.
+
+    Raises:
+        GFFValidationError: If the file cannot be parsed or has invalid features.
+    """
+    import gffutils
+
+    try:
+        count = 0
+        for f in gffutils.DataIterator(str(path)):
+            if f.start is None or f.end is None or len(f.attributes) == 0:
+                raise GFFValidationError(path, "feature has missing attributes or coordinates")
+            count += 1
+            if count >= 10:
+                break
+        if count == 0:
+            raise GFFValidationError(path, "file contains no features")
+        return True
+    except GFFValidationError:
+        raise
+    except Exception as exc:
+        raise GFFValidationError(path, str(exc)) from exc

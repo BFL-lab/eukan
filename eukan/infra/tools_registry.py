@@ -1,7 +1,8 @@
 """Shared loader for tools.toml.
 
-Single source of truth consumed by :mod:`eukan.check`,
-:mod:`eukan.infra.environ`, and ``scripts/generate-env.py``.
+Single source of truth consumed by :mod:`eukan.infra.health`,
+:mod:`eukan.infra.environ`, :mod:`eukan.infra.conda_env`, and
+``scripts/generate-env.py``.
 
 Schema (per-tool, all fields optional unless noted)::
 

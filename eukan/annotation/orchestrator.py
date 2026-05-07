@@ -12,7 +12,7 @@ from eukan.annotation.consensus import build_consensus_models
 from eukan.annotation.genemark import run_genemark
 from eukan.annotation.orf import create_transcriptome_orf_db
 from eukan.annotation.snap import run_codingquarry, run_snap
-from eukan.annotation.validation import sanitize_genome_fasta, validate_fasta
+from eukan.validation import sanitize_genome_fasta, validate_fasta
 from eukan.gff.io import count_gff3_features, featuredb2gff3_file
 from eukan.infra.artifacts import masked_genome
 from eukan.infra.logging import get_logger
@@ -38,7 +38,7 @@ log = get_logger(__name__)
 
 def find_orfs(config: PipelineConfig, trans_gff3: Path) -> Path:
     """Find ORFs in transcript assemblies."""
-    from eukan.gff.validation import validate_gff
+    from eukan.validation import validate_gff
 
     output = "transcript_orfs.gff3"
     sdir = step_dir(config.work_dir, "orf_finder")
