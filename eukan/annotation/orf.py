@@ -15,8 +15,8 @@ import pandas as pd
 from Bio.Data import CodonTable
 from Bio.Seq import Seq
 
-from eukan.gff import parser as gffparser
 from eukan.gff.intersecter import merge_fully_overlapping_transcript_genes
+from eukan.gff.transforms import _swap_id_kind, derived_feature, gff3_it
 
 # ---------------------------------------------------------------------------
 # Sequence extraction from FeatureDB
@@ -215,8 +215,8 @@ def _make_cds_from_exon(
 ) -> gffutils.Feature:
     """Create a CDS feature derived from an exon."""
     attrs = dict(exon.attributes)
-    attrs["ID"] = [gffparser._swap_id_kind(exon.attributes["ID"][0], "exon", "CDS")]
-    return gffparser.derived_feature(
+    attrs["ID"] = [_swap_id_kind(exon.attributes["ID"][0], "exon", "CDS")]
+    return derived_feature(
         exon, "CDS", attrs, frame=phase, start=start, end=end,
     )
 
@@ -324,7 +324,7 @@ def create_transcriptome_orf_db(
     dialect["fmt"] = "gff3"
     xcripts.dialect = dialect
     xcripts = gffutils.create_db(
-        xcripts, ":memory:", dialect=dialect, transform=gffparser.gff3_it,
+        xcripts, ":memory:", dialect=dialect, transform=gff3_it,
     )
 
     seqs = fetch_aligned_sequences(xcripts, genome)

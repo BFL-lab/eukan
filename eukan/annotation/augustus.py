@@ -13,8 +13,9 @@ from Bio import SeqIO
 
 from eukan.annotation.training import build_training_set
 from eukan.exceptions import ToolEnvError
+import gffutils
+
 from eukan.gff import create_gff_db
-from eukan.gff import parser as gffparser
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.artifacts import Artifact
 from eukan.infra.artifacts import find as find_artifact
@@ -248,7 +249,7 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
         cwd=sdir,
     )
 
-    aug_out = create_gff_db(sdir / "augustus.gff", transform=gffparser.Augustus.clean)
+    aug_out = create_gff_db(sdir / "augustus.gff", transform=_augustus_clean)
     featuredb2gff3_file(aug_out, sdir / output)
 
     # Cleanup splits
@@ -257,3 +258,16 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
         (sdir / f"{split.name}.gff3").unlink(missing_ok=True)
 
     return sdir / output
+
+
+# ---------------------------------------------------------------------------
+# AUGUSTUS output transforms
+# ---------------------------------------------------------------------------
+
+
+def _augustus_clean(f: gffutils.Feature) -> gffutils.Feature | None:
+    """Keep only gene/mRNA/CDS/exon features from AUGUSTUS output."""
+    if f.featuretype in ("gene", "mRNA", "CDS", "exon"):
+        f.source = "augustus"
+        return f
+    return None

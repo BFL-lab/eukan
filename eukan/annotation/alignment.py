@@ -12,7 +12,7 @@ import gffutils
 from eukan.annotation.spaln_params import build_ssp
 from eukan.annotation.validation import validate_fasta
 from eukan.gff import create_gff_db
-from eukan.gff import parser as gffparser
+from eukan.gff import transforms as gff_transforms
 from eukan.gff.normalize import normalize_to_gff3
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
@@ -56,7 +56,7 @@ def align_proteins(
         _run_gth(sdir)
 
     # Create protein hints for AUGUSTUS
-    prot_db = create_gff_db(sdir / output, transform=gffparser.prot2augustus_hints)
+    prot_db = create_gff_db(sdir / output, transform=gff_transforms.prot2augustus_hints)
     with open(sdir / "hints_protein.gff", "w") as fout:
         for feat in prot_db.all_features():
             fout.write(f"{feat}\n")
@@ -120,8 +120,8 @@ def _run_spaln(
 
     normalize_to_gff3(
         sdir / "temp.gff3", sdir / "prot.gff3",
-        parse_transform=gffparser.Spaln.fix_cds_featuretype,
-        post_transform=gffparser.Spaln.fix_ids,
+        parse_transform=_spaln_fix_cds_featuretype,
+        post_transform=_spaln_fix_ids,
     )
 
 
@@ -173,6 +173,51 @@ def _run_gth(sdir: Path) -> None:
     )
     normalize_to_gff3(
         sdir / "gth.gff3", sdir / "prot.gff3",
-        parse_transform=gffparser.Gth.filter,
-        post_transform=gffparser.Gth.fix_ids,
+        parse_transform=_gth_filter,
+        post_transform=_gth_fix_ids,
     )
+
+
+# ---------------------------------------------------------------------------
+# spaln output transforms
+# ---------------------------------------------------------------------------
+
+
+def _spaln_fix_cds_featuretype(f: gffutils.Feature) -> gffutils.Feature:
+    """Fix spaln's lowercase ``cds`` featuretype."""
+    if f.featuretype == "cds":
+        f.attributes["ID"][0] = f"{f.attributes['Parent'][0]}:{f.attributes['ID'][0]}"
+        f.featuretype = "CDS"
+    return f
+
+
+def _spaln_fix_ids(f: gffutils.Feature) -> gffutils.Feature:
+    """Normalize spaln feature IDs and source."""
+    if f.featuretype in ("CDS", "exon"):
+        f.attributes["ID"][0] = f.id
+    f.source = "prot_align"
+    return f
+
+
+# ---------------------------------------------------------------------------
+# GenomeThreader output transforms
+# ---------------------------------------------------------------------------
+
+
+def _gth_filter(f: gffutils.Feature) -> gffutils.Feature | None:
+    """Keep only gene and exon features; reparent exons to ``_mRNA``."""
+    if f.featuretype in ("gene", "exon"):
+        if f.featuretype == "exon":
+            f.attributes["Parent"][0] += "_mRNA"
+        return f
+    return None
+
+
+def _gth_fix_ids(f: gffutils.Feature) -> gffutils.Feature:
+    """Normalize GenomeThreader feature IDs."""
+    f.source = "prot_align"
+    if f.featuretype == "exon":
+        f.attributes["ID"] = [f.id]
+    if f.featuretype == "mRNA":
+        f.id = f.attributes["ID"][0]
+    return f

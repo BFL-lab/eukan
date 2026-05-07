@@ -1,8 +1,7 @@
 """GFF3 I/O: serialization, counting, and sequence extraction.
 
 Canonical implementations of featuredb2gff3_file, count_gff3_features,
-and extract_sequences, deduplicated from gffparser.py, func-annot, and
-gff3toseq.
+and extract_sequences.
 """
 
 from __future__ import annotations

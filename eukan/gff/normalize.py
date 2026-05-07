@@ -16,8 +16,9 @@ from pathlib import Path
 import gffutils
 
 from eukan.gff import create_gff_db, transform_db
-from eukan.gff import parser as gffparser
+from eukan.gff.hierarchy import add_missing_feats_to_gff3
 from eukan.gff.io import featuredb2gff3_file
+from eukan.gff.transforms import fix_contig_names
 
 
 def normalize_to_gff3(
@@ -41,10 +42,10 @@ def normalize_to_gff3(
             missing-feature fill-in. Used when a fix needs to see the
             completed hierarchy (e.g. ``Spaln.fix_ids``).
         add_missing_features: When True (the default), runs
-            :func:`eukan.gff.parser.add_missing_feats_to_gff3` to back-fill
+            :func:`eukan.gff.hierarchy.add_missing_feats_to_gff3` to back-fill
             mRNA/CDS/exon features from a partial output.
         fix_contig_names: When True, applies
-            :func:`eukan.gff.parser.fix_contig_names` to strip whitespace
+            :func:`eukan.gff.transforms.fix_contig_names` to strip whitespace
             descriptions from chrom names. Use for tools (e.g. GeneMark)
             that copy the full FASTA header into the GFF seqid column.
 
@@ -55,7 +56,7 @@ def normalize_to_gff3(
 
     if add_missing_features:
         db.update(
-            gffparser.add_missing_feats_to_gff3(db),
+            add_missing_feats_to_gff3(db),
             merge_strategy="create_unique",
         )
 
@@ -63,7 +64,7 @@ def normalize_to_gff3(
         db = transform_db(db, post_transform)
 
     if fix_contig_names:
-        db = transform_db(db, gffparser.fix_contig_names)
+        db = transform_db(db, fix_contig_names)
 
     featuredb2gff3_file(db, out)
     return out

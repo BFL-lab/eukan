@@ -37,7 +37,8 @@ MODULES = [
     "eukan.functional.orchestrator",
     "eukan.functional.dbfetch",
     "eukan.gff",
-    "eukan.gff.parser",
+    "eukan.gff.transforms",
+    "eukan.gff.hierarchy",
     "eukan.gff.intersecter",
     "eukan.gff.io",
 ]

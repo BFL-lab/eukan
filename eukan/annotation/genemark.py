@@ -6,7 +6,7 @@ from pathlib import Path
 
 import gffutils
 
-from eukan.gff import parser as gffparser
+from eukan.gff import transforms as gff_transforms
 from eukan.gff.normalize import normalize_to_gff3
 from eukan.gff.validation import validate_gff
 from eukan.infra.logging import get_logger
@@ -23,7 +23,7 @@ def _read_genemark_gtf(path: Path) -> gffutils.FeatureDB:
     GeneMark emits GTF with ``gene_id`` / ``transcript_id`` keys on every
     feature (including start/stop codons). The id_spec walks each feature
     type to its identifying attributes; the second pass converts GTF to
-    GFF3 conventions via ``gffparser.gtf2gff3``.
+    GFF3 conventions via ``gff_transforms.gtf2gff3``.
     """
     gmgtf = gffutils.create_db(
         str(path), ":memory:", verbose=False,
@@ -40,7 +40,7 @@ def _read_genemark_gtf(path: Path) -> gffutils.FeatureDB:
         },
     )
     from eukan.gff import transform_db
-    return transform_db(gmgtf, gffparser.gtf2gff3)
+    return transform_db(gmgtf, gff_transforms.gtf2gff3)
 
 
 def run_genemark(config: PipelineConfig, hints: Path | None = None) -> Path:

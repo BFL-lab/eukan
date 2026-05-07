@@ -1,6 +1,6 @@
-"""Tests for eukan.gff.parser — GFF3 transforms and feature hierarchy."""
+"""Tests for eukan.gff.hierarchy — feature hierarchy operations."""
 
-from eukan.gff.parser import (
+from eukan.gff.hierarchy import (
     add_missing_feats_to_gff3,
     fix_CDS_phases,
     prettify_gff3,

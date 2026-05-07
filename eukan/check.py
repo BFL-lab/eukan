@@ -127,7 +127,7 @@ def check_python_deps() -> list[PythonCheckResult]:
         "eukan.repeats", "eukan.repeats.orchestrator", "eukan.repeats.modeler", "eukan.repeats.masker",
         "eukan.functional", "eukan.functional.orchestrator", "eukan.functional.dbfetch",
         "eukan.submission",
-        "eukan.gff.parser", "eukan.gff.intersecter", "eukan.gff.io",
+        "eukan.gff.transforms", "eukan.gff.hierarchy", "eukan.gff.intersecter", "eukan.gff.io",
         "eukan.compare", "eukan.compare.engine", "eukan.compare.format",
         "eukan.compare.models",
     ]

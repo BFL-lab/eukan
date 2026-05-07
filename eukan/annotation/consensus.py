@@ -8,7 +8,7 @@ from eukan.annotation.evm import run_evm
 from eukan.assembly.pasa import write_pasa_configs
 from eukan.gff import create_gff_db
 from eukan.gff import intersecter as gffintersecter
-from eukan.gff import parser as gffparser
+from eukan.gff.hierarchy import fix_CDS_phases, prettify_gff3
 from eukan.gff.io import count_gff3_features
 from eukan.infra.artifacts import Artifact
 from eukan.infra.logging import get_logger
@@ -83,9 +83,9 @@ def _patch_in_unmatched_orfs(consdb, orf_path: Path):
 def _write_prettified_gff3(consdb, shortname: str, out_path: Path) -> None:
     """Fix CDS phases, assign locus tags, and write the final GFF3."""
     consdb.dialect["order"].append("locus_tag")
-    consdb = create_gff_db(gffparser.fix_CDS_phases(consdb), merge_strategy="merge")
+    consdb = create_gff_db(fix_CDS_phases(consdb), merge_strategy="merge")
     with open(out_path, "w") as outfile:
-        for feature in gffparser.prettify_gff3(consdb, shortname):
+        for feature in prettify_gff3(consdb, shortname):
             outfile.write(f"{feature}\n")
 
 
