@@ -48,6 +48,37 @@ def featuredb2gff3_file(featuredb: gffutils.FeatureDB, out: str | Path) -> None:
                         fout.write(f"{f}\n")
 
 
+def iter_assembled_sequences(
+    gff3db: gffutils.FeatureDB,
+    fasta: str | Path,
+    *,
+    child_featuretype: str = "CDS",
+) -> Iterator[tuple[gffutils.Feature, str]]:
+    """Yield ``(mRNA, assembled_DNA)`` pairs for every mRNA in *gff3db*.
+
+    Concatenates child features (default ``CDS``) ordered by genome start,
+    then reverse-complements on the minus strand. The mRNA list is sorted
+    by ``(chrom, start)`` so the ContigIndex single-record cache stays warm.
+    Skips mRNAs with no matching children. Case is preserved — callers
+    that need uppercase (e.g. for ORF regex matching) should ``.upper()``.
+    """
+    mrnas = sorted(gff3db.features_of_type("mRNA"), key=lambda m: (m.chrom, m.start))
+    with ContigIndex(fasta) as contigs:
+        for mrna in mrnas:
+            seq_parts = [
+                str(contigs[child.chrom][child.start - 1 : child.end].seq)
+                for child in gff3db.children(
+                    mrna, featuretype=child_featuretype, order_by="start",
+                )
+            ]
+            if not seq_parts:
+                continue
+            seq = "".join(seq_parts)
+            if mrna.strand == "-":
+                seq = str(Seq(seq).reverse_complement())
+            yield mrna, seq
+
+
 def extract_sequences(
     gff3: str | Path,
     genome: str | Path,
@@ -61,23 +92,8 @@ def extract_sequences(
     gff3db = create_gff_db(gff3)
     codon_table = CodonTable.unambiguous_dna_by_id[genetic_code]
 
-    # Sort by chromosome so the ContigIndex single-record cache stays warm.
-    mrnas = sorted(gff3db.features_of_type("mRNA"), key=lambda m: (m.chrom, m.start))
-    with ContigIndex(genome) as contigs:
-        for mrna in mrnas:
-            cds_seqs = [
-                contigs[child.chrom][child.start - 1 : child.end].seq
-                for child in gff3db.children(mrna, featuretype="CDS", order_by="start")
-            ]
-            if not cds_seqs:
-                continue
-
-            seq_concat = Seq("".join(str(s) for s in cds_seqs))
-            if mrna.strand == "-":
-                seq_concat = seq_concat.reverse_complement()
-
-            if extract_to == "protein":
-                translated = seq_concat.translate(table=codon_table)
-                yield SeqRecord(translated, id=mrna.id, description="")
-            else:
-                yield SeqRecord(seq_concat, id=mrna.id, description="")
+    for mrna, dna in iter_assembled_sequences(gff3db, genome, child_featuretype="CDS"):
+        seq = Seq(dna)
+        if extract_to == "protein":
+            seq = seq.translate(table=codon_table)
+        yield SeqRecord(seq, id=mrna.id, description="")

@@ -13,9 +13,9 @@ from pathlib import Path
 import gffutils
 import pandas as pd
 from Bio.Data import CodonTable
-from Bio.Seq import Seq
 
 from eukan.gff.concordance import merge_fully_overlapping_transcript_genes
+from eukan.gff.io import iter_assembled_sequences
 from eukan.gff.transforms import _swap_id_kind, derived_feature, gff3_it
 
 # ---------------------------------------------------------------------------
@@ -31,27 +31,15 @@ def fetch_aligned_sequences(
     """Extract concatenated exon/CDS sequences for each mRNA.
 
     Returns:
-        List of (mRNA_id, strand, sequence) tuples.
+        List of (mRNA_id, strand, sequence) tuples. Sequences are uppercased
+        so soft-masked input doesn't break codon regex matching downstream.
     """
-    from eukan.infra.genome import ContigIndex
-
-    result: list[tuple[str, str, str]] = []
-    # Sort mRNAs by chromosome so the ContigIndex single-record cache stays warm.
-    mrnas = sorted(gff3db.features_of_type("mRNA"), key=lambda m: (m.chrom, m.start))
-    with ContigIndex(fasta) as contigs:
-        for mRNA in mrnas:
-            contig = contigs[mRNA.chrom].seq
-            assert contig is not None  # FASTA records always carry a sequence
-            seq_parts = [
-                str(contig[child.start - 1 : child.end]).upper()
-                for child in gff3db.children(mRNA, featuretype=featuretype)
-            ]
-            seq = "".join(seq_parts)
-            if mRNA.strand == "-":
-                seq = str(Seq(seq).reverse_complement())
-            result.append((mRNA.id, mRNA.strand, seq))
-
-    return result
+    return [
+        (mrna.id, mrna.strand, seq.upper())
+        for mrna, seq in iter_assembled_sequences(
+            gff3db, fasta, child_featuretype=featuretype,
+        )
+    ]
 
 
 # ---------------------------------------------------------------------------
