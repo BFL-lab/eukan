@@ -29,6 +29,7 @@ MODULES = [
     "eukan.infra.runner",
     "eukan.infra.manifest",
     "eukan.infra.steps",
+    "eukan.infra.pipeline",
     "eukan.infra.logging",
     "eukan.annotation",
     "eukan.annotation.pipeline",

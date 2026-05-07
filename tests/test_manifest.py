@@ -1,18 +1,20 @@
-"""Tests for eukan.manifest — run tracking and step lifecycle."""
+"""Tests for the run manifest data model and step lifecycle."""
 
 
 from eukan.infra.manifest import (
-    SENTINEL,
     RunManifest,
     StepRecord,
     StepStatus,
-    clean_interrupted_step,
     format_status,
+    load_manifest,
+    save_manifest,
+)
+from eukan.infra.steps import (
+    SENTINEL,
+    clean_interrupted_step,
     is_step_complete,
     is_step_interrupted,
-    load_manifest,
     pipeline_step,
-    save_manifest,
 )
 
 

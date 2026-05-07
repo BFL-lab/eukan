@@ -121,7 +121,7 @@ def check_python_deps() -> list[PythonCheckResult]:
     # Module imports
     modules = [
         "eukan", "eukan.cli", "eukan.settings", "eukan.infra.health",
-        "eukan.infra.runner", "eukan.infra.manifest", "eukan.infra.steps", "eukan.infra.logging", "eukan.infra.environ",
+        "eukan.infra.runner", "eukan.infra.manifest", "eukan.infra.steps", "eukan.infra.pipeline", "eukan.infra.logging", "eukan.infra.environ",
         "eukan.annotation", "eukan.annotation.pipeline",
         "eukan.assembly", "eukan.assembly.pipeline",
         "eukan.repeats", "eukan.repeats.pipeline", "eukan.repeats.modeler", "eukan.repeats.masker",

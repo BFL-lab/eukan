@@ -20,12 +20,11 @@ from eukan.infra.manifest import (
     ANNOTATION,
     RunManifest,
     get_or_create_manifest,
-    run_orchestrated_step,
     save_manifest,
     step_key,
-    validate_or_raise,
 )
-from eukan.infra.steps import step_dir
+from eukan.infra.pipeline import run_orchestrated_step
+from eukan.infra.steps import step_dir, validate_or_raise
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
