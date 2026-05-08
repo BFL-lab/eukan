@@ -43,12 +43,15 @@ def align_proteins(
 
     models = create_gff_db(gff3)
 
-    # Decide between spaln (intron-rich) and gth (intron-poor)
+    # Decide between spaln (intron-rich) and gth (intron-poor). We count
+    # `CDS` rows rather than `exon` because genemark.gtf — the most common
+    # input here — emits CDS/intron/gene/mRNA but no `exon` rows; using
+    # `exon` would always evaluate to 0 and force gth.
     gene_count = 0
     intron_count = 0
     for gene in models.features_of_type("gene"):
         gene_count += 1
-        intron_count += max(0, len(list(models.children(gene, featuretype="exon"))) - 1)
+        intron_count += max(0, len(list(models.children(gene, featuretype="CDS"))) - 1)
 
     if gene_count > 0 and intron_count / gene_count > 0.25:
         _run_spaln(config, sdir, models, intron_hints or gff3)
