@@ -261,6 +261,74 @@ Runs phmmer against UniProt and hmmscan against Pfam (via pyhmmer). Produces:
 
 Hits with e-values between 1e-3 and the cutoff are reported as marginal.
 
+### `eukan prep-submission`
+
+Validate and package an annotated genome for NCBI submission. Wraps NCBI's `table2asn` with the standard recipe (`-split-logs -W -J -Z -euk -T -V b` plus `-c/-M/-a`), producing a `.sqn` upload-ready file alongside `.val`, `.dr`, and `.stats` validator reports for iterative GFF3 refinement. When run after `eukan annotate` and `eukan func-annot`, the genome (from `eukan-run.json`) and annotated GFF3 (`final.mod.gff3`, falling back to `final.gff3`) are auto-discovered.
+
+```
+Usage: eukan prep-submission [OPTIONS]
+
+Required input:
+  -t, --template PATH         NCBI submission template (.sbt). [required]
+
+Source qualifiers:
+  --organism TEXT             Organism scientific name (e.g. 'Homo sapiens').
+                              Required unless --source-info is given.
+  --isolate TEXT              Isolate / strain identifier.
+  -j, --source-info TEXT      Raw -j string for table2asn (e.g.
+                              '[organism=Foo] [isolate=Bar] [country=Canada]').
+                              Overrides --organism / --isolate when set.
+  --locus-tag-prefix TEXT     NCBI-registered locus tag prefix (required for
+                              new-genome submissions).
+
+Override options:
+  -g, --genome PATH           Override auto-discovered genome FASTA.
+  -i, --gff3 PATH             Override auto-discovered annotated GFF3.
+
+Pipeline parameters:
+  -c, --cleanup TEXT          table2asn -c cleanup flags. [default: befw]
+  -M, --mode TEXT             table2asn -M flatfile mode. [default: n]
+  -a, --assembly-type TEXT    table2asn -a assembly type / gap config.
+                              [default: r10k]
+  --extra-args TEXT           Extra table2asn arguments, shell-quoted
+                              (e.g. --extra-args '-split-dr -huge').
+  --cleanup-gff3 / --no-cleanup-gff3
+                              Pre-process the GFF3 (strip UniProt cruft, drop
+                              CDS-less mRNAs, cap inferences) before handing
+                              it to table2asn. [default: cleanup-gff3]
+
+Output options:
+  -o, --output PATH           Output .sqn path.
+                              [default: <outdir>/<genome-stem>.sqn]
+  -d, --outdir PATH           Output directory. [default: ./submission]
+  --print-command             Print the resolved table2asn command and exit.
+  --dry-run                   Print the command and create the output dir,
+                              but don't run table2asn.
+```
+
+The `.sbt` submission template must be created via [NCBI's web form](https://submit.ncbi.nlm.nih.gov/genbank/template/submission/) — it is the only mandatory file input. Outputs land in `./submission/`:
+
+- `<genome-stem>.sqn` — GenBank-format submission file ready for upload.
+- `<genome-stem>.val` — validator report (FATAL/ERROR/WARNING/INFO counts are logged on completion).
+- `<genome-stem>.dr` — discrepancy report.
+- `<genome-stem>.stats` — feature statistics.
+- `<gff3-stem>.cleaned.gff3` — the post-cleanup GFF3 actually fed to table2asn (when `--cleanup-gff3` is enabled).
+
+By default the GFF3 is pre-processed before table2asn sees it: UniProt-style metadata (`OS=...OX=...GN=...PE=...SV=...`) is stripped from `product=` values (without this, table2asn rewrites every product to "hypothetical protein", losing all functional annotation), `(Fragment)` suffixes are removed, mRNAs with no CDS children are dropped (along with newly-orphaned genes), and `inference=` lists are capped at three accessions per feature. Pass `--no-cleanup-gff3` to bypass.
+
+The intended workflow is iterative:
+
+```bash
+# First pass — typical errors surface as ERROR/WARNING in the .val report.
+eukan prep-submission -t template.sbt --organism "Genus species"
+
+# Inspect submission/<genome-stem>.val and .dr, refine the GFF3, re-run.
+# Use --print-command to inspect the exact table2asn invocation without running it:
+eukan prep-submission -t template.sbt --organism "Genus species" --print-command
+```
+
+The command exits non-zero if table2asn reports any FATAL validation errors; the `.val` report path is included in the error message.
+
 ### `eukan gff3toseq`
 
 Extract protein or cDNA sequences from a GFF3 + genome.
@@ -359,7 +427,7 @@ Verify Python dependencies, external tools, and databases.
 Usage: eukan check [OPTIONS]
 
 Options:
-  --for [annotate|assemble|func-annot|db-fetch]
+  --for [annotate|assemble|mask-repeats|func-annot|db-fetch|prep-submission]
       Only check tools needed by these subcommands. If omitted, check all.
   --db-dir PATH   Database directory to check. [default: databases]
 ```
