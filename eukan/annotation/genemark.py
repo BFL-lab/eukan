@@ -8,11 +8,11 @@ import gffutils
 
 from eukan.gff import transforms as gff_transforms
 from eukan.gff.normalize import normalize_to_gff3
-from eukan.validation import validate_gff
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_dir
 from eukan.settings import PipelineConfig
+from eukan.validation import validate_gff
 
 log = get_logger(__name__)
 

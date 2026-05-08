@@ -9,12 +9,11 @@ import shutil
 from fileinput import FileInput
 from pathlib import Path
 
+import gffutils
 from Bio import SeqIO
 
 from eukan.annotation.training import build_training_set
 from eukan.exceptions import ToolEnvError
-import gffutils
-
 from eukan.gff import create_gff_db
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.artifacts import Artifact

@@ -25,7 +25,6 @@ from collections import defaultdict
 from itertools import permutations
 from pathlib import Path
 
-from eukan.gff.intervals import IntervalIndex
 from eukan.compare.models import (
     FRAG_THRESHOLD,
     MERGE_THRESHOLD,
@@ -37,6 +36,7 @@ from eukan.compare.models import (
     gene_stats_from_records,
     subfeature_stats_from_records,
 )
+from eukan.gff.intervals import IntervalIndex
 
 # ---------------------------------------------------------------------------
 # GFF3 parsing — streaming, single-pass, only what `compare` needs.

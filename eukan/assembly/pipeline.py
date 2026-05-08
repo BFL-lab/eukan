@@ -9,8 +9,10 @@ from eukan.infra.artifacts import Artifact
 from eukan.infra.manifest import ASSEMBLY
 from eukan.infra.pipeline import (
     StepSpec,
-    force_steps_from_run_flags as _force_steps_from_run_flags,
     run_simple_pipeline,
+)
+from eukan.infra.pipeline import (
+    force_steps_from_run_flags as _force_steps_from_run_flags,
 )
 from eukan.settings import AssemblyConfig
 

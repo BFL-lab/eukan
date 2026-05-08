@@ -7,7 +7,6 @@ from pathlib import Path
 from eukan.functional.search import _add_func_info, _pfam_accession, annotate_gff3
 from eukan.gff import create_gff_db
 
-
 # ---------------------------------------------------------------------------
 # _pfam_accession
 # ---------------------------------------------------------------------------

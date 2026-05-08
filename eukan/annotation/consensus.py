@@ -6,8 +6,7 @@ from pathlib import Path
 
 from eukan.annotation.evm import run_evm
 from eukan.assembly.pasa import write_pasa_configs
-from eukan.gff import create_gff_db
-from eukan.gff import concordance
+from eukan.gff import concordance, create_gff_db
 from eukan.gff.hierarchy import fix_CDS_phases, prettify_gff3
 from eukan.gff.io import count_gff3_features
 from eukan.infra.artifacts import Artifact

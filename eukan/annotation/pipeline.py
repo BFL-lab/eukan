@@ -12,7 +12,6 @@ from eukan.annotation.consensus import build_consensus_models
 from eukan.annotation.genemark import run_genemark
 from eukan.annotation.orf import create_transcriptome_orf_db
 from eukan.annotation.snap import run_codingquarry, run_snap
-from eukan.validation import sanitize_genome_fasta, validate_fasta
 from eukan.gff.io import count_gff3_features, featuredb2gff3_file
 from eukan.infra.artifacts import masked_genome
 from eukan.infra.logging import get_logger
@@ -26,6 +25,7 @@ from eukan.infra.manifest import (
 from eukan.infra.pipeline import run_orchestrated_step
 from eukan.infra.steps import step_dir, validate_or_raise
 from eukan.settings import PipelineConfig
+from eukan.validation import sanitize_genome_fasta, validate_fasta
 
 log = get_logger(__name__)
 

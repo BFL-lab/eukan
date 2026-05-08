@@ -13,8 +13,10 @@ from eukan.infra.manifest import (
 )
 from eukan.infra.pipeline import (
     StepSpec,
-    force_steps_from_run_flags as _force_steps_from_run_flags,
     run_orchestrated_step,
+)
+from eukan.infra.pipeline import (
+    force_steps_from_run_flags as _force_steps_from_run_flags,
 )
 from eukan.infra.steps import is_step_complete, validate_or_raise
 from eukan.repeats.masker import run_masker

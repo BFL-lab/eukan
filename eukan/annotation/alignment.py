@@ -10,7 +10,6 @@ from pathlib import Path
 import gffutils
 
 from eukan.annotation.spaln_params import build_ssp
-from eukan.validation import validate_fasta
 from eukan.gff import create_gff_db
 from eukan.gff import transforms as gff_transforms
 from eukan.gff.normalize import normalize_to_gff3
@@ -19,6 +18,7 @@ from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_dir
 from eukan.infra.utils import concat_files, symlink
 from eukan.settings import PipelineConfig
+from eukan.validation import validate_fasta
 
 log = get_logger(__name__)
 
