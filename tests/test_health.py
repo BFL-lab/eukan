@@ -4,7 +4,9 @@
 from eukan.infra.conda_env import generate_environment_yml
 from eukan.infra.health import (
     PythonCheckResult,
+    _crash_signal,
     check_tool,
+    cpu_baseline,
     format_results,
     run_checks,
 )
@@ -36,6 +38,95 @@ class TestCheckTool:
         result = check_tool(tool)
         assert result.found
         assert not result.env_ok
+
+    def test_direct_sigill_detected(self):
+        """A binary killed by SIGILL should be flagged as broken."""
+        tool = Tool(
+            "selfkill", "python3",
+            ("python3", "-c", "import os, signal; os.kill(os.getpid(), signal.SIGILL)"),
+            ("test",),
+        )
+        result = check_tool(tool)
+        assert result.found
+        assert not result.version_ok
+        assert result.crash_signal == "SIGILL"
+        assert "SIGILL" in result.version_output
+
+    def test_shell_encoded_sigill_detected(self):
+        """A wrapper script that exits 128+4 (shell SIGILL) should be flagged."""
+        tool = Tool(
+            "wrappedkill", "bash",
+            ("bash", "-c", "exit 132"),
+            ("test",),
+        )
+        result = check_tool(tool)
+        assert result.found
+        assert not result.version_ok
+        assert result.crash_signal == "SIGILL"
+
+    def test_illegal_instruction_string_detected(self):
+        """A wrapper that prints 'Illegal instruction' and exits 0 should still be flagged.
+
+        Mirrors the bioconda STAR wrapper case: bash prints the signal name
+        when the wrapped child dies, and the `for SIMD` loop falls through
+        in a way that masks the encoded exit code. The string match is the
+        only signal we have.
+        """
+        tool = Tool(
+            "fakestar", "bash",
+            ("bash", "-c", "echo 'Illegal instruction (core dumped)' >&2; exit 0"),
+            ("test",),
+        )
+        result = check_tool(tool)
+        assert result.found
+        assert not result.version_ok
+        assert result.crash_signal == "SIGILL"
+
+
+class TestCrashSignal:
+    """_crash_signal() handles both encodings: -N and 128+N."""
+
+    def test_direct_signal_negative(self):
+        assert _crash_signal(-4) == "SIGILL"
+        assert _crash_signal(-11) == "SIGSEGV"
+
+    def test_shell_encoded_signal(self):
+        assert _crash_signal(132) == "SIGILL"
+        assert _crash_signal(139) == "SIGSEGV"
+
+    def test_normal_exit_codes_are_none(self):
+        assert _crash_signal(0) is None
+        assert _crash_signal(1) is None
+        assert _crash_signal(127) is None  # command not found — not a signal
+        assert _crash_signal(160) is None  # past the 128+31 cap
+
+
+class TestCpuBaseline:
+    """cpu_baseline() returns a recognized x86-64-vN level on Linux x86_64."""
+
+    def test_returns_known_level_on_linux(self):
+        result = cpu_baseline()
+        if result is None:  # non-Linux or no /proc/cpuinfo
+            return
+        level, flags = result
+        assert level in ("x86-64", "x86-64-v2", "x86-64-v3", "x86-64-v4")
+        assert isinstance(flags, set)
+
+
+class TestFormatSigill:
+    """SIGILL crashes show CPU baseline + remediation hint."""
+
+    def test_sigill_includes_baseline_hint(self):
+        tool = Tool(
+            "selfkill", "python3",
+            ("python3", "-c", "import os, signal; os.kill(os.getpid(), signal.SIGILL)"),
+            ("test",),
+        )
+        result = check_tool(tool)
+        output = format_results([], [result])
+        assert "SIGILL" in output
+        # The CPU baseline footer should appear when any tool crashed.
+        assert "CPU baseline:" in output
 
 
 class TestToolRegistry:

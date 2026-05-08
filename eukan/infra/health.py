@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,39 @@ from eukan.infra.tools_registry import Tool, load_tools
 # ---------------------------------------------------------------------------
 # Check logic
 # ---------------------------------------------------------------------------
+
+# Signals that indicate the binary was killed mid-run rather than exited
+# normally — almost always a broken install (CPU baseline mismatch,
+# corrupted binary, missing kernel feature). See _crash_signal().
+_FATAL_SIGNALS = {"SIGILL", "SIGSEGV", "SIGBUS", "SIGABRT", "SIGFPE"}
+
+# Substrings that bash/zsh emit when a child of a wrapper script is killed
+# by a fatal signal. The wrapper's own exit code is 128+N (signal-encoded),
+# but its stderr also carries these human-readable strings. Treat them as
+# broken so wrappers like /bin/STAR (which pick a SIMD variant and exec it)
+# get caught even when the wrapper itself exits with the encoded code.
+_SHELL_CRASH_STRINGS = ("Illegal instruction", "Segmentation fault", "Bus error")
+
+
+def _crash_signal(returncode: int) -> str | None:
+    """Return signal name (e.g. ``SIGILL``) if the process died from a signal.
+
+    Two encodings to handle:
+    - Direct child killed by signal N: Python's ``subprocess.run`` reports
+      ``returncode == -N``.
+    - Shell wrapper whose child was killed by signal N: the wrapper exits
+      with ``128+N`` and Python sees that positive value.
+    """
+    if returncode < 0:
+        sig_num = -returncode
+    elif 128 < returncode < 160:  # 128 + 1..31
+        sig_num = returncode - 128
+    else:
+        return None
+    try:
+        return signal.Signals(sig_num).name
+    except ValueError:
+        return f"signal {sig_num}"
 
 
 @dataclass
@@ -30,6 +64,7 @@ class CheckResult:
     version_ok: bool
     version_output: str
     env_ok: bool
+    crash_signal: str | None = None
 
 
 def check_tool(tool: Tool) -> CheckResult:
@@ -46,6 +81,7 @@ def check_tool(tool: Tool) -> CheckResult:
             env_ok=_check_env(tool),
         )
 
+    crash_sig: str | None = None
     try:
         # Use subprocess_env() so tools that depend on LD_LIBRARY_PATH
         # (e.g. fitild needs liblbfgs from $CONDA_PREFIX/lib) load their
@@ -59,12 +95,37 @@ def check_tool(tool: Tool) -> CheckResult:
             stdin=subprocess.DEVNULL,
             env=subprocess_env(),
         )
+        output = (result.stdout + result.stderr).strip()
+
+        # Detect fatal-signal exits both directly (returncode<0) and via
+        # shell-wrapper encoding (returncode 128+N). Bash also prints the
+        # signal name to stderr — catch that too in case the wrapper
+        # masks the encoded exit code (e.g. STAR's `for SIMD; do …` loop
+        # falls through and the parent shell ends up with $? from a
+        # nested call).
+        crash_sig = _crash_signal(result.returncode)
+        if crash_sig is None:
+            for s in _SHELL_CRASH_STRINGS:
+                if s in output:
+                    crash_sig = {
+                        "Illegal instruction": "SIGILL",
+                        "Segmentation fault": "SIGSEGV",
+                        "Bus error": "SIGBUS",
+                    }[s]
+                    break
+
         # Many bioinformatics tools exit non-zero on --help or with no args
         # but still produce useful output. Accept non-zero if output doesn't
-        # indicate a broken install (missing shared libraries, etc.)
-        output = (result.stdout + result.stderr).strip()
-        broken_indicators = ["cannot open shared object", "error while loading shared libraries"]
-        is_broken = any(ind in output for ind in broken_indicators)
+        # indicate a broken install (missing shared libraries, fatal
+        # signals, etc.).
+        broken_indicators = (
+            "cannot open shared object",
+            "error while loading shared libraries",
+        )
+        is_broken = (
+            crash_sig is not None
+            or any(ind in output for ind in broken_indicators)
+        )
         version_ok = len(output) > 0 and not is_broken
     except FileNotFoundError:
         return CheckResult(
@@ -79,15 +140,19 @@ def check_tool(tool: Tool) -> CheckResult:
         output = str(e)
         version_ok = False
 
-    first_line = output.split("\n")[0][:120] if output else ""
+    if crash_sig:
+        version_output = f"crashed with {crash_sig}"
+    else:
+        version_output = output.split("\n")[0][:120] if output else ""
 
     return CheckResult(
         tool=tool,
         found=True,
         on_path=binary_path,
         version_ok=version_ok,
-        version_output=first_line,
+        version_output=version_output,
         env_ok=_check_env(tool),
+        crash_signal=crash_sig,
     )
 
 
@@ -98,6 +163,53 @@ def _check_env(tool: Tool) -> bool:
 
 def _missing_env_vars(tool: Tool) -> list[str]:
     return [spec.var for spec in tool.env_vars if spec.var not in os.environ]
+
+
+# ---------------------------------------------------------------------------
+# CPU baseline detection — surfaced when binaries crash with SIGILL so the
+# user can see at a glance whether their CPU lacks the instruction set the
+# (bioconda) build expects.
+# ---------------------------------------------------------------------------
+
+# x86-64 microarchitecture levels per the System V psABI Supplement.
+# Listed highest first so the first match wins.
+_X86_64_LEVELS = (
+    ("x86-64-v4", {"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"}),
+    ("x86-64-v3", {"avx2", "bmi1", "bmi2", "f16c", "fma", "abm", "movbe"}),
+    ("x86-64-v2", {"sse4_2", "sse4_1", "ssse3", "popcnt", "cx16"}),
+)
+
+
+def cpu_baseline() -> tuple[str, set[str]] | None:
+    """Detect the highest x86-64 microarch level supported by the running CPU.
+
+    Returns (level_name, flags_set) on Linux x86_64, or None if the info
+    isn't available (non-x86, missing /proc/cpuinfo, etc.). Used purely
+    for surfacing diagnostics — the pipeline never gates on this.
+
+    Note: Linux's /proc/cpuinfo names some flags differently from the
+    psABI list (e.g. ``abm`` is implied by ``lzcnt`` + ``popcnt``;
+    ``movbe`` is reported as-is). We accept reasonable substitutes.
+    """
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("flags") and ":" in line:
+                    flags = set(line.split(":", 1)[1].split())
+                    break
+            else:
+                return None
+    except OSError:
+        return None
+
+    # Substitutions: psABI flag → equivalent /proc/cpuinfo flag(s)
+    if "lzcnt" in flags:
+        flags.add("abm")  # abm = lzcnt + popcnt; popcnt checked separately
+
+    for level, required in _X86_64_LEVELS:
+        if required.issubset(flags):
+            return level, flags
+    return "x86-64", flags  # baseline always satisfied on amd64
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +429,8 @@ def format_results(
             issues = []
             if not tr.found:
                 issues.append(f"`{tr.tool.binary}` not found on PATH")
+            elif tr.crash_signal in _FATAL_SIGNALS:
+                issues.append(f"crashed with {tr.crash_signal}")
             elif not tr.version_ok:
                 issues.append(f"version check failed: {tr.version_output or 'no output'}")
             if not tr.env_ok:
@@ -329,6 +443,36 @@ def format_results(
 
     total = len(passed) + len(failed)
     lines.append(f"\n  Checked {total} external tools total.")
+
+    # When any tool died from a fatal signal, surface the CPU baseline so
+    # the user can see whether the binary is built for a newer CPU than
+    # they have. SIGILL on the same set of bioconda packages (augustus,
+    # spaln, STAR) is almost always a CPU baseline mismatch \u2014 bioconda
+    # ships x86-64-v3 (Haswell+) builds.
+    crashed = [tr for tr in failed if tr.crash_signal in _FATAL_SIGNALS]
+    if crashed:
+        baseline = cpu_baseline()
+        if baseline is not None:
+            level, _ = baseline
+            lines.append("")
+            lines.append(f"  CPU baseline: {level}")
+            sigill_tools = [tr.tool.name for tr in crashed if tr.crash_signal == "SIGILL"]
+            if sigill_tools and level in ("x86-64", "x86-64-v2"):
+                lines.append(
+                    "    SIGILL crashes typically mean the binary requires a newer"
+                )
+                lines.append(
+                    "    CPU baseline than this machine provides. Bioconda ships"
+                )
+                lines.append(
+                    "    x86-64-v3 (AVX2/FMA/BMI2) builds for many tools. To fix:"
+                )
+                lines.append(
+                    "    rebuild from source on this host, run inside Docker on a"
+                )
+                lines.append(
+                    "    newer CPU, or pin to an older bioconda build."
+                )
 
     # --- Databases ---
     if db_results:
