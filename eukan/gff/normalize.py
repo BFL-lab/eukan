@@ -18,7 +18,7 @@ import gffutils
 from eukan.gff import create_gff_db, transform_db
 from eukan.gff.hierarchy import add_missing_feats_to_gff3
 from eukan.gff.io import featuredb2gff3_file
-from eukan.gff.transforms import fix_contig_names
+from eukan.gff.transforms import fix_contig_names as _fix_contig_names
 
 
 def normalize_to_gff3(
@@ -64,7 +64,7 @@ def normalize_to_gff3(
         db = transform_db(db, post_transform)
 
     if fix_contig_names:
-        db = transform_db(db, fix_contig_names)
+        db = transform_db(db, _fix_contig_names)
 
     featuredb2gff3_file(db, out)
     return out

@@ -84,6 +84,7 @@ def assemble(
     """
     from eukan.assembly import run_assembly
     from eukan.assembly.pipeline import force_steps_from_run_flags
+    from eukan.infra.layout import step_work_dir
     from eukan.settings import AssemblyConfig
 
     if not left and not right and not single:
@@ -106,7 +107,7 @@ def assemble(
 
     config = AssemblyConfig(**drop_none(
         genome=genome.resolve(),
-        work_dir=Path.cwd(),
+        work_dir=step_work_dir("assemble"),
         min_intron_len=min_intron,
         max_intron_len=max_intron,
         phred_quality=int(phred),

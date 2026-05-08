@@ -93,7 +93,7 @@ def run_functional_annotation(
     if config.gff3_path:
         run_orchestrated_step(
             work_dir, manifest, step_key(FUNCTIONAL, "annotate_gff3"),
-            annotate_gff3, config.gff3_path, phmmer_res, hmmscan_res,
+            annotate_gff3, config.gff3_path, phmmer_res, hmmscan_res, work_dir,
             step_dir=work_dir / "annotate_gff3",
             force=force,
         )

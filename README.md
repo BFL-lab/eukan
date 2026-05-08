@@ -88,23 +88,29 @@ The `dev` group adds `pytest`, `ruff`, and `mypy`.
 
 Use `eukan-docker` as a wrapper to run any subcommand inside the Docker container. It bind-mounts the current directory and runs as your user:
 
-The typical workflow runs each subcommand from the same working directory, so later steps auto-discover outputs from earlier ones:
+The typical workflow runs each subcommand from the same working directory. Each subcommand writes into its own subdirectory under that working directory (`repeats/`, `assemble/`, `annotate/`, `func-annot/`, `submission/`), and downstream subcommands auto-discover outputs from earlier ones via the cross-pipeline artifact registry — no need to pass paths between steps.
 
 ```bash
 # 1. Download reference databases
 ./eukan-docker db-fetch
 
-# 2. Assemble transcriptome from RNA-seq reads (optional but recommended)
+# 2. Soft-mask repeats (optional but recommended for AUGUSTUS)
+./eukan-docker mask-repeats -g genome.fasta
+
+# 3. Assemble transcriptome from RNA-seq reads (optional but recommended)
 ./eukan-docker assemble \
     -g genome.fasta \
     -l left_reads.fastq -r right_reads.fastq \
     -S RF --kingdom protist
 
-# 3. Annotate:  auto-discovers assembly outputs + databases from steps above
+# 4. Annotate:  auto-discovers assembly outputs, repeat hints, and databases
 ./eukan-docker annotate -g genome.fasta -p proteins.fasta --kingdom protist
 
-# 4. Functional annotation:  auto-discovers predicted proteins + databases
+# 5. Functional annotation:  auto-discovers predicted proteins + databases
 ./eukan-docker func-annot
+
+# 6. NCBI submission prep (table2asn validator + .sqn)
+./eukan-docker prep-submission -t template.sbt --organism "Genus species"
 
 # Extract sequences from GFF3
 ./eukan-docker gff3toseq -g genome.fasta -i genes.gff3 -o protein
@@ -498,7 +504,7 @@ The test pipeline runs:
 
 If assembly fails, it falls back to protein-only annotation automatically.
 
-Output lands in `tests/pipeline-run/` with subdirectories for assembly and annotation. View run details with `eukan status -d tests/pipeline-run/annotation`.
+Output lands in `tests/pipeline-run/` with one subdirectory per pipeline step (`assemble/`, `annotate/`, `func-annot/`, `submission/`). View run details with `eukan status -d tests/pipeline-run/annotate`. The end-of-run summary reports the gene/mRNA counts from `final.gff3` plus the percentage of mRNAs that received a UniProt or Pfam inference.
 
 #### 3. Clean up
 

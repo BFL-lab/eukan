@@ -103,7 +103,7 @@ def build_consensus_models(config: PipelineConfig, *evidence: Path) -> Path:
 
     run_evm(config, list(evidence))
     log.info(
-        "EVM consensus: %d genes",
+        "EVM: %d gene predictions",
         count_gff3_features(sdir / "consensus_models.gff3"),
     )
 
@@ -117,4 +117,7 @@ def build_consensus_models(config: PipelineConfig, *evidence: Path) -> Path:
 
     final_path = config.work_dir / Artifact.FINAL_GFF3.value
     _write_prettified_gff3(consdb, config.shortname, final_path)
+    log.info(
+        "Final consensus: %d gene predictions", count_gff3_features(final_path),
+    )
     return final_path

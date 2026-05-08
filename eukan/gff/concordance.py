@@ -23,6 +23,28 @@ log = get_logger(__name__)
 BOUNDARY_TOLERANCE = 3  # bp tolerance for intron-exon boundary matching
 MRNA_TOLERANCE = 0.05   # 5% tolerance for mRNA span comparison
 
+# Below this many 3-way concordant gene models we warn the user that
+# evidence sources disagree enough to risk weaker downstream predictions.
+WEAK_CONCORDANCE_THRESHOLD = 250
+
+# Friendly labels for evidence file stems whose on-disk name doesn't match
+# the tool that produced them. ``prot.gff3`` is the spaln output but its
+# filename is fixed by EVM's evidence table, so we relabel here for logs.
+_SOURCE_LABEL = {"prot": "spaln"}
+
+
+def _count_genes_in_gff(path: str | Path) -> int:
+    """Count ``gene`` features in a GFF3 by line scan (no db build)."""
+    n = 0
+    with open(path) as fh:
+        for line in fh:
+            if not line or line.startswith("#"):
+                continue
+            cols = line.split("\t")
+            if len(cols) >= 3 and cols[2] == "gene":
+                n += 1
+    return n
+
 
 # ---------------------------------------------------------------------------
 # Overlap detection (pure gffutils)
@@ -332,6 +354,16 @@ def extract_supported_models(
         FeatureDB of concordant training set models.
     """
     paths = list(gff3_paths)
+
+    source_counts = [
+        (_SOURCE_LABEL.get(Path(p).stem, Path(p).stem), _count_genes_in_gff(p))
+        for p in paths
+    ]
+    log.info(
+        "Evidence model counts: %s",
+        ", ".join(f"{name}={n}" for name, n in source_counts),
+    )
+
     if len(paths) == 2:
         training_set = find_concordant_models(paths[0], paths[1])
     elif len(paths) == 3:
@@ -354,6 +386,20 @@ def extract_supported_models(
         training_set = combine_nonredundant_models(pair1, pair2, pair3)
     else:
         raise ValueError(f"Expected 2 or 3 paths, got {len(paths)}")
+
+    concordant_n = sum(1 for _ in training_set.features_of_type("gene"))
+    if len(paths) == 3 and concordant_n < WEAK_CONCORDANCE_THRESHOLD:
+        log.warning(
+            "Only %d concordant gene models across %d evidence sources "
+            "(threshold %d) — weak concordance may yield poorer downstream "
+            "gene predictions",
+            concordant_n, len(paths), WEAK_CONCORDANCE_THRESHOLD,
+        )
+    else:
+        log.info(
+            "Concordant gene models: %d (across %d evidence sources)",
+            concordant_n, len(paths),
+        )
 
     out_path = (output_dir / "training_set.gff3") if output_dir else Path("training_set.gff3")
     featuredb2gff3_file(training_set, out_path)

@@ -55,6 +55,7 @@ def func_annot(
     or to run functional annotation independently of the main pipeline.
     """
     from eukan.functional import run_functional_annotation
+    from eukan.infra.layout import step_work_dir
     from eukan.settings import FunctionalConfig
 
     if proteins is None:
@@ -64,7 +65,7 @@ def func_annot(
 
     config = FunctionalConfig(**drop_none(
         proteins=proteins.resolve(),
-        work_dir=Path.cwd(),
+        work_dir=step_work_dir("func-annot"),
         num_cpu=numcpu,
         evalue=evalue,
         uniprot_db=uniprot.resolve() if uniprot else None,

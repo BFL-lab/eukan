@@ -247,8 +247,15 @@ def annotate_gff3(
     gff3_path: Path,
     phmmer_res: HitResults,
     hmmscan_res: HitResults,
+    output_dir: Path | None = None,
 ) -> Path:
     """Annotate GFF3 features with functional information.
+
+    Output filename is ``<stem>.mod<suffix>``. When *output_dir* is given,
+    the file lands there; otherwise it lands next to *gff3_path*. The
+    func-annot pipeline passes its work_dir so the result matches the
+    ``Artifact.FINAL_FUNC_GFF3`` convention (``func-annot/final.mod.gff3``)
+    that prep-submission auto-discovery and downstream tooling rely on.
 
     Returns path to the annotated output file.
     """
@@ -265,9 +272,8 @@ def annotate_gff3(
         merge_strategy="replace",
     )
 
-    stem = gff3_path.stem
-    suffix = gff3_path.suffix
-    output_path = gff3_path.parent / f"{stem}.mod{suffix}"
+    out_dir = output_dir or gff3_path.parent
+    output_path = out_dir / f"{gff3_path.stem}.mod{gff3_path.suffix}"
     featuredb2gff3_file(gff3, output_path)
 
     return output_path

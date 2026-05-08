@@ -128,11 +128,12 @@ def prep_submission(
     --extra-args to append flags not exposed here.
     """
     from eukan.cli._framework import drop_none
+    from eukan.infra.layout import step_work_dir
     from eukan.settings import SubmissionConfig
     from eukan.submission import run_prep_submission
 
     config = SubmissionConfig(**drop_none(
-        work_dir=Path.cwd(),
+        work_dir=step_work_dir("prep-submission"),
         template=template.resolve(),
         organism=organism,
         isolate=isolate,

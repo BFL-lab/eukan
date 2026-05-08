@@ -19,6 +19,7 @@ poetry run pytest tests/ -v
 
 # CLI (all subcommands)
 poetry run eukan --help
+poetry run eukan mask-repeats -g genome.fasta
 poetry run eukan annotate -g genome.fasta -p proteins.fasta --kingdom protist
 poetry run eukan assemble -g genome.fasta -l left.fq -r right.fq -A -T -P
 poetry run eukan func-annot -p proteins.faa --gff3 genes.gff3
@@ -51,47 +52,85 @@ Click-based CLI package with subcommands: `annotate`, `assemble`, `mask-repeats`
 ```
 eukan/
 ├── cli/                # Click CLI package (one file per subcommand)
+│   ├── _framework.py   # Shared Click helpers: option groups, common options, error formatting
+│   ├── annotate.py     # eukan annotate
+│   ├── assemble.py     # eukan assemble
+│   ├── mask_repeats.py # eukan mask-repeats
+│   ├── func_annot.py   # eukan func-annot
+│   ├── prep_submission.py # eukan prep-submission
+│   ├── compare.py      # eukan compare
+│   ├── db_fetch.py     # eukan db-fetch
+│   ├── gff3toseq.py    # eukan gff3toseq
+│   ├── check.py        # eukan check (pre-flight tool/database checks)
+│   └── status.py       # eukan status (manifest reader)
 ├── settings.py         # PipelineConfig, AssemblyConfig, RepeatsConfig, FunctionalConfig, SubmissionConfig (pydantic-settings)
-├── submission.py       # table2asn wrapper (eukan prep-submission)
-├── check.py            # Pre-flight checks for external tools and databases
+├── validation.py       # FASTA/GFF3 validation and genome header sanitization
+├── exceptions.py       # ConfigurationError and friends
 │
-├── infra/              # Runtime infrastructure
+├── infra/              # Runtime infrastructure (cross-pipeline)
 │   ├── runner.py       # run_cmd(), run_piped(), run_parallel() — subprocess execution
+│   ├── concurrency.py  # parallel_map() and friends
 │   ├── manifest.py     # RunManifest, pipeline_step() — run tracking and reproducibility
-│   ├── steps.py        # step_dir(), step_complete() — step directory management
-│   └── logging.py      # get_logger(), setup_logging(), md5_file(), validate_gff()
+│   ├── steps.py        # step_dir(), step_complete(), validate_or_raise() — step dir mgmt
+│   ├── pipeline.py     # StepSpec + run_simple_pipeline() / run_orchestrated_step() driver
+│   ├── layout.py       # PIPELINE_SUBDIRS, step_work_dir(), sibling_step_dir() — per-step run dir layout
+│   ├── artifacts.py    # Artifact enum + find() — cross-pipeline artifact registry
+│   ├── logging.py      # get_logger(), setup_logging(), md5_file()
+│   ├── genome.py       # ContigIndex, FASTA helpers
+│   ├── genetic_code.py # Genetic code table abstractions
+│   ├── health.py       # Tool/database probes for `eukan check`
+│   ├── tools_registry.py # Tool metadata loaded from data/tools.toml
+│   ├── conda_env.py    # Conda env var setup at CLI startup
+│   └── environ.py      # Env var helpers
 │
 ├── gff/                # GFF3 format operations
-│   ├── parser.py       # Transform callbacks for gffutils.create_db(transform=fn)
-│   ├── intersecter.py  # Genomic interval operations (concordance, overlap, merging)
-│   └── io.py           # featuredb2gff3_file(), extract_sequences()
+│   ├── transforms.py   # Transform callbacks for gffutils.create_db(transform=fn)
+│   ├── concordance.py  # Genomic interval operations (concordance, overlap, merging)
+│   ├── intervals.py    # Lower-level interval primitives
+│   ├── hierarchy.py    # gene>mRNA>CDS hierarchy fixers, prettify_gff3()
+│   ├── normalize.py    # GFF3 cleanup before downstream tools (e.g., table2asn)
+│   └── io.py           # featuredb2gff3_file(), count_gff3_features(), iter_assembled_sequences()
 │
 ├── annotation/         # Genome annotation pipeline
-│   ├── orchestrator.py # run_annotation_pipeline(), step ordering and concurrency
+│   ├── pipeline.py     # run_annotation_pipeline(), phase ordering, prediction-count logging
 │   ├── orf.py          # ORF identification in transcript assemblies
 │   ├── genemark.py     # GeneMark-ES/ET gene prediction
 │   ├── alignment.py    # Protein alignment via spaln (intron-rich) or gth (intron-poor)
-│   ├── augustus.py      # AUGUSTUS training and prediction
+│   ├── spaln_params.py # Experimental --spsp species-specific spaln parameter builder
+│   ├── augustus.py     # AUGUSTUS training and prediction
+│   ├── training.py     # Training-set construction shared across predictors
 │   ├── snap.py         # SNAP and CodingQuarry gene prediction
 │   ├── evm.py          # EVidenceModeler consensus building
-│   ├── consensus.py    # Final model building: EVM + PASA UTRs + prettification
-│   └── validation.py   # FASTA/GFF3 validation and genome header sanitization
+│   └── consensus.py    # Final model building: EVM + PASA UTRs + prettification
 │
 ├── assembly/           # Transcriptome assembly pipeline
-│   ├── orchestrator.py # run_assembly() dispatch
-│   ├── star.py         # STAR read mapping and hint generation
+│   ├── pipeline.py     # run_assembly() dispatch (StepSpec-driven)
+│   ├── star.py         # STAR read mapping, splice site profiling, hint generation
 │   ├── trinity.py      # Trinity genome-guided and de novo assembly
 │   └── pasa.py         # PASA spliced alignment and transcript hints
 │
+├── repeats/            # Repeat masking pipeline
+│   ├── pipeline.py     # run_repeats() (StepSpec-driven)
+│   ├── modeler.py      # RepeatModeler family-library construction
+│   └── masker.py       # RepeatMasker softmasking + AUGUSTUS hint emission
+│
 ├── functional/         # Functional annotation pipeline
-│   ├── orchestrator.py # run_functional_annotation()
-│   ├── search.py       # pyhmmer phmmer/hmmscan search and result annotation
+│   ├── pipeline.py     # run_functional_annotation()
+│   ├── search.py       # pyhmmer phmmer/hmmscan search and GFF3/FASTA annotation
 │   └── dbfetch.py      # UniProt/Pfam database download and integrity tracking
 │
-└── stats/              # Annotation comparison (eukan compare)
-    ├── compare.py      # compare_annotations() single-pred + compare_multiple() driver
-    ├── format.py       # Terminal report + per-feature TSV writer (single + multi)
-    └── models.py       # ComparisonResult, MultiComparisonResult, FeatureRecord
+├── submission/         # NCBI submission prep
+│   ├── pipeline.py     # table2asn wrapper (eukan prep-submission)
+│   └── cleanup.py      # GFF3 pre-clean to preserve attributes through table2asn
+│
+├── compare/            # Annotation comparison (eukan compare)
+│   ├── engine.py       # compare_annotations() single-pred + compare_multiple() driver
+│   ├── format.py       # Terminal report + per-feature TSV writer (single + multi)
+│   └── models.py       # ComparisonResult, MultiComparisonResult, FeatureRecord
+│
+└── data/               # Static data shipped with the package
+    ├── tools.toml      # External-tool registry (versions, probe commands, env hints)
+    └── configs/        # AUGUSTUS / EVM / PASA config templates
 ```
 
 ### Pipeline Flow
@@ -109,16 +148,49 @@ eukan/
 9. Optional functional annotation via `func-annot` (UniProt/Pfam) → `final.mod.gff3`
 10. Optional `prep-submission` runs NCBI's table2asn validator over `final.mod.gff3` to produce a `.sqn` plus `.val/.dr/.stats` reports for iterative GFF3 refinement
 
+### Per-step Run Directory Layout
+
+Each subcommand resolves its own `work_dir` to a sibling subdir under the user's cwd, declared in `eukan/infra/layout.py::PIPELINE_SUBDIRS`:
+
+```
+<cwd>/
+├── repeats/        # eukan mask-repeats
+├── assemble/       # eukan assemble
+├── annotate/       # eukan annotate
+├── func-annot/     # eukan func-annot
+└── submission/     # eukan prep-submission
+```
+
+Cross-pipeline artifact lookups go through `eukan/infra/artifacts.py`:
+
+- `Artifact` (StrEnum) lists every file that crosses pipeline boundaries (e.g. `RNASEQ_HINTS`, `FINAL_GFF3`, `FINAL_FUNC_GFF3`).
+- `_PRODUCER` declares which step writes each artifact (e.g. `FINAL_FUNC_GFF3 → "func-annot"`).
+- `find(work_dir, Artifact.X)` returns the first existing match across the caller's own work_dir, then the sibling step dir. This is what lets `prep-submission` auto-discover `func-annot/final.mod.gff3` from `submission/` without an explicit path.
+
+When adding a new cross-pipeline file, register it in both `Artifact` and `_PRODUCER` rather than hardcoding paths.
+
 ### Run Manifest
 
-All three pipelines share a single `eukan-run.json` in the working directory. Step names are prefixed by pipeline (`annotation/genemark`, `assembly/star`, `functional/search`). The manifest tracks per-step status, timing, and output checksums for resume and integrity checking. Key functions: `get_or_create_manifest()`, `pipeline_step()`, `is_step_complete()` in `infra/manifest.py`. Each config has a `manifest_dir` field (defaults to `work_dir`) controlling where the manifest is written.
+All pipelines share a single `eukan-run.json` per run dir. Step names are prefixed by pipeline (`annotation/genemark`, `assembly/star`, `functional/search`, `repeats/modeler`, `submission/table2asn`). The manifest tracks per-step status, timing, and output checksums for resume and integrity checking. Key functions: `get_or_create_manifest()`, `pipeline_step()`, `is_step_complete()` in `infra/manifest.py`. Each config has a `manifest_dir` field (defaults to `work_dir`) controlling where the manifest is written.
+
+### Pipeline Driver
+
+`infra/pipeline.py` provides two entry points:
+
+- `run_simple_pipeline(steps: list[StepSpec], …)` — linear case used by `assemble` and `mask-repeats`. Each `StepSpec` declares name, function, output filename, and re-run flag display string.
+- `run_orchestrated_step(work_dir, manifest, step_key, fn, *args, …)` — lower-level primitive used directly by the annotation and functional pipelines, whose execution graph isn't a straight line (annotation has fan-out phases, functional caches JSON between steps).
+
+Both wrap step-dir setup, manifest updates, and force/skip logic so that step-level resume and integrity checking are uniform across pipelines.
 
 ### Conventions
 
 - GFF3 manipulations chain through `gffutils.create_db(':memory:', transform=fn)` passes
 - External commands use `run_cmd(["cmd", "arg"], cwd=step_dir)` — never shell strings
 - `--kingdom` flag (fungus/protist/animal/plant) controls which predictors run
-- All pipeline state is in `PipelineConfig` (pydantic-settings) — no mutable class state
-- Each annotation step lives in its own file under `annotation/`, one file per tool
-- The three pipelines (annotation, assembly, functional) share the same structure: `orchestrator.py` + tool-specific files
-- CLI option groups are harmonized across subcommands: "Required input", "Pipeline parameters", "Re-run steps"
+- All pipeline state is in a pydantic-settings config (`PipelineConfig`, `AssemblyConfig`, etc.) — no mutable class state
+- Each pipeline package follows the same shape: `pipeline.py` (driver) + one file per tool
+- Per-step output isolation: every subcommand writes under its own `<cwd>/<step-subdir>/`. Don't write into `cwd` directly — use `step_work_dir(step)` from `infra/layout.py`
+- Cross-pipeline files go through `Artifact` + `find()` rather than hardcoded paths
+- CLI option groups are harmonized across subcommands: "Required input", "Pipeline parameters", "Re-run steps". Step re-run flags follow the `--run-*` pattern (e.g., `--run-genemark`, `--run-star`)
+- Prediction-count logging: every per-tool step that emits a GFF3 calls `_log_prediction_count("Tool", path)` (annotation pipeline) or `count_gff3_features()` so the user sees gene counts at each phase
+- 3-way concordance (`gff/concordance.extract_supported_models`) emits per-source counts at INFO and a WARNING when concordance falls below `WEAK_CONCORDANCE_THRESHOLD` (250 gene models) — used by both AUGUSTUS and SNAP training-set construction

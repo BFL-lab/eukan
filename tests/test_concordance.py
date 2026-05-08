@@ -368,3 +368,73 @@ class TestExtractSupportedModels:
         genes = list(result.features_of_type("gene"))
         assert len(genes) == 1
         assert genes[0].id == "ga"
+
+    def test_three_paths_logs_per_source_counts(self, tmp_path, caplog):
+        """3-way concordance: per-source gene counts always go to INFO,
+        labelled by file stem so users see ``genemark`` / ``spaln`` /
+        ``transcript_orfs`` in the eukan annotate output."""
+        import logging
+        a = self._write_simple_pair(tmp_path, "genemark.gff3", "ga")
+        b = self._write_simple_pair(tmp_path, "spaln.gff3", "ga")
+        c = self._write_simple_pair(tmp_path, "transcript_orfs.gff3", "ga")
+
+        with caplog.at_level(logging.INFO, logger="eukan.gff.concordance"):
+            extract_supported_models(a, b, c, output_dir=tmp_path)
+
+        assert "Evidence model counts" in caplog.text
+        assert "genemark=1" in caplog.text
+        assert "spaln=1" in caplog.text
+        assert "transcript_orfs=1" in caplog.text
+
+    def test_three_paths_warns_on_weak_concordance(self, tmp_path, caplog):
+        """Below the WEAK_CONCORDANCE_THRESHOLD a WARNING fires for 3-way input."""
+        import logging
+        a = self._write_simple_pair(tmp_path, "genemark.gff3", "ga")
+        b = self._write_simple_pair(tmp_path, "spaln.gff3", "ga")
+        c = self._write_simple_pair(tmp_path, "transcript_orfs.gff3", "ga")
+
+        with caplog.at_level(logging.WARNING, logger="eukan.gff.concordance"):
+            extract_supported_models(a, b, c, output_dir=tmp_path)
+
+        assert "weak concordance" in caplog.text.lower()
+        assert "Only 1 concordant" in caplog.text
+
+    def test_three_paths_relabels_prot_as_spaln(self, tmp_path, caplog):
+        """``prot.gff3`` is the spaln output; the log should call it ``spaln``."""
+        import logging
+        a = self._write_simple_pair(tmp_path, "genemark.gff3", "ga")
+        b = self._write_simple_pair(tmp_path, "prot.gff3", "ga")
+        c = self._write_simple_pair(tmp_path, "transcript_orfs.gff3", "ga")
+
+        with caplog.at_level(logging.INFO, logger="eukan.gff.concordance"):
+            extract_supported_models(a, b, c, output_dir=tmp_path)
+
+        assert "spaln=1" in caplog.text
+        assert "prot=" not in caplog.text
+
+    def test_snap_triple_uses_augustus_not_genemark(self, tmp_path, caplog):
+        """SNAP trains from AUGUSTUS predictions, not GeneMark — the log
+        should reflect that the first source is augustus."""
+        import logging
+        a = self._write_simple_pair(tmp_path, "augustus.gff3", "ga")
+        b = self._write_simple_pair(tmp_path, "prot.gff3", "ga")
+        c = self._write_simple_pair(tmp_path, "transcript_orfs.gff3", "ga")
+
+        with caplog.at_level(logging.INFO, logger="eukan.gff.concordance"):
+            extract_supported_models(a, b, c, output_dir=tmp_path)
+
+        assert "augustus=1" in caplog.text
+        assert "spaln=1" in caplog.text
+        assert "transcript_orfs=1" in caplog.text
+        assert "genemark" not in caplog.text
+
+    def test_two_paths_does_not_warn_on_low_concordance(self, tmp_path, caplog):
+        """The warning only applies to the 3-way path."""
+        import logging
+        a = self._write_simple_pair(tmp_path, "genemark.gff3", "ga")
+        b = self._write_simple_pair(tmp_path, "spaln.gff3", "ga")
+
+        with caplog.at_level(logging.WARNING, logger="eukan.gff.concordance"):
+            extract_supported_models(a, b, output_dir=tmp_path)
+
+        assert "weak concordance" not in caplog.text.lower()

@@ -8,9 +8,11 @@ Usage:
 
 Full pipeline order:
     1. Database fetch (UniProt + Pfam)
-    2. Transcriptome assembly (STAR + Trinity + PASA)
-    3. Genome annotation (GeneMark + spaln + AUGUSTUS + SNAP + EVM)
-    4. Functional annotation (phmmer + hmmscan on predicted proteins)
+    2. Repeat masking (RepeatModeler + RepeatMasker)
+    3. Transcriptome assembly (STAR + Trinity + PASA)
+    4. Genome annotation (GeneMark + spaln + AUGUSTUS + SNAP + EVM)
+    5. Functional annotation (phmmer + hmmscan on predicted proteins)
+    6. NCBI submission prep (table2asn validation + .sqn)
 
 The test-pipeline command invokes `eukan` CLI subcommands via subprocess,
 exercising the same code paths as real user workflows.
@@ -33,6 +35,15 @@ import click
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
+# Organism scientific names for the prep-submission step. The S. pombe
+# data set (default) corresponds to fungus.
+_ORGANISM_BY_KINGDOM = {
+    "fungus": "Schizosaccharomyces pombe",
+    "protist": "Test protist",
+    "animal": "Test animal",
+    "plant": "Test plant",
+}
+
 
 def _run_eukan(args: list[str], cwd: Path, label: str) -> subprocess.CompletedProcess:
     """Run an eukan CLI command via subprocess, mirroring real user usage."""
@@ -43,6 +54,31 @@ def _run_eukan(args: list[str], cwd: Path, label: str) -> subprocess.CompletedPr
     if result.returncode != 0:
         raise RuntimeError(f"{label} failed (exit {result.returncode})")
     return result
+
+
+def _gff3_summary_counts(gff3_path: Path) -> tuple[int, int, int]:
+    """Return ``(genes, mRNAs, mRNAs_with_inference)`` from a GFF3 file.
+
+    ``inference`` on an mRNA is the marker used by ``annotate_gff3`` for any
+    mRNA with a UniProt and/or Pfam hit — absence of that attribute means
+    no functional evidence was attached.
+    """
+    genes = mrnas = annotated = 0
+    with open(gff3_path) as fh:
+        for line in fh:
+            if not line or line.startswith("#"):
+                continue
+            cols = line.rstrip("\n").split("\t")
+            if len(cols) < 9:
+                continue
+            ftype = cols[2]
+            if ftype == "gene":
+                genes += 1
+            elif ftype == "mRNA":
+                mrnas += 1
+                if "inference=" in cols[8]:
+                    annotated += 1
+    return genes, mrnas, annotated
 
 
 @click.group(context_settings=CONTEXT_SETTINGS)
@@ -107,11 +143,19 @@ def test_pipeline_cmd(
     \b
     Runs all steps of the annotation workflow via the eukan CLI:
       1. eukan db-fetch        Download UniProt + Pfam databases
-      2. eukan assemble        STAR mapping + Trinity + PASA
-      3. eukan annotate        GeneMark + spaln + AUGUSTUS + SNAP + EVM
-      4. eukan func-annot      phmmer + hmmscan on predicted proteins
+      2. eukan mask-repeats    RepeatModeler + RepeatMasker (soft-mask)
+      3. eukan assemble        STAR mapping + Trinity + PASA
+      4. eukan annotate        GeneMark + spaln + AUGUSTUS + SNAP + EVM
+      5. eukan func-annot      phmmer + hmmscan on predicted proteins
+      6. eukan prep-submission table2asn validation + .sqn
 
     Requires test data from: python tests/run_pipeline.py setup-test-data
+    Requires tests/data/template.sbt for the prep-submission step.
+
+    Optional: tests/data/repeat_lib.fasta — pre-built RepeatMasker
+    library. When present, the mask-repeats step skips RepeatModeler
+    (which often fails on small test genomes via RECON / eledef) and
+    masks directly with the supplied library.
     """
     from tests.testdata import validate_test_data
 
@@ -169,7 +213,45 @@ def test_pipeline_cmd(
             click.echo("  Functional annotation will be skipped.")
 
     # ================================================================
-    # Step 2: Transcriptome assembly
+    # Step 2: Repeat masking
+    # ================================================================
+    sys.stdout.flush()
+    click.echo(f"\n{'=' * 60}")
+    click.echo("STEP 2: Repeat masking (RepeatModeler + RepeatMasker)")
+    click.echo(f"{'=' * 60}")
+
+    masked_genome = work_dir / "repeats" / f"{genome.stem}.masked.fasta"
+    repeat_lib = data_dir / "repeat_lib.fasta"
+
+    if masked_genome.exists():
+        click.echo(f"  Masked genome already present: {masked_genome.name}")
+        genome = masked_genome
+    else:
+        # RepeatModeler's RECON stage (eledef) often fails on small test
+        # genomes, so prefer a pre-built library when present.
+        mask_args = ["mask-repeats", "-g", str(genome), "-n", str(numcpu)]
+        if repeat_lib.exists():
+            click.echo(f"  Using pre-built library: {repeat_lib.name}")
+            mask_args += ["--lib", str(repeat_lib)]
+        try:
+            _run_eukan(mask_args, cwd=work_dir, label="Repeat masking")
+            if masked_genome.exists():
+                click.echo("  Repeat masking complete.")
+                genome = masked_genome
+            else:
+                click.echo(f"  Expected {masked_genome.name} not produced; "
+                           "continuing with unmasked genome.")
+        except Exception as e:
+            click.echo(f"\n  Repeat masking failed: {e}")
+            if not repeat_lib.exists():
+                click.echo(
+                    f"  Hint: RepeatModeler often fails on small genomes; "
+                    f"supply a library at {repeat_lib} to skip it.",
+                )
+            click.echo("  Continuing with unmasked genome.")
+
+    # ================================================================
+    # Step 3: Transcriptome assembly
     # ================================================================
     if not protein_only:
         if not left_reads or not right_reads:
@@ -178,7 +260,7 @@ def test_pipeline_cmd(
 
     if not protein_only:
         click.echo(f"\n{'=' * 60}")
-        click.echo("STEP 2: Transcriptome assembly")
+        click.echo("STEP 3: Transcriptome assembly")
         click.echo(f"  {len(left_reads)} paired-end read pairs")
         click.echo(f"{'=' * 60}")
 
@@ -212,11 +294,11 @@ def test_pipeline_cmd(
             protein_only = True
 
     # ================================================================
-    # Step 3: Genome annotation
+    # Step 4: Genome annotation
     # ================================================================
     sys.stdout.flush()
     click.echo(f"\n{'=' * 60}")
-    click.echo("STEP 3: Genome annotation")
+    click.echo("STEP 4: Genome annotation")
     click.echo(f"{'=' * 60}")
 
     annotate_args = [
@@ -228,10 +310,10 @@ def test_pipeline_cmd(
     ]
 
     if not protein_only:
-        # Check for assembly outputs (written to work_dir by eukan assemble)
-        nr_fasta = work_dir / "nr_transcripts.fasta"
-        nr_gff3 = work_dir / "nr_transcripts.gff3"
-        hints = work_dir / "hints_rnaseq.gff"
+        # Assembly outputs land in <work_dir>/assemble/ under the step layout.
+        nr_fasta = work_dir / "assemble" / "nr_transcripts.fasta"
+        nr_gff3 = work_dir / "assemble" / "nr_transcripts.gff3"
+        hints = work_dir / "assemble" / "hints_rnaseq.gff"
 
         if nr_fasta.exists() and nr_gff3.exists() and hints.exists():
             click.echo("  Using transcript evidence from assembly")
@@ -258,19 +340,21 @@ def test_pipeline_cmd(
         raise SystemExit(1)
 
     # ================================================================
-    # Step 4: Functional annotation
+    # Step 5: Functional annotation
     # ================================================================
     sys.stdout.flush()
     click.echo(f"\n{'=' * 60}")
-    click.echo("STEP 4: Functional annotation")
+    click.echo("STEP 5: Functional annotation")
     click.echo(f"{'=' * 60}")
 
     if not uniprot_db.exists() or not pfam_db.exists():
         click.echo("  Skipping: databases not available.")
     else:
-        # Extract predicted proteins if not already done
-        predicted_proteins = work_dir / "predicted_proteins.faa"
-        final_gff3 = work_dir / "final.gff3"
+        # final.gff3 lives in annotate/; extracted proteins go in func-annot/.
+        func_dir = work_dir / "func-annot"
+        func_dir.mkdir(parents=True, exist_ok=True)
+        predicted_proteins = func_dir / "predicted_proteins.faa"
+        final_gff3 = work_dir / "annotate" / "final.gff3"
 
         if not predicted_proteins.exists() and final_gff3.exists():
             click.echo("  Extracting predicted proteins from annotation...")
@@ -303,21 +387,65 @@ def test_pipeline_cmd(
                 raise SystemExit(1)
 
     # ================================================================
+    # Step 6: NCBI submission prep
+    # ================================================================
+    sys.stdout.flush()
+    click.echo(f"\n{'=' * 60}")
+    click.echo("STEP 6: NCBI submission prep (table2asn)")
+    click.echo(f"{'=' * 60}")
+
+    template = data_dir / "template.sbt"
+    func_gff3 = work_dir / "func-annot" / "final.mod.gff3"
+
+    if not template.exists():
+        click.echo(f"  Skipping: {template} not found.")
+    elif not func_gff3.exists():
+        click.echo("  Skipping: final.mod.gff3 not produced by functional annotation.")
+    else:
+        try:
+            _run_eukan(
+                [
+                    "prep-submission",
+                    "-t", str(template),
+                    "--organism", _ORGANISM_BY_KINGDOM.get(kingdom, "Test organism"),
+                ],
+                cwd=work_dir, label="Submission prep",
+            )
+            click.echo("  Submission prep complete.")
+        except Exception as e:
+            click.echo(f"\n  Submission prep failed: {e}")
+            click.echo("  See submission/genome.val and .dr for validator details.")
+
+    # ================================================================
     # Summary
     # ================================================================
     click.echo(f"\n{'=' * 60}")
     click.echo("Pipeline complete.")
     click.echo(f"{'=' * 60}")
-    final_gff3 = work_dir / "final.gff3"
-    if final_gff3.exists():
-        click.echo(f"  Annotation GFF3:  {final_gff3}")
-    func_gff3 = work_dir / "final.mod.gff3"
-    if func_gff3.exists():
-        click.echo(f"  Functional GFF3:  {func_gff3}")
-    func_faa = work_dir / "predicted_proteins.mod.faa"
+    final_gff3 = work_dir / "annotate" / "final.gff3"
+    func_gff3 = work_dir / "func-annot" / "final.mod.gff3"
+
+    # Prefer func-annot's output as the canonical "final" — same gene/mRNA
+    # structure as annotate/final.gff3 plus inference= attributes for the
+    # annotated-mRNA stat. Fall back when func-annot didn't run.
+    final = func_gff3 if func_gff3.exists() else final_gff3
+    if final.exists():
+        genes, mrnas, annotated = _gff3_summary_counts(final)
+        click.echo(f"  Final GFF3:         {final}")
+        click.echo(f"    Genes:              {genes}")
+        click.echo(f"    mRNAs:              {mrnas}")
+        if func_gff3.exists():
+            pct = (100.0 * annotated / mrnas) if mrnas else 0.0
+            click.echo(
+                f"    Annotated mRNAs:    {annotated} / {mrnas} ({pct:.1f}%)"
+            )
+    func_faa = work_dir / "func-annot" / "predicted_proteins.mod.faa"
     if func_faa.exists():
         click.echo(f"  Annotated proteins: {func_faa}")
-    click.echo("\n  View run details: eukan status")
+    sqn = work_dir / "submission" / f"{genome.stem}.sqn"
+    if sqn.exists():
+        click.echo(f"  NCBI .sqn:          {sqn}")
+    click.echo("\n  View run details: eukan status -d <step-dir>")
 
 
 @cli.command("compare-annotations", short_help="Compare pipeline output against reference.")
@@ -328,7 +456,7 @@ def test_pipeline_cmd(
 )
 @click.option(
     "--predicted", "-p", type=click.Path(exists=True, path_type=Path),
-    default="tests/pipeline-run/final.mod.gff3", show_default=True,
+    default="tests/pipeline-run/func-annot/final.mod.gff3", show_default=True,
     help="Predicted GFF3 file to evaluate.",
 )
 def compare_annotations_cmd(reference: Path, predicted: Path) -> None:

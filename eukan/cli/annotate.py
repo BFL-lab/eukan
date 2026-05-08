@@ -114,6 +114,7 @@ def annotate(
     """
     from eukan.annotation import run_annotation_pipeline
     from eukan.annotation.pipeline import force_steps_from_run_flags
+    from eukan.infra.layout import step_work_dir
     from eukan.settings import PipelineConfig
 
     # Only pass fields explicitly set by the user; pydantic-settings
@@ -121,7 +122,7 @@ def annotate(
     config = PipelineConfig(**drop_none(
         genome=genome.resolve(),
         proteins=[p.resolve() for p in proteins],
-        work_dir=Path.cwd(),
+        work_dir=step_work_dir("annotate"),
         num_cpu=numcpu,
         genetic_code=str(code),
         weights=list(weights),

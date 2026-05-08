@@ -40,7 +40,7 @@ def run_masker(config: RepeatsConfig, families: Path) -> tuple[Path, Path]:
 
     Returns ``(masked_genome, hints_gff)`` paths in ``work_dir``.
     """
-    sdir = config.work_dir / "repeats" / "masker"
+    sdir = config.work_dir / "masker"
     sdir.mkdir(parents=True, exist_ok=True)
 
     # RepeatMasker writes its outputs alongside the input genome by default.

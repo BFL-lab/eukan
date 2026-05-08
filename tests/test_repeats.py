@@ -3,7 +3,7 @@
 from Bio import SeqIO
 
 from eukan.repeats.masker import gff_to_hints
-from eukan.repeats.modeler import sort_and_uppercase
+from eukan.repeats.modeler import _salvage_partial_library, sort_and_uppercase
 from eukan.repeats.pipeline import force_steps_from_run_flags
 from eukan.settings import RepeatsConfig
 
@@ -87,6 +87,71 @@ class TestRepeatsConfig:
         lib.touch()
         config = RepeatsConfig(genome=genome, lib=lib)
         assert config.lib == lib
+
+
+class TestSalvagePartialLibrary:
+    """``_salvage_partial_library`` recovers usable FASTA from crashed runs."""
+
+    def test_no_rm_dir_returns_none(self, tmp_path):
+        assert _salvage_partial_library(tmp_path) is None
+
+    def test_prefers_cumulative_consensi(self, tmp_path):
+        rm = tmp_path / "RM_123.SomeStamp"
+        (rm / "round-1").mkdir(parents=True)
+        (rm / "consensi.fa").write_text(">cumulative\nACGT\n")
+        (rm / "round-1" / "consensi.fa").write_text(">round-1-only\nAAAA\n")
+
+        salvaged = _salvage_partial_library(tmp_path)
+        assert salvaged == rm / "consensi.fa"
+
+    def test_falls_back_to_latest_round_classified(self, tmp_path):
+        rm = tmp_path / "RM_123.SomeStamp"
+        # Cumulative is empty → skip; round-2 has classified, round-1 unclassified
+        (rm / "round-1").mkdir(parents=True)
+        (rm / "round-2").mkdir(parents=True)
+        (rm / "consensi.fa").write_text("")  # empty -> skipped
+        (rm / "round-1" / "consensi.fa").write_text(">r1\nAAAA\n")
+        (rm / "round-2" / "consensi.fa.classified").write_text(">r2#LINE/L1\nCCCC\n")
+
+        salvaged = _salvage_partial_library(tmp_path)
+        assert salvaged == rm / "round-2" / "consensi.fa.classified"
+
+    def test_round_consensi_unclassified_when_classified_missing(self, tmp_path):
+        rm = tmp_path / "RM_123.SomeStamp"
+        (rm / "round-1").mkdir(parents=True)
+        (rm / "round-1" / "consensi.fa").write_text(">r1\nAAAA\n")
+
+        salvaged = _salvage_partial_library(tmp_path)
+        assert salvaged == rm / "round-1" / "consensi.fa"
+
+    def test_refined_cons_is_last_resort(self, tmp_path):
+        rm = tmp_path / "RM_123.SomeStamp"
+        (rm / "round-1").mkdir(parents=True)
+        (rm / "round-1" / "refined-cons.fa").write_text(">refiner\nGGGG\n")
+
+        salvaged = _salvage_partial_library(tmp_path)
+        assert salvaged == rm / "round-1" / "refined-cons.fa"
+
+    def test_picks_latest_rm_dir(self, tmp_path):
+        old = tmp_path / "RM_111.A"
+        new = tmp_path / "RM_999.Z"
+        for d in (old, new):
+            d.mkdir()
+        old.joinpath("consensi.fa").write_text(">old\nACGT\n")
+        new.joinpath("consensi.fa").write_text(">new\nACGT\n")
+
+        salvaged = _salvage_partial_library(tmp_path)
+        assert salvaged == new / "consensi.fa"
+
+    def test_skips_empty_files(self, tmp_path):
+        rm = tmp_path / "RM_123.A"
+        (rm / "round-1").mkdir(parents=True)
+        (rm / "consensi.fa").write_text("")
+        (rm / "round-1" / "consensi.fa.classified").write_text("")
+        (rm / "round-1" / "consensi.fa").write_text(">x\nA\n")
+
+        salvaged = _salvage_partial_library(tmp_path)
+        assert salvaged == rm / "round-1" / "consensi.fa"
 
 
 class TestForceStepsFromRunFlags:

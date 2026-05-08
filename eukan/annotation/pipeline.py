@@ -317,6 +317,7 @@ def _phase_protein_alignment(
         config, manifest, prot_step, align_proteins,
         ev["genemark"], config.proteins, *spaln_extra,
     )
+    _log_prediction_count("spaln", spaln_path)
     return {**ev, "spaln": spaln_path}
 
 

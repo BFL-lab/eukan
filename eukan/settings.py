@@ -107,6 +107,14 @@ class _StepRunSettings(BaseSettings):
             data["manifest_dir"] = data.get("work_dir") or Path.cwd()
         return data
 
+    @model_validator(mode="after")
+    def _ensure_dirs_exist(self) -> _StepRunSettings:
+        # Each step's CLI now points work_dir at a subdir under cwd
+        # (e.g. ./annotate/, ./repeats/) which may not exist yet.
+        self.work_dir.mkdir(parents=True, exist_ok=True)
+        self.manifest_dir.mkdir(parents=True, exist_ok=True)
+        return self
+
     @cached_property
     def genetic_code_obj(self):
         """Return a :class:`~eukan.infra.genetic_code.GeneticCode` for this config's code."""
@@ -183,44 +191,50 @@ class PipelineConfig(_StepRunSettings):
 
     @model_validator(mode="after")
     def _discover_assembly_outputs(self) -> PipelineConfig:
-        """Auto-discover assembly outputs in work_dir when not explicitly provided."""
+        """Auto-discover assembly outputs (own work_dir or sibling assemble/)."""
         log = get_logger(__name__)
+        from eukan.infra import artifacts
+        from eukan.infra.artifacts import Artifact
 
         # If the user already set all three explicitly, nothing to do
         if all([self.transcripts_fasta, self.transcripts_gff, self.rnaseq_hints]):
             return self
 
         # If the user set some but not all explicitly, don't override their intent
-        assembly_files = self._assembly_files()
+        field_to_artifact = {
+            "transcripts_fasta": Artifact.NR_TRANSCRIPTS_FASTA,
+            "transcripts_gff":   Artifact.NR_TRANSCRIPTS_GFF,
+            "rnaseq_hints":      Artifact.RNASEQ_HINTS,
+        }
         explicitly_set = {
             field: getattr(self, field)
-            for field in assembly_files
+            for field in field_to_artifact
             if getattr(self, field) is not None
         }
         if explicitly_set:
             return self
 
-        # Scan work_dir for assembly outputs
+        # Search work_dir and (when in step layout) sibling assemble/
         found: dict[str, Path] = {}
         missing: list[str] = []
-        for field, filename in assembly_files.items():
-            path = self.work_dir / filename
-            if path.exists():
+        for field, art in field_to_artifact.items():
+            path = artifacts.find(self.work_dir, art)
+            if path is not None:
                 found[field] = path
             else:
-                missing.append(filename)
+                missing.append(art.value)
 
         if found and missing:
             log.warning(
-                "Partial assembly outputs in %s: found %s but missing %s. "
+                "Partial assembly outputs: found %s but missing %s. "
                 "Run `eukan assemble` to completion or remove partial files.",
-                self.work_dir,
-                ", ".join(p.name for p in found.values()),
+                ", ".join(str(p) for p in found.values()),
                 ", ".join(missing),
             )
         elif found:
             log.info(
-                "Auto-discovered assembly outputs in %s", self.work_dir,
+                "Auto-discovered assembly outputs: %s",
+                ", ".join(str(p) for p in found.values()),
             )
             for field, path in found.items():
                 object.__setattr__(self, field, path)
@@ -422,30 +436,34 @@ class SubmissionConfig(_StepRunSettings):
     @model_validator(mode="after")
     def _discover_inputs(self) -> SubmissionConfig:
         log = get_logger(__name__)
+        from eukan.infra import artifacts
         from eukan.infra.artifacts import Artifact
+        from eukan.infra.layout import sibling_step_dir
         from eukan.infra.manifest import load_manifest
 
-        manifest = None
-
         if self.genome is None:
-            manifest = load_manifest(self.work_dir)
-            if manifest and manifest.genome:
-                discovered = Path(manifest.genome)
-                object.__setattr__(self, "genome", discovered)
-                log.info("Auto-discovered genome from eukan-run.json: %s", discovered)
+            # Look for the annotation step's manifest first (it records
+            # the genome used for the run); fall back to our own work_dir.
+            for candidate_dir in (sibling_step_dir(self.work_dir, "annotate"), self.work_dir):
+                manifest = load_manifest(candidate_dir)
+                if manifest and manifest.genome:
+                    discovered = Path(manifest.genome)
+                    object.__setattr__(self, "genome", discovered)
+                    log.info("Auto-discovered genome from eukan-run.json: %s", discovered)
+                    break
 
         if self.gff3 is None:
-            preferred = self.work_dir / Artifact.FINAL_FUNC_GFF3.value
-            fallback = self.work_dir / Artifact.FINAL_GFF3.value
-            if preferred.exists():
+            preferred = artifacts.find(self.work_dir, Artifact.FINAL_FUNC_GFF3)
+            fallback = artifacts.find(self.work_dir, Artifact.FINAL_GFF3)
+            if preferred is not None:
                 object.__setattr__(self, "gff3", preferred)
-                log.info("Auto-discovered annotated GFF3: %s", preferred.name)
-            elif fallback.exists():
+                log.info("Auto-discovered annotated GFF3: %s", preferred)
+            elif fallback is not None:
                 object.__setattr__(self, "gff3", fallback)
                 log.warning(
                     "Using %s (no functional annotations). "
                     "Run `eukan func-annot` first for product names.",
-                    fallback.name,
+                    fallback,
                 )
 
         if self.genome is None:
