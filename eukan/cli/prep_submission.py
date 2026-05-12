@@ -134,6 +134,7 @@ def prep_submission(
 
     config = SubmissionConfig(**drop_none(
         work_dir=step_work_dir("prep-submission"),
+        manifest_dir=Path.cwd(),
         template=template.resolve(),
         organism=organism,
         isolate=isolate,

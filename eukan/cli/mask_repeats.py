@@ -63,6 +63,7 @@ def mask_repeats(
     config = RepeatsConfig(**drop_none(
         genome=genome.resolve(),
         work_dir=step_work_dir("mask-repeats"),
+        manifest_dir=Path.cwd(),
         num_cpu=numcpu,
         engine=engine.lower(),
         lib=lib.resolve() if lib else None,

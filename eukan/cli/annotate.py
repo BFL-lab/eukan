@@ -123,6 +123,7 @@ def annotate(
         genome=genome.resolve(),
         proteins=[p.resolve() for p in proteins],
         work_dir=step_work_dir("annotate"),
+        manifest_dir=Path.cwd(),
         num_cpu=numcpu,
         genetic_code=str(code),
         weights=list(weights),

@@ -66,6 +66,7 @@ def func_annot(
     config = FunctionalConfig(**drop_none(
         proteins=proteins.resolve(),
         work_dir=step_work_dir("func-annot"),
+        manifest_dir=Path.cwd(),
         num_cpu=numcpu,
         evalue=evalue,
         uniprot_db=uniprot.resolve() if uniprot else None,

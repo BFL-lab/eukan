@@ -108,6 +108,7 @@ def assemble(
     config = AssemblyConfig(**drop_none(
         genome=genome.resolve(),
         work_dir=step_work_dir("assemble"),
+        manifest_dir=Path.cwd(),
         min_intron_len=min_intron,
         max_intron_len=max_intron,
         phred_quality=int(phred),
