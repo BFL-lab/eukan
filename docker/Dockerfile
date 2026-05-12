@@ -84,6 +84,25 @@ RUN genemark_tar=$(ls /tmp/_genemark/gmes_linux_64*.tar.gz 2>/dev/null | head -1
 
 # ---------------------------------------------------------------------------
 # 4. Strip conda env of unnecessary files to shrink the runtime image
+#
+# Removed in addition to the obvious caches/test dirs:
+#   - R interpreter + bioconductor (lib/R, bin/R, bin/Rscript) — never invoked
+#   - pandoc (155 MB Haskell binary) — never invoked
+#   - TEsorter HMM-database package — RepeatClassifier doesn't call it
+#   - Cross-compile sysroot + gcc toolchain (x86_64-conda-linux-gnu,
+#     libexec/gcc, lib/gcc) — build-time only; fitild/spaln are already built
+#   - JDK source zip and jmods — JRE is what Trinity needs
+#   - Berkeley DB docs, man pages, locale data, gir-1.0, fonts, cups/X11/alsa
+#   - lib/ncbi-blast+ (391 MB BLAST+ dev SDK) — verified: no binary links to it
+#   - Unused BLAST CLIs (tblastx, psiblast, deltablast, rps*blast, seedtop,
+#     blast_formatter/_report, blastdbcheck) — not invoked by eukan or any
+#     bundled tool (RepeatMasker, RepeatModeler, PASA, Trinity)
+#   - matplotlib + fontTools + contourpy + PIL + RNA python packages — only
+#     pulled in via lazy imports in scipy/biopython that we never trigger
+#   - AUGUSTUS pre-shipped species (165 of 166) — eukan always trains from
+#     scratch via new_species.pl using the `generic` template
+#   - GeneMark GeneMark-E-tests + ProtHint — test data + EP+ mode (unused)
+#   - bin/k8 — minimap2 JS shell helper, no consumer here
 # ---------------------------------------------------------------------------
 RUN find /opt/conda/envs/eukan -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true \
     && find /opt/conda/envs/eukan -name "*.a" -delete 2>/dev/null || true \
@@ -96,16 +115,70 @@ RUN find /opt/conda/envs/eukan -type d -name "__pycache__" -exec rm -rf {} + 2>/
               /opt/conda/envs/eukan/share/info \
               /opt/conda/envs/eukan/share/gtk-doc \
               /opt/conda/envs/eukan/share/terminfo \
+              /opt/conda/envs/eukan/share/locale \
+              /opt/conda/envs/eukan/share/gir-1.0 \
+              /opt/conda/envs/eukan/share/cups \
+              /opt/conda/envs/eukan/share/X11 \
+              /opt/conda/envs/eukan/share/alsa \
+              /opt/conda/envs/eukan/share/hdf5_examples \
               /opt/conda/envs/eukan/include \
               /opt/conda/envs/eukan/conda-meta \
+              /opt/conda/envs/eukan/man \
+              /opt/conda/envs/eukan/docs \
+              /opt/conda/envs/eukan/fonts \
+              /opt/conda/envs/eukan/x86_64-conda-linux-gnu \
+              /opt/conda/envs/eukan/libexec/gcc \
+              /opt/conda/envs/eukan/lib/gcc \
+              /opt/conda/envs/eukan/lib/ncbi-blast+ \
+              /opt/conda/envs/eukan/lib/R \
+              /opt/conda/envs/eukan/lib/jvm/jmods \
+              /opt/conda/envs/eukan/lib/jvm/lib/src.zip \
               /opt/conda/envs/eukan/lib/python*/test \
-              /opt/conda/envs/eukan/lib/python*/unittest \
               /opt/conda/envs/eukan/lib/python*/idlelib \
               /opt/conda/envs/eukan/lib/python*/tkinter \
               /opt/conda/envs/eukan/lib/python*/ensurepip \
               /opt/conda/envs/eukan/lib/python*/lib2to3 \
+              /opt/conda/envs/eukan/lib/python*/site-packages/TEsorter \
+              /opt/conda/envs/eukan/lib/python*/site-packages/matplotlib \
+              /opt/conda/envs/eukan/lib/python*/site-packages/matplotlib-* \
+              /opt/conda/envs/eukan/lib/python*/site-packages/mpl_toolkits \
+              /opt/conda/envs/eukan/lib/python*/site-packages/fontTools \
+              /opt/conda/envs/eukan/lib/python*/site-packages/contourpy \
+              /opt/conda/envs/eukan/lib/python*/site-packages/contourpy-* \
+              /opt/conda/envs/eukan/lib/python*/site-packages/PIL \
+              /opt/conda/envs/eukan/lib/python*/site-packages/pillow-* \
+              /opt/conda/envs/eukan/lib/python*/site-packages/RNA \
+    && rm -f  /opt/conda/envs/eukan/bin/R \
+              /opt/conda/envs/eukan/bin/Rscript \
+              /opt/conda/envs/eukan/bin/pandoc \
+              /opt/conda/envs/eukan/bin/TEsorter \
+              /opt/conda/envs/eukan/bin/TEsorter-test \
+              /opt/conda/envs/eukan/bin/concatenate_domains.py \
+              /opt/conda/envs/eukan/bin/k8 \
+              /opt/conda/envs/eukan/bin/tblastx \
+              /opt/conda/envs/eukan/bin/psiblast \
+              /opt/conda/envs/eukan/bin/deltablast \
+              /opt/conda/envs/eukan/bin/rpsblast \
+              /opt/conda/envs/eukan/bin/rpstblastn \
+              /opt/conda/envs/eukan/bin/seedtop \
+              /opt/conda/envs/eukan/bin/blast_formatter \
+              /opt/conda/envs/eukan/bin/blast_report \
+              /opt/conda/envs/eukan/bin/blastdbcheck \
+    # AUGUSTUS species: keep only `generic` (used by new_species.pl as the
+    # training template). Eukan always trains from scratch — pre-shipped
+    # reference species (~140 MB) are never consulted.
+    && find /opt/conda/envs/eukan/config/species -mindepth 1 -maxdepth 1 -type d \
+              ! -name generic -exec rm -rf {} + 2>/dev/null || true \
+    # GeneMark: drop test inputs (~11 MB) and ProtHint (~13 MB, EP+ mode unused).
+    && rm -rf /opt/conda/envs/eukan/opt/gmes_linux_64_4/GeneMark-E-tests \
+              /opt/conda/envs/eukan/opt/gmes_linux_64_4/ProtHint \
     && find /opt/conda/envs/eukan/lib -name "libpython*.a" -delete 2>/dev/null || true \
-    && find /opt/conda/envs/eukan -name "*.egg-info" -type d -exec rm -rf {} + 2>/dev/null || true
+    && find /opt/conda/envs/eukan -name "*.egg-info" -type d -exec rm -rf {} + 2>/dev/null || true \
+    # Pre-set writable permissions on dirs the runtime needs to mutate
+    # (AUGUSTUS species training writes to config/, spaln --spsp writes to
+    # share/spaln/). Doing this in the builder avoids a 191 MB chown layer
+    # in the runtime stage since COPY --link preserves these as-is.
+    && chmod -R a+rwX /opt/conda/envs/eukan/config /opt/conda/envs/eukan/share/spaln
 
 # ============================= RUNTIME STAGE =================================
 FROM debian:bookworm-slim AS runtime
@@ -131,9 +204,8 @@ COPY --from=builder /root/.gm_key /root/.gm_key
 COPY --from=builder /root/.gm_key /home/eukan/.gm_key
 RUN chmod 644 /root/.gm_key /home/eukan/.gm_key 2>/dev/null || true
 
-# AUGUSTUS config + spaln must be writable for species training
-RUN chown -R ${USER_ID}:${GROUP_ID} /opt/conda/envs/eukan/config 2>/dev/null || true \
-    && chown -R ${USER_ID}:${GROUP_ID} /opt/conda/envs/eukan/share/spaln 2>/dev/null || true
+# AUGUSTUS config + share/spaln are already chmod a+rwX in the builder so
+# any UID can write during species training / spaln --spsp.
 
 # ---------------------------------------------------------------------------
 # Environment variables (mirrors conda-activate.sh)
