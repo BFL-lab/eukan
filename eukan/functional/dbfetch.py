@@ -1,7 +1,8 @@
 """Download and prepare reference databases with integrity tracking.
 
-Downloads UniProt-SwissProt and Pfam databases, verifies integrity via MD5,
-and tracks state in a manifest file so subsequent runs skip up-to-date files.
+Downloads UniProt-SwissProt, Pfam, and KOfam databases, verifies
+integrity via MD5, and tracks state in a manifest file so subsequent
+runs skip up-to-date files.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import gzip
 import json
 import shutil
+import tarfile
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,12 +19,14 @@ import pyhmmer
 import requests
 
 from eukan.infra.logging import get_logger
-from eukan.infra.utils import md5_file
+from eukan.infra.utils import concat_files, md5_file
 
 log = get_logger(__name__)
 
 UNIPROT_URL = "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz"
 PFAM_URL = "https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz"
+KOFAM_PROFILES_URL = "https://www.genome.jp/ftp/db/kofam/profiles.tar.gz"
+KOFAM_KO_LIST_URL = "https://www.genome.jp/ftp/db/kofam/ko_list.gz"
 
 CHUNK_SIZE = 8 * 1024 * 1024  # 8MB
 MANIFEST_FILE = ".manifest.json"
@@ -174,32 +178,148 @@ def download_pfam(output_dir: Path) -> DatabaseEntry:
     return _make_entry("pfam", "Pfam-A.hmm", PFAM_URL, output_dir)
 
 
+KOFAM_HMM_FILE = "kofam_eukaryote.hmm"
+KOFAM_KO_LIST_FILE = "ko_list.tsv"
+
+
+def _read_hal(hal_path: Path) -> list[str]:
+    """Read a .hal file and return the list of HMM filenames (skipping comments)."""
+    result: list[str] = []
+    with open(hal_path) as f:
+        for line in f:
+            s = line.strip()
+            if s and not s.startswith("#"):
+                result.append(s)
+    return result
+
+
+def download_kofam(output_dir: Path) -> DatabaseEntry:
+    """Download KOfam profiles, filter to eukaryote subset, concatenate, press.
+
+    Uses ``eukaryote.hal`` shipped inside ``profiles.tar.gz`` to pick the
+    eukaryote-only KO subset (~16k of ~27k total) — keeps the pressed DB
+    roughly proportional to the subset size. The per-KO ``.hmm`` files
+    are extracted to a temporary directory and removed after pressing.
+    """
+    tarball = output_dir / "profiles.tar.gz"
+    extract_dir = output_dir / "_kofam_profiles"
+    final_hmm = output_dir / KOFAM_HMM_FILE
+
+    _download_file(KOFAM_PROFILES_URL, tarball)
+
+    log.info("Extracting KOfam profiles to %s...", extract_dir)
+    if extract_dir.exists():
+        shutil.rmtree(extract_dir)
+    extract_dir.mkdir(parents=True)
+    with tarfile.open(tarball, "r:gz") as tf:
+        tf.extractall(extract_dir)
+    tarball.unlink()
+
+    # Tarball layout: profiles/eukaryote.hal + profiles/K*.hmm
+    profiles_root = extract_dir / "profiles"
+    if not profiles_root.is_dir():
+        # Some mirrors flatten the tarball.
+        profiles_root = extract_dir
+
+    hal = profiles_root / "eukaryote.hal"
+    if not hal.is_file():
+        raise FileNotFoundError(
+            f"eukaryote.hal not found inside KOfam tarball under {profiles_root}"
+        )
+
+    hmm_files = _read_hal(hal)
+    log.info("Concatenating %d eukaryotic KOfam HMM files...", len(hmm_files))
+    sources = [profiles_root / name for name in hmm_files]
+    missing = [str(p) for p in sources if not p.exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"{len(missing)} HMM files listed in eukaryote.hal are missing "
+            f"(first: {missing[0]})"
+        )
+    concat_files(sources, final_hmm)
+
+    log.info("Removing extracted per-KO HMM files...")
+    shutil.rmtree(extract_dir)
+
+    log.info("Pressing KOfam HMM database (%s)...", final_hmm.name)
+    pyhmmer.hmmer.hmmpress(
+        hmms=pyhmmer.plan7.HMMFile(str(final_hmm)), output=str(final_hmm),
+    )
+
+    return _make_entry("kofam", KOFAM_HMM_FILE, KOFAM_PROFILES_URL, output_dir)
+
+
+def download_ko_list(output_dir: Path) -> DatabaseEntry:
+    """Download the KOfam ``ko_list`` TSV (per-KO thresholds + definitions)."""
+    gz_path = output_dir / "ko_list.gz"
+    tsv_path = output_dir / KOFAM_KO_LIST_FILE
+
+    _download_file(KOFAM_KO_LIST_URL, gz_path)
+
+    log.info("Decompressing ko_list...")
+    with gzip.open(gz_path, "rb") as f_in, open(tsv_path, "wb") as f_out:
+        shutil.copyfileobj(f_in, f_out)
+
+    gz_path.unlink()
+    return _make_entry("ko_list", KOFAM_KO_LIST_FILE, KOFAM_KO_LIST_URL, output_dir)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-# Registry of available databases
+# Registry of available databases. ``kofam`` produces a pressed HMM;
+# ``ko_list`` carries the per-KO score thresholds + definitions used by
+# KOfam scoring. Both must be present for ``func-annot --homology-db kofam``.
 DATABASES = {
     "uniprot": ("uniprot_sprot.faa", download_uniprot),
     "pfam": ("Pfam-A.hmm", download_pfam),
+    "kofam": (KOFAM_HMM_FILE, download_kofam),
+    "ko_list": (KOFAM_KO_LIST_FILE, download_ko_list),
 }
+
+
+HOMOLOGY_DB_TARGETS: dict[str, list[str]] = {
+    "uniprot": ["uniprot"],
+    "kofam": ["kofam", "ko_list"],
+}
+"""Per-homology-DB set of registry entries to fetch when no explicit
+``--database`` list is given. Pfam is always added on top in
+:func:`fetch_databases`.
+"""
 
 
 def fetch_databases(
     output_dir: Path,
     force: bool = False,
     databases: list[str] | None = None,
+    homology_db: str = "uniprot",
 ) -> None:
     """Download and prepare databases, skipping those already up to date.
 
     Args:
         output_dir: Directory to store databases in.
         force: If True, re-download even if manifest says current.
-        databases: List of database names to fetch. None means all.
+        databases: Explicit list of registry entries to fetch. When given,
+            overrides ``homology_db`` (the caller is asking for an exact
+            subset, e.g. ``["pfam"]`` to refresh only Pfam).
+        homology_db: Choice of homology DB to fetch alongside Pfam when
+            ``databases`` is not given. ``"uniprot"`` (default) keeps the
+            current SwissProt-based pipeline; ``"kofam"`` triggers the
+            KOfam profiles + ko_list pair.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = load_db_manifest(output_dir)
-    targets = databases or list(DATABASES.keys())
+
+    if databases is None:
+        if homology_db not in HOMOLOGY_DB_TARGETS:
+            raise ValueError(
+                f"Unknown homology_db {homology_db!r}; expected one of "
+                f"{sorted(HOMOLOGY_DB_TARGETS)}"
+            )
+        targets = HOMOLOGY_DB_TARGETS[homology_db] + ["pfam"]
+    else:
+        targets = databases
 
     for db_name in targets:
         if db_name not in DATABASES:
@@ -221,8 +341,16 @@ def fetch_databases(
         log.info("[%s] Done. md5:%s... size:%s bytes", db_name, entry.md5[:12], f"{entry.size_bytes:,}")
 
 
-def check_databases(db_dir: Path) -> list[tuple[str, str, bool]]:
-    """Check status of all known databases.
+def check_databases(
+    db_dir: Path,
+    homology_db: str | None = None,
+) -> list[tuple[str, str, bool]]:
+    """Check status of databases relevant to the active homology choice.
+
+    When ``homology_db`` is given (``"uniprot"`` or ``"kofam"``), only that
+    homology DB's files plus Pfam are checked — the inactive choice is
+    skipped so users who never fetch it don't see false-negative warnings.
+    When ``None``, checks every entry in :data:`DATABASES`.
 
     Returns:
         List of (name, status_message, ok) tuples.
@@ -230,7 +358,14 @@ def check_databases(db_dir: Path) -> list[tuple[str, str, bool]]:
     manifest = load_db_manifest(db_dir)
     results: list[tuple[str, str, bool]] = []
 
+    if homology_db is not None:
+        wanted = set(HOMOLOGY_DB_TARGETS[homology_db]) | {"pfam"}
+    else:
+        wanted = set(DATABASES)
+
     for db_name, (filename, _) in DATABASES.items():
+        if db_name not in wanted:
+            continue
         path = db_dir / filename
 
         if not path.exists():

@@ -348,6 +348,7 @@ def check_python_deps() -> list[PythonCheckResult]:
 def run_checks(
     subcommands: list[str] | None = None,
     db_dir: Path | None = None,
+    homology_db: str | None = None,
 ) -> tuple[list[CheckResult], list[CheckResult], list[tuple[str, str, bool]], list[PythonCheckResult]]:
     """Run all checks: Python deps, external tools, and databases.
 
@@ -383,7 +384,7 @@ def run_checks(
     if db_relevant:
         from eukan.functional.dbfetch import check_databases
         db_dir = db_dir or Path("databases")
-        db_results = check_databases(db_dir)
+        db_results = check_databases(db_dir, homology_db=homology_db)
 
     return passed, failed, db_results, python_results
 

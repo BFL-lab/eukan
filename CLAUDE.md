@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Eukan is a eukaryotic genome annotation pipeline that integrates ab initio gene prediction (GeneMark, AUGUSTUS, SNAP, CodingQuarry) with homology-based evidence (protein alignments via spaln/gth) and transcript assemblies to produce consensus gene models via EVidenceModeler (EVM). It optionally adds UTRs via PASA and functional annotation via phmmer/hmmscan.
+Eukan is a eukaryotic genome annotation pipeline that integrates ab initio gene prediction (GeneMark, AUGUSTUS, SNAP, CodingQuarry) with homology-based evidence (protein alignments via spaln/gth) and transcript assemblies to produce consensus gene models via EVidenceModeler (EVM). It optionally adds UTRs via PASA and functional annotation via phmmer-against-UniProt or hmmscan-against-KOfam (adapted from KofamKOALA), plus hmmscan-against-Pfam.
 
 ## Build and Run
 
@@ -115,9 +115,10 @@ eukan/
 │   └── masker.py       # RepeatMasker softmasking + AUGUSTUS hint emission
 │
 ├── functional/         # Functional annotation pipeline
-│   ├── pipeline.py     # run_functional_annotation()
-│   ├── search.py       # pyhmmer phmmer/hmmscan search and GFF3/FASTA annotation
-│   └── dbfetch.py      # UniProt/Pfam database download and integrity tracking
+│   ├── pipeline.py     # run_functional_annotation() — branches on homology_db
+│   ├── search.py       # pyhmmer phmmer/hmmscan + UniProt/KOfam/Pfam GFF3/FASTA emitters
+│   ├── kofam.py        # KOfam (KofamKOALA-style): ko_list parsing, EC extraction, per-KO threshold scoring
+│   └── dbfetch.py      # UniProt/KOfam/Pfam database download and integrity tracking
 │
 ├── submission/         # NCBI submission prep
 │   ├── pipeline.py     # table2asn wrapper (eukan prep-submission)
@@ -145,7 +146,7 @@ eukan/
 6. Consensus model building via EVM, weighted by evidence type
 7. Optional UTR addition via PASA
 8. Final GFF3 formatting with locus tags
-9. Optional functional annotation via `func-annot` (UniProt/Pfam) → `final.mod.gff3`
+9. Optional functional annotation via `func-annot` (UniProt-or-KOfam plus Pfam, selected by `--homology-db`) → `final.mod.gff3`. KOfam mode is an adaptation of KofamKOALA: per-KO bit-score thresholds from `ko_list`, full vs domain score selection per KO, EC numbers parsed out of `[EC:…]` tags into a dedicated `ec_number=` GFF3 attribute, KEGG accessions emitted as `Dbxref=KEGG:K…`
 10. Optional `prep-submission` runs NCBI's table2asn validator over `final.mod.gff3` to produce a `.sqn` plus `.val/.dr/.stats` reports for iterative GFF3 refinement
 
 ### Per-step Run Directory Layout

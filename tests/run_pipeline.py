@@ -7,11 +7,11 @@ Usage:
     python tests/run_pipeline.py clean-test-data [--all]
 
 Full pipeline order:
-    1. Database fetch (UniProt + Pfam)
+    1. Database fetch (UniProt or KOfam, plus Pfam — see --homology-db)
     2. Repeat masking (RepeatModeler + RepeatMasker)
     3. Transcriptome assembly (STAR + Trinity + PASA)
     4. Genome annotation (GeneMark + spaln + AUGUSTUS + SNAP + EVM)
-    5. Functional annotation (phmmer + hmmscan on predicted proteins)
+    5. Functional annotation (homology + Pfam hmmscan on predicted proteins)
     6. NCBI submission prep (table2asn validation + .sqn)
 
 The test-pipeline command invokes `eukan` CLI subcommands via subprocess,
@@ -135,18 +135,25 @@ def setup_test_data_cmd(output_dir: Path) -> None:
     "--protein-only", is_flag=True,
     help="Skip assembly, annotate using only protein + genome evidence.",
 )
+@click.option(
+    "--homology-db", type=click.Choice(["uniprot", "kofam"], case_sensitive=False),
+    default="uniprot", show_default=True,
+    help="Homology DB for db-fetch + func-annot. 'uniprot' uses SwissProt "
+         "phmmer; 'kofam' uses KEGG Orthology HMMs with per-KO thresholds.",
+)
 def test_pipeline_cmd(
-    data_dir: Path, work_dir: Path, kingdom: str, numcpu: int, protein_only: bool,
+    data_dir: Path, work_dir: Path, kingdom: str, numcpu: int,
+    protein_only: bool, homology_db: str,
 ) -> None:
     """Run the full pipeline on S. pombe test data.
 
     \b
     Runs all steps of the annotation workflow via the eukan CLI:
-      1. eukan db-fetch        Download UniProt + Pfam databases
+      1. eukan db-fetch        Download Pfam + the chosen --homology-db
       2. eukan mask-repeats    RepeatModeler + RepeatMasker (soft-mask)
       3. eukan assemble        STAR mapping + Trinity + PASA
       4. eukan annotate        GeneMark + spaln + AUGUSTUS + SNAP + EVM
-      5. eukan func-annot      phmmer + hmmscan on predicted proteins
+      5. eukan func-annot      Homology + Pfam hmmscan on predicted proteins
       6. eukan prep-submission table2asn validation + .sqn
 
     Requires test data from: python tests/run_pipeline.py setup-test-data
@@ -157,6 +164,7 @@ def test_pipeline_cmd(
     (which often fails on small test genomes via RECON / eledef) and
     masks directly with the supplied library.
     """
+    homology_db = homology_db.lower()
     from tests.testdata import validate_test_data
 
     data_dir = data_dir.resolve()
@@ -188,23 +196,31 @@ def test_pipeline_cmd(
     click.echo(f"Proteins: {proteins}")
     click.echo(f"Kingdom: {kingdom}")
     click.echo(f"CPUs: {numcpu}")
+    click.echo(f"Homology DB: {homology_db}")
 
     # ================================================================
     # Step 1: Database fetch
     # ================================================================
     click.echo(f"\n{'=' * 60}")
-    click.echo("STEP 1: Database fetch (UniProt + Pfam)")
+    click.echo(f"STEP 1: Database fetch ({homology_db} + Pfam)")
     click.echo(f"{'=' * 60}")
 
-    uniprot_db = db_dir / "uniprot_sprot.faa"
     pfam_db = db_dir / "Pfam-A.hmm"
+    uniprot_db = db_dir / "uniprot_sprot.faa"
+    kofam_db = db_dir / "kofam_eukaryote.hmm"
+    ko_list_path = db_dir / "ko_list.tsv"
 
-    if uniprot_db.exists() and pfam_db.exists():
+    if homology_db == "kofam":
+        homology_files = [kofam_db, ko_list_path, pfam_db]
+    else:
+        homology_files = [uniprot_db, pfam_db]
+
+    if all(p.exists() for p in homology_files):
         click.echo("  Databases already present, skipping download.")
     else:
         try:
             _run_eukan(
-                ["db-fetch", "-o", str(db_dir)],
+                ["db-fetch", "-o", str(db_dir), "--homology-db", homology_db],
                 cwd=work_dir, label="Database fetch",
             )
             click.echo("  Database fetch complete.")
@@ -347,8 +363,9 @@ def test_pipeline_cmd(
     click.echo("STEP 5: Functional annotation")
     click.echo(f"{'=' * 60}")
 
-    if not uniprot_db.exists() or not pfam_db.exists():
-        click.echo("  Skipping: databases not available.")
+    if not all(p.exists() for p in homology_files):
+        missing = [p.name for p in homology_files if not p.exists()]
+        click.echo(f"  Skipping: databases not available ({', '.join(missing)}).")
     else:
         # final.gff3 lives in annotate/; extracted proteins go in func-annot/.
         func_dir = work_dir / "func-annot"
@@ -374,11 +391,18 @@ def test_pipeline_cmd(
             func_args = [
                 "func-annot",
                 "-p", str(predicted_proteins),
-                "--uniprot", str(uniprot_db),
+                "--homology-db", homology_db,
                 "--pfam", str(pfam_db),
                 "--gff3", str(final_gff3),
                 "-n", str(numcpu),
             ]
+            if homology_db == "kofam":
+                func_args += [
+                    "--kofam", str(kofam_db),
+                    "--ko-list", str(ko_list_path),
+                ]
+            else:
+                func_args += ["--uniprot", str(uniprot_db)]
             try:
                 _run_eukan(func_args, cwd=work_dir, label="Functional annotation")
                 click.echo("  Functional annotation complete.")

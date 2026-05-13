@@ -20,13 +20,22 @@ import click
     "--db-dir", type=click.Path(path_type=Path), default="databases",
     show_default=True, help="Database directory to check.",
 )
-def check(subcommands: tuple[str, ...], db_dir: Path) -> None:
+@click.option(
+    "--homology-db", type=click.Choice(["uniprot", "kofam"], case_sensitive=False),
+    default=None,
+    help="When set, only check the chosen homology DB (plus Pfam). Without "
+         "it, every registered database is checked.",
+)
+def check(
+    subcommands: tuple[str, ...], db_dir: Path, homology_db: str | None,
+) -> None:
     """Verify Python deps, external tools, and databases."""
     from eukan.infra.health import format_results, run_checks
 
     passed, failed, db_results, python_results = run_checks(
         list(subcommands) if subcommands else None,
         db_dir=db_dir.resolve(),
+        homology_db=homology_db.lower() if homology_db else None,
     )
     click.echo(format_results(passed, failed, db_results, python_results))
 

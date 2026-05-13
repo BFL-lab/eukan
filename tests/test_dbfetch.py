@@ -107,9 +107,10 @@ class TestIsCurrent:
 
 class TestCheckDatabases:
     def test_missing_databases(self, tmp_path):
-        """Empty directory should report all missing."""
+        """Empty directory should report every registered database missing."""
+        from eukan.functional.dbfetch import DATABASES
         results = check_databases(tmp_path)
-        assert len(results) == 2
+        assert len(results) == len(DATABASES)
         assert all(not ok for _, _, ok in results)
 
     def test_present_without_manifest(self, tmp_path):
@@ -132,6 +133,18 @@ class TestCheckDatabases:
         results = check_databases(tmp_path)
         uniprot_result = [r for r in results if r[0] == "uniprot"][0]
         assert uniprot_result[2]  # OK
+
+    def test_homology_db_uniprot_excludes_kofam(self, tmp_path):
+        """homology_db='uniprot' should skip KOfam / ko_list entries."""
+        results = check_databases(tmp_path, homology_db="uniprot")
+        names = {n for n, _, _ in results}
+        assert names == {"uniprot", "pfam"}
+
+    def test_homology_db_kofam_excludes_uniprot(self, tmp_path):
+        """homology_db='kofam' should skip the UniProt entry."""
+        results = check_databases(tmp_path, homology_db="kofam")
+        names = {n for n, _, _ in results}
+        assert names == {"kofam", "ko_list", "pfam"}
 
 
 class TestDownloadResume:

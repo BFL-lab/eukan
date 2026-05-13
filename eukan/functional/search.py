@@ -28,6 +28,12 @@ class HitInfo(TypedDict, total=False):
     description: str
     evalue: float
     accession: str  # optional — backfilled for legacy caches via _pfam_accession
+    # --- KOfam-only fields (present when search came from run_kofam_search) ---
+    score: float
+    threshold: float       # 0.0 when ko_list had no curated threshold ("-")
+    score_type: str        # "full" or "domain"
+    above_threshold: bool  # score >= per-KO threshold
+    ec_numbers: list[str]  # EC codes parsed out of the KO definition
 
 
 _PFAM_VERSION_RE = re.compile(r"\.\d+$")
@@ -146,53 +152,6 @@ def run_hmmscan_search(
     return results
 
 
-def run_homology_search(
-    proteins: Path,
-    uniprot_db: Path,
-    pfam_db: Path,
-    num_cpu: int,
-    evalue: str,
-) -> tuple[HitResults, HitResults]:
-    """Run phmmer and hmmscan using pyhmmer.
-
-    Stages are run sequentially with the target database released
-    between them: holding both UniProt-SwissProt and Pfam in memory
-    while two searches ran concurrently was OOM-prone on container
-    runtimes.  Each stage uses the full CPU budget.
-
-    Returns:
-        Tuple of (phmmer_results, hmmscan_results) dicts keyed by query ID.
-    """
-    import gc
-
-    evalue_f = float(evalue)
-
-    log.info("Loading query sequences from %s", proteins)
-    queries = _load_digital_sequences(proteins)
-
-    log.info("Loading UniProt database from %s", uniprot_db)
-    targets = _load_digital_sequences(uniprot_db)
-    log.info(
-        "Running phmmer (%d queries vs %d targets, %d CPUs)...",
-        len(queries), len(targets), num_cpu,
-    )
-    phmmer_res = run_phmmer_search(queries, targets, num_cpu, evalue_f)
-    del targets
-    gc.collect()
-
-    log.info("Loading Pfam HMMs from %s", pfam_db)
-    hmms = _load_hmm_db(pfam_db)
-    log.info(
-        "Running hmmscan (%d queries vs %d profiles, %d CPUs)...",
-        len(queries), len(hmms), num_cpu,
-    )
-    hmmscan_res = run_hmmscan_search(queries, hmms, num_cpu, evalue_f)
-    del hmms
-    gc.collect()
-
-    return phmmer_res, hmmscan_res
-
-
 # ---------------------------------------------------------------------------
 # FASTA annotation
 # ---------------------------------------------------------------------------
@@ -200,21 +159,29 @@ def run_homology_search(
 
 def annotate_fasta(
     proteins: Path,
-    phmmer_res: HitResults,
+    homology_res: HitResults,
     hmmscan_res: HitResults,
+    homology_db: str = "uniprot",
 ) -> Path:
     """Annotate protein FASTA headers with functional information.
 
-    Returns path to the annotated output file.
+    ``homology_db`` selects the source of the homology hits cached in
+    ``homology_res`` and only affects the wording of the marginal-hit
+    fallback label. Returns the path to the annotated output file.
     """
-    phmmer_fmt = _format_results(phmmer_res, marginal_label="hypothetical protein [{desc}]")
+    if homology_db == "kofam":
+        homology_fmt = _format_kofam_results(homology_res)
+    else:
+        homology_fmt = _format_results(
+            homology_res, marginal_label="hypothetical protein [{desc}]",
+        )
     hmmscan_fmt = _format_results(hmmscan_res, marginal_label="{desc} [marginal domain hit]")
 
     output_path = proteins.parent / f"{proteins.stem}.mod{proteins.suffix}"
 
     with open(output_path, "w") as f:
         for rec in SeqIO.parse(str(proteins), "fasta"):
-            parts = [phmmer_fmt.get(rec.id, "hypothetical protein"), f"length={len(rec.seq)}"]
+            parts = [homology_fmt.get(rec.id, "hypothetical protein"), f"length={len(rec.seq)}"]
             if rec.id in hmmscan_fmt:
                 parts.append(hmmscan_fmt[rec.id])
             rec.description = " ;; ".join(parts)
@@ -224,7 +191,7 @@ def annotate_fasta(
 
 
 def _format_results(results: HitResults, marginal_label: str = "{desc} [marginal hit]") -> dict[str, str]:
-    """Format search results with marginal hit annotations."""
+    """Format UniProt/Pfam-style search results with marginal hit annotations."""
     formatted = {}
     for query_id, hits in results.items():
         parts = []
@@ -238,6 +205,25 @@ def _format_results(results: HitResults, marginal_label: str = "{desc} [marginal
     return formatted
 
 
+def _format_kofam_results(results: HitResults) -> dict[str, str]:
+    """Format KOfam hits for FASTA headers.
+
+    Above-threshold hits are emitted verbatim; below-threshold hits are
+    tagged ``[marginal KO hit]`` so the user can tell at a glance whether
+    a record's KO assignment passed the per-KO cutoff.
+    """
+    formatted = {}
+    for query_id, hits in results.items():
+        parts = []
+        for k_number, info in hits.items():
+            desc = info["description"]
+            ev = info["evalue"]
+            tag = "" if info.get("above_threshold") else " [marginal KO hit]"
+            parts.append(f"{k_number}: {desc}{tag} ({ev:.2e})")
+        formatted[query_id] = " ;; ".join(parts)
+    return formatted
+
+
 # ---------------------------------------------------------------------------
 # GFF3 annotation
 # ---------------------------------------------------------------------------
@@ -245,9 +231,10 @@ def _format_results(results: HitResults, marginal_label: str = "{desc} [marginal
 
 def annotate_gff3(
     gff3_path: Path,
-    phmmer_res: HitResults,
+    homology_res: HitResults,
     hmmscan_res: HitResults,
     output_dir: Path | None = None,
+    homology_db: str = "uniprot",
 ) -> Path:
     """Annotate GFF3 features with functional information.
 
@@ -268,7 +255,7 @@ def annotate_gff3(
     from eukan.gff import create_gff_db
     gff3 = create_gff_db(gff3_path)
     gff3.update(
-        _add_func_info(gff3, phmmer_res, hmmscan_strict),
+        _add_func_info(gff3, homology_res, hmmscan_strict, homology_db),
         merge_strategy="replace",
     )
 
@@ -279,10 +266,56 @@ def annotate_gff3(
     return output_path
 
 
+def _apply_uniprot_hits(f: gffutils.Feature, hits: dict[str, HitInfo]) -> None:
+    """Set product/inference from UniProt phmmer hits (E-value gated)."""
+    f.attributes["product"] = [
+        v["description"] if v["evalue"] <= 1e-2 else "hypothetical protein"
+        for v in hits.values()
+    ]
+    f.attributes["inference"] = [
+        f"similar to AA sequence:UniProtKB:{k}"
+        for k, v in hits.items()
+        if v["evalue"] <= 1e-2
+    ]
+
+
+def _apply_kofam_hits(f: gffutils.Feature, hits: dict[str, HitInfo]) -> None:
+    """Set product/ec_number/Dbxref/inference from KOfam hits (per-KO threshold gated).
+
+    Only above-threshold KOs contribute to ``product``/``Dbxref``/
+    ``inference``. The top-scoring above-threshold hit drives ``product``;
+    all above-threshold hits emit ``Dbxref`` and ``inference``. EC numbers
+    de-duplicate across hits before emission so multi-functional KOs that
+    share an EC don't produce repeats.
+    """
+    above = [(k, info) for k, info in hits.items() if info.get("above_threshold")]
+    if not above:
+        f.attributes["product"] = ["hypothetical protein"]
+        return
+
+    above.sort(key=lambda kv: kv[1].get("score", 0.0), reverse=True)
+    _, top_info = above[0]
+    f.attributes["product"] = [top_info["description"] or "hypothetical protein"]
+
+    ec_numbers: list[str] = []
+    seen_ec: set[str] = set()
+    for _k, info in above:
+        for ec in info.get("ec_numbers", []) or []:
+            if ec not in seen_ec:
+                seen_ec.add(ec)
+                ec_numbers.append(ec)
+    if ec_numbers:
+        f.attributes["ec_number"] = ec_numbers
+
+    f.attributes["Dbxref"] = [f"KEGG:{k}" for k, _ in above]
+    f.attributes["inference"] = [f"protein motif:KOFAM:{k}" for k, _ in above]
+
+
 def _add_func_info(
     gff3: gffutils.FeatureDB,
-    phmmer_res: HitResults,
+    homology_res: HitResults,
     hmmscan_res: HitResults,
+    homology_db: str = "uniprot",
 ) -> Iterator[gffutils.Feature]:
     """Yield mRNA/CDS features annotated with functional information."""
     for f in gff3.features_of_type(["mRNA", "CDS"]):
@@ -292,17 +325,12 @@ def _add_func_info(
 
         lookup_id = feature_id if f.featuretype == "mRNA" else parent_id
 
-        if lookup_id and lookup_id in phmmer_res:
-            hits = phmmer_res[lookup_id]
-            f.attributes["product"] = [
-                v["description"] if v["evalue"] <= 1e-2 else "hypothetical protein"
-                for v in hits.values()
-            ]
-            f.attributes["inference"] = [
-                f"similar to AA sequence:UniProtKB:{k}"
-                for k, v in hits.items()
-                if v["evalue"] <= 1e-2
-            ]
+        if lookup_id and lookup_id in homology_res:
+            hits = homology_res[lookup_id]
+            if homology_db == "kofam":
+                _apply_kofam_hits(f, hits)
+            else:
+                _apply_uniprot_hits(f, hits)
         else:
             f.attributes["product"] = ["hypothetical protein"]
 

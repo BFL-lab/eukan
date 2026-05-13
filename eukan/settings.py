@@ -383,10 +383,21 @@ class FunctionalConfig(_StepRunSettings):
     )
 
     proteins: Path
+    homology_db: str = "uniprot"  # "uniprot" → phmmer vs SwissProt; "kofam" → hmmscan vs KOfam
     uniprot_db: Path = Path("databases/uniprot_sprot.faa")
+    kofam_db: Path = Path("databases/kofam_eukaryote.hmm")
+    ko_list_path: Path = Path("databases/ko_list.tsv")
     pfam_db: Path = Path("databases/Pfam-A.hmm")
     gff3_path: Path | None = None
     evalue: str = "1e-1"
+
+    @model_validator(mode="after")
+    def _validate_homology_db(self) -> FunctionalConfig:
+        if self.homology_db not in ("uniprot", "kofam"):
+            raise ValueError(
+                f"homology_db must be 'uniprot' or 'kofam', got {self.homology_db!r}"
+            )
+        return self
 
     settings_customise_sources = _pyproject_settings_sources("func-annot")
 

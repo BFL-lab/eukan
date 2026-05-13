@@ -238,28 +238,39 @@ Pass the masked genome to the next stage (`eukan annotate -g <stem>.masked.fasta
 
 ### `eukan func-annot`
 
-Add functional annotations (UniProt + Pfam) to proteins. When run after `eukan annotate` and `eukan db-fetch`, the predicted protein sequences, UniProt, and Pfam databases are discovered automatically.
+Add functional annotations to predicted proteins. When run after `eukan annotate` and `eukan db-fetch`, the predicted protein sequences and reference databases are discovered automatically.
+
+Two homology sources are supported (selected with `--homology-db`); Pfam is searched in both modes:
+
+- `--homology-db uniprot` (default) — phmmer against UniProt-SwissProt. Broad coverage of curated proteins; emits `product=<description>` and `inference=similar to AA sequence:UniProtKB:<accession>`.
+- `--homology-db kofam` — KEGG Orthology assignment. hmmscan against the eukaryote subset of the KOfam HMM database, with per-KO bit-score thresholds (`full` or `domain` score depending on the KO) loaded from `ko_list`. Only KOs whose hit score meets the curated cutoff drive product/EC assignment; below-threshold hits are recorded but not promoted. Emits `product=<KO definition>`, `ec_number=<EC>` (parsed out of `[EC:…]` tags in the definition), `Dbxref=KEGG:K<number>`, and `inference=protein motif:KOFAM:K<number>`.
+
+> KOfam mode is adapted from **KofamKOALA**: the database, per-KO thresholds, `eukaryote.hal` filter, and full-vs-domain adaptive scoring all come from the KofamKOALA paper. If you use `--homology-db kofam`, please cite: Aramaki T, Blanc-Mathieu R, Endo H, Ohkubo K, Kanehisa M, Goto S, Ogata H. KofamKOALA: KEGG ortholog assignment based on profile HMM and adaptive score threshold. *Bioinformatics*. 2020 Apr 1;36(7):2251–2252. doi:[10.1093/bioinformatics/btz859](https://doi.org/10.1093/bioinformatics/btz859).
 
 ```
 Usage: eukan func-annot [OPTIONS]
 
 Pipeline parameters:
-  -n, --numcpu INTEGER   Number of CPUs. [default: all]
-  -e, --evalue TEXT      E-value cutoff. [default: 1e-1]
+  -n, --numcpu INTEGER           Number of CPUs. [default: all]
+  --homology-db [uniprot|kofam]  Homology DB to run alongside Pfam.
+                                 [default: uniprot]
+  -e, --evalue TEXT              E-value cutoff. [default: 1e-1]
 
 Override options:
   -p, --proteins PATH    Amino acid sequences FASTA.
   --uniprot PATH         UniProt-SwissProt database FASTA.
+  --kofam PATH           KOfam pressed HMM database.
+  --ko-list PATH         KOfam ko_list TSV (per-KO thresholds + definitions).
   --pfam PATH            Pfam HMM database.
   --gff3 PATH            GFF3 file to annotate with functional info.
   -f, --force            Re-run steps even if outputs exist.
 ```
 
-Runs phmmer against UniProt and hmmscan against Pfam (via pyhmmer). Produces:
+Runs the chosen homology search plus hmmscan against Pfam (both via pyhmmer). Produces:
 - `input.mod.faa`: annotated FASTA with functional descriptions in headers.
-- `input.mod.gff3`: (if `--gff3` provided) GFF3 with `product` and `inference` attributes.
+- `input.mod.gff3`: (if `--gff3` provided) GFF3 with `product`/`inference` (and, for KOfam, `Dbxref`/`ec_number`) attributes.
 
-Hits with e-values between 1e-3 and the cutoff are reported as marginal.
+For UniProt mode, hits with e-values between 1e-3 and the cutoff are reported as marginal. For KOfam mode, hits below the per-KO bit-score threshold are tagged `[marginal KO hit]` in the FASTA description and do not contribute to the GFF3 `product`/`Dbxref`/`inference` lines — the KofamKOALA paper's evaluation showed that the adaptive thresholds yield substantially better precision/recall than a single global E-value cutoff.
 
 ### `eukan prep-submission`
 
@@ -345,21 +356,27 @@ Options:
 
 ### `eukan db-fetch`
 
-Download reference databases (UniProt, Pfam).
+Download reference databases. Pfam is always fetched; the homology DB to pair it with is chosen by `--homology-db`.
 
 ```
 Usage: eukan db-fetch [OPTIONS]
 
 Options:
-  -o, --output-dir PATH   Directory to download into. [default: databases]
-  -f, --force             Re-download even if databases are up to date.
-  -d, --database [uniprot|pfam]
-                          Specific database(s) to fetch. If omitted, fetch all.
+  -o, --output-dir PATH          Directory to download into. [default: databases]
+  --homology-db [uniprot|kofam]  Homology DB to fetch alongside Pfam.
+                                 [default: uniprot]
+  -f, --force                    Re-download even if databases are up to date.
+  -d, --database [uniprot|pfam|kofam|ko_list]
+                                 Specific database(s) to fetch. Overrides
+                                 --homology-db when given.
 ```
 
 Downloads and prepares:
-- `uniprot_sprot.faa`:  UniProt-SwissProt protein sequences (converted from XML).
-- `Pfam-A.hmm`:  Pfam HMM profiles (decompressed and pressed for hmmscan).
+- `Pfam-A.hmm` — Pfam HMM profiles (decompressed and pressed for hmmscan). Always fetched.
+- `uniprot_sprot.faa` — UniProt-SwissProt protein sequences (`--homology-db uniprot`, default).
+- `kofam_eukaryote.hmm` + `ko_list.tsv` — KOfam profiles and per-KO bit-score thresholds (`--homology-db kofam`). The fetcher downloads KofamKOALA's `profiles.tar.gz` and `ko_list.gz` from <https://www.genome.jp/ftp/db/kofam/>, filters profiles via the shipped `eukaryote.hal` list (~16k of ~27k KOs), concatenates them into a single HMM file, and presses it. `ko_list` is the per-KO metadata table used by `func-annot --homology-db kofam`; see the [`eukan func-annot`](#eukan-func-annot) section for the KofamKOALA citation.
+
+Each database has an entry in `databases/.manifest.json` (md5 + source URL + download date); re-running `eukan db-fetch` is a no-op when files match the manifest. Use `-d <name>` for a targeted refresh of a single file (e.g. `-d pfam` to refresh only Pfam without touching the homology DB).
 
 ### `eukan compare`
 
@@ -591,8 +608,6 @@ All three subcommands accept `-h` for detailed help.
 If you use eukan, please cite:
 
 > Sarrasin M, Burger G, Lang BF. Eukan: a fully automated nuclear genome annotation pipeline for less studied and divergent eukaryotes. *NAR Genomics and Bioinformatics*. 2026 Mar;8(1):lqag003. doi:[10.1093/nargab/lqag003](https://doi.org/10.1093/nargab/lqag003)
-
-A [CITATION.cff](CITATION.cff) file is included for automated citation tools.
 
 ## License
 
