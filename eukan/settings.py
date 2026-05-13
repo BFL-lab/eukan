@@ -442,9 +442,13 @@ class SubmissionConfig(_StepRunSettings):
         from eukan.infra.manifest import load_manifest
 
         if self.genome is None:
-            # Look for the annotation step's manifest first (it records
-            # the genome used for the run); fall back to our own work_dir.
-            for candidate_dir in (sibling_step_dir(self.work_dir, "annotate"), self.work_dir):
+            # Manifest lives at the run-dir root (manifest_dir); fall back
+            # to legacy per-step locations for older runs.
+            for candidate_dir in (
+                self.manifest_dir,
+                sibling_step_dir(self.work_dir, "annotate"),
+                self.work_dir,
+            ):
                 manifest = load_manifest(candidate_dir)
                 if manifest and manifest.genome:
                     discovered = Path(manifest.genome)
