@@ -121,6 +121,27 @@ class TestRunCmd:
         with pytest.raises(FileNotFoundError):
             run_cmd(["true"], cwd=bogus_cwd)
 
+    def test_non_utf8_stderr_does_not_crash_communicate(self, tmp_path):
+        """External tools emitting raw bytes on stderr must not crash run_cmd."""
+        # 0xf9 is invalid as the start of a UTF-8 sequence (the actual byte
+        # AUGUSTUS surfaced in the wild).
+        run_cmd(
+            ["python", "-c", "import sys; sys.stderr.buffer.write(b'pre \\xf9 post\\n')"],
+            cwd=tmp_path,
+        )
+
+    def test_non_utf8_stderr_on_failure_surfaces_replaced_text(self, tmp_path):
+        """A failing tool with non-UTF-8 stderr should still produce a usable snippet."""
+        with pytest.raises(ExternalToolError) as exc_info:
+            run_cmd(
+                ["python", "-c",
+                 "import sys; sys.stderr.buffer.write(b'BOOM \\xf9 BOOM\\n'); sys.exit(2)"],
+                cwd=tmp_path,
+            )
+        # The undecodable byte is replaced rather than crashing the runner.
+        assert exc_info.value.returncode == 2
+        assert "BOOM" in exc_info.value.stderr_snippet
+
 
 class TestRunPiped:
     def test_missing_first_command_raises_missing_tool_error(self, tmp_path):

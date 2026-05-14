@@ -157,6 +157,14 @@ def run_cmd(
     stderr_target: int = err_handle.fileno() if err_handle else subprocess.PIPE
 
     tool = _tool_name(cmd)
+    # External tools occasionally emit non-UTF-8 bytes on stderr (e.g.
+    # AUGUSTUS surfaces raw locale-encoded bytes from its C++ layer); a
+    # strict decoder would crash before we ever see the message. errors
+    # only applies in text mode — pass it only when text=True so binary
+    # mode (binary=True) keeps returning raw bytes.
+    text_kwargs: dict[str, object] = (
+        {"text": True, "errors": "replace"} if not binary else {"text": False}
+    )
     try:
         with _tracked_popen(
             cmd,
@@ -166,7 +174,7 @@ def run_cmd(
             stdin=stdin_target,
             stdout=stdout_target,
             stderr=stderr_target,
-            text=not binary,
+            **text_kwargs,
         ) as proc:
             try:
                 _, stderr = proc.communicate(timeout=timeout)
@@ -239,7 +247,7 @@ def run_piped(
             raise
         p1.wait()
 
-    output = stdout.decode()
+    output = stdout.decode(errors="replace")
 
     if out_file:
         with open(cwd / out_file, "w") as f:
@@ -278,6 +286,7 @@ def run_shell(
         cmd_str, cwd=cwd, env=_subprocess_env(),
         shell=True,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        errors="replace",
     ) as proc:
         stdout, stderr = proc.communicate()
 
