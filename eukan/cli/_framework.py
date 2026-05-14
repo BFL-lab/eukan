@@ -7,6 +7,7 @@ import only the helpers they need from here.
 
 from __future__ import annotations
 
+import errno
 import multiprocessing
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
@@ -160,6 +161,14 @@ class EukanGroup(click.Group):
         except Exception as exc:
             from pydantic import ValidationError as PydanticValidationError
 
+            disk_full = _format_disk_full(exc)
+            if disk_full is not None:
+                title, details = disk_full
+                click.secho(title, fg="red", err=True)
+                for line in details:
+                    click.echo(f"  {line}", err=True)
+                raise SystemExit(1) from exc
+
             if isinstance(exc, PydanticValidationError):
                 click.secho("Error: invalid configuration", fg="red", err=True)
                 for err in exc.errors():
@@ -179,6 +188,41 @@ class EukanGroup(click.Group):
                 click.echo(f"  Hint: {exc.hint}", err=True)
 
             raise SystemExit(1) from exc
+
+
+_DISK_FULL_PATTERNS = (
+    "no space left on device",
+    "disk quota exceeded",
+)
+
+
+def _format_disk_full(exc: BaseException) -> tuple[str, list[str]] | None:
+    """Detect ENOSPC conditions and return a CLI-formatted (title, details).
+
+    Triggers on a direct ``OSError(errno=ENOSPC)`` from Python file ops,
+    and on an ``ExternalToolError`` whose captured stderr indicates the
+    underlying tool ran out of disk space. Returns ``None`` when the
+    exception is unrelated to disk-full.
+    """
+    if isinstance(exc, OSError) and exc.errno in (errno.ENOSPC, errno.EDQUOT):
+        title = "Error: no space left on device"
+        details: list[str] = []
+        if exc.filename:
+            details.append(f"Path: {exc.filename}")
+        details.append("Free up disk space on the device hosting the work directory and re-run.")
+        return title, details
+
+    from eukan.exceptions import ExternalToolError
+    if isinstance(exc, ExternalToolError):
+        haystack = (exc.stderr_snippet or "").lower()
+        if any(p in haystack for p in _DISK_FULL_PATTERNS):
+            details = [f"Tool: {exc.tool} (exit {exc.returncode})"]
+            if exc.step:
+                details.append(f"Step: {exc.step}")
+            details.append("Free up disk space on the device hosting the work directory and re-run.")
+            return "Error: no space left on device", details
+
+    return None
 
 
 # ---------------------------------------------------------------------------
