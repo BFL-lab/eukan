@@ -108,10 +108,7 @@ def extract_ec_numbers(definition: str) -> tuple[str, list[str]]:
         return ""
 
     cleaned = _EC_BRACKET_RE.sub(collect, definition).strip()
-    # Deduplicate while preserving order
-    seen: set[str] = set()
-    unique = [ec for ec in ec_numbers if not (ec in seen or seen.add(ec))]
-    return cleaned, unique
+    return cleaned, list(dict.fromkeys(ec_numbers))
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +119,8 @@ def extract_ec_numbers(definition: str) -> tuple[str, list[str]]:
 def _load_digital_sequences(fasta_path: Path) -> list[pyhmmer.easel.DigitalSequence]:
     alphabet = pyhmmer.easel.Alphabet.amino()
     with pyhmmer.easel.SequenceFile(str(fasta_path), digital=True, alphabet=alphabet) as sf:
-        return list(sf)  # type: ignore[arg-type]
+        seqs: list[pyhmmer.easel.DigitalSequence] = list(sf)  # type: ignore[arg-type]
+    return seqs
 
 
 def _hit_score_and_evalue(
