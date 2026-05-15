@@ -1,6 +1,6 @@
 """Pre-emptive GFF3 cleanup before table2asn validation.
 
-Applies four transforms that resolve the bulk of NCBI submission errors
+Applies five transforms that resolve the bulk of NCBI submission errors
 seen on eukan output:
 
 1. Strip UniProt-format metadata (`` OS=...OX=...GN=...PE=...SV=...``)
@@ -10,6 +10,10 @@ seen on eukan output:
 3. Drop mRNAs that have no CDS children (PASA isoforms whose ORFs were
    not called). Drops the parent gene if no CDS-bearing siblings remain.
 4. Cap ``inference=`` to at most ``INFERENCE_CAP`` accessions per feature.
+5. Move ``Dbxref=KEGG:K…`` to ``Note=KEGG:K…``. KEGG is not in NCBI's
+   controlled db_xref list, so leaving it as Dbxref triggers
+   SEQ_FEAT.IllegalDbXref on every KOfam-annotated feature; relocating
+   to a free-text Note preserves the KO accession in the GenBank record.
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ class CleanupReport:
     inferences_capped: int = 0
     mrnas_dropped: int = 0
     genes_dropped: int = 0
+    kegg_dbxrefs_moved: int = 0
 
     def summary(self) -> str:
         """One-line human-readable summary for logs."""
@@ -50,7 +55,8 @@ class CleanupReport:
             f"fragments stripped: {self.fragments_stripped}; "
             f"dropped CDS-less mRNAs: {self.mrnas_dropped} "
             f"(and {self.genes_dropped} orphaned genes); "
-            f"capped inferences: {self.inferences_capped}"
+            f"capped inferences: {self.inferences_capped}; "
+            f"moved KEGG Dbxrefs to Note: {self.kegg_dbxrefs_moved}"
         )
 
 
@@ -104,8 +110,33 @@ def _identify_drop_set(db: gffutils.FeatureDB) -> tuple[set[str], set[str]]:
     return mrnas_drop, genes_drop
 
 
+def _move_kegg_dbxref_to_note(f: gffutils.Feature) -> int:
+    """Relocate ``Dbxref=KEGG:K…`` entries to ``Note=KEGG:K…``.
+
+    Returns the number of KEGG entries moved. Non-KEGG Dbxrefs are left
+    untouched; if all Dbxrefs were KEGG, the attribute is removed
+    entirely so empty ``Dbxref=`` doesn't survive into the output.
+    """
+    if "Dbxref" not in f.attributes:
+        return 0
+
+    kegg = [v for v in f.attributes["Dbxref"] if v.startswith("KEGG:")]
+    if not kegg:
+        return 0
+
+    other = [v for v in f.attributes["Dbxref"] if not v.startswith("KEGG:")]
+    if other:
+        f.attributes["Dbxref"] = other
+    else:
+        del f.attributes["Dbxref"]
+
+    existing = list(f.attributes.get("Note", []))
+    f.attributes["Note"] = existing + kegg
+    return len(kegg)
+
+
 def _clean_feature(f: gffutils.Feature, report: CleanupReport) -> None:
-    """Mutate ``f`` in place: clean product, cap inferences. Updates ``report``."""
+    """Mutate ``f`` in place: clean product, cap inferences, relocate KEGG. Updates ``report``."""
     if "product" in f.attributes:
         new_products: list[str] = []
         for prod in f.attributes["product"]:
@@ -122,6 +153,8 @@ def _clean_feature(f: gffutils.Feature, report: CleanupReport) -> None:
         if len(values) > INFERENCE_CAP:
             f.attributes["inference"] = values[:INFERENCE_CAP]
             report.inferences_capped += 1
+
+    report.kegg_dbxrefs_moved += _move_kegg_dbxref_to_note(f)
 
 
 def clean_gff3_for_submission(in_gff: Path, out_gff: Path) -> CleanupReport:

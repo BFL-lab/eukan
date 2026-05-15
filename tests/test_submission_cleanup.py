@@ -12,6 +12,7 @@ from eukan.submission.cleanup import (
     INFERENCE_CAP,
     _clean_product,
     _identify_drop_set,
+    _move_kegg_dbxref_to_note,
     clean_gff3_for_submission,
 )
 
@@ -116,16 +117,19 @@ class TestCleanGff3:
         gff = tmp_path / "in.gff3"
         gff.write_text(
             "##gff-version 3\n"
-            # Gene 1: kept (has CDS-bearing mRNA), product is UniProt-style
+            # Gene 1: kept (has CDS-bearing mRNA), product is UniProt-style,
+            # KOfam-style Dbxref+inference that should be relocated
             "chr1\teukan\tgene\t1\t1000\t.\t+\t.\tID=g1\n"
             "chr1\teukan\tmRNA\t1\t1000\t.\t+\t.\tID=m1;Parent=g1;"
             "product=Malic acid transport protein OS%3DSchizosaccharomyces "
             "pombe OX%3D4896 GN%3Dmae1 PE%3D1 SV%3D1;"
+            "Dbxref=KEGG:K00029,KEGG:K00030;"
             "inference=similar to AA sequence:UniProtKB:sp|A|B,"
             "protein motif:PFAM:X,protein motif:PFAM:Y,protein motif:PFAM:Z,"
             "protein motif:PFAM:W\n"
             "chr1\teukan\texon\t1\t1000\t.\t+\t.\tID=e1;Parent=m1\n"
-            "chr1\teukan\tCDS\t100\t900\t.\t+\t0\tID=c1;Parent=m1\n"
+            "chr1\teukan\tCDS\t100\t900\t.\t+\t0\tID=c1;Parent=m1;"
+            "Dbxref=KEGG:K00029,KEGG:K00030\n"
             # m1b: same gene, no CDS — should be dropped, gene survives
             "chr1\teukan\tmRNA\t1\t1000\t.\t+\t.\tID=m1b;Parent=g1\n"
             "chr1\teukan\texon\t1\t1000\t.\t+\t.\tID=e1b;Parent=m1b\n"
@@ -151,6 +155,8 @@ class TestCleanGff3:
         assert report.inferences_capped == 1
         assert report.mrnas_dropped == 2  # m1b and m2
         assert report.genes_dropped == 1  # g2
+        # 2 KEGG entries on mRNA m1 + 2 on CDS c1
+        assert report.kegg_dbxrefs_moved == 4
 
         text = out.read_text()
         # UniProt cruft gone
@@ -167,6 +173,10 @@ class TestCleanGff3:
         # Surviving features present
         assert "ID=g1" in text
         assert "ID=g3" in text
+        # KEGG entries relocated, not in any Dbxref anymore
+        assert "Dbxref=KEGG" not in text
+        assert "KEGG:K00029" in text
+        assert "KEGG:K00030" in text
 
     def test_inference_cap(self, messy_gff: Path, tmp_path: Path):
         out = tmp_path / "cleaned.gff3"
@@ -189,6 +199,59 @@ class TestCleanGff3:
 
 
 # ---------------------------------------------------------------------------
+# _move_kegg_dbxref_to_note
+# ---------------------------------------------------------------------------
+
+
+class TestMoveKeggDbxref:
+    def _feature(self, tmp_path: Path, attrs: str) -> tuple[object, object]:
+        gff = tmp_path / "f.gff3"
+        gff.write_text(
+            "##gff-version 3\n"
+            f"chr1\teukan\tmRNA\t1\t100\t.\t+\t.\tID=m1;{attrs}\n"
+        )
+        db = create_gff_db(gff)
+        return db, db["m1"]
+
+    def test_moves_kegg_only_dbxref_to_note(self, tmp_path: Path):
+        _, f = self._feature(tmp_path, "Dbxref=KEGG:K00029,KEGG:K00030")
+        moved = _move_kegg_dbxref_to_note(f)
+        assert moved == 2
+        assert "Dbxref" not in f.attributes
+        assert f.attributes["Note"] == ["KEGG:K00029", "KEGG:K00030"]
+
+    def test_preserves_non_kegg_dbxref(self, tmp_path: Path):
+        _, f = self._feature(
+            tmp_path, "Dbxref=KEGG:K00029,InterPro:IPR000001",
+        )
+        moved = _move_kegg_dbxref_to_note(f)
+        assert moved == 1
+        assert f.attributes["Dbxref"] == ["InterPro:IPR000001"]
+        assert f.attributes["Note"] == ["KEGG:K00029"]
+
+    def test_appends_to_existing_note(self, tmp_path: Path):
+        _, f = self._feature(
+            tmp_path, "Dbxref=KEGG:K00029;Note=existing comment",
+        )
+        moved = _move_kegg_dbxref_to_note(f)
+        assert moved == 1
+        assert f.attributes["Note"] == ["existing comment", "KEGG:K00029"]
+
+    def test_noop_without_kegg(self, tmp_path: Path):
+        _, f = self._feature(tmp_path, "Dbxref=InterPro:IPR000001")
+        moved = _move_kegg_dbxref_to_note(f)
+        assert moved == 0
+        assert f.attributes["Dbxref"] == ["InterPro:IPR000001"]
+        assert "Note" not in f.attributes
+
+    def test_noop_without_dbxref(self, tmp_path: Path):
+        _, f = self._feature(tmp_path, "product=foo")
+        moved = _move_kegg_dbxref_to_note(f)
+        assert moved == 0
+        assert "Note" not in f.attributes
+
+
+# ---------------------------------------------------------------------------
 # CleanupReport.summary
 # ---------------------------------------------------------------------------
 
@@ -198,10 +261,11 @@ def test_report_summary():
 
     r = CleanupReport(
         products_cleaned=10, fragments_stripped=2, inferences_capped=5,
-        mrnas_dropped=3, genes_dropped=1,
+        mrnas_dropped=3, genes_dropped=1, kegg_dbxrefs_moved=7,
     )
     s = r.summary()
     assert "10" in s and "products" in s
     assert "2" in s and "fragments" in s
     assert "5" in s and "inferences" in s
     assert "3" in s and "1" in s
+    assert "7" in s and "KEGG" in s
