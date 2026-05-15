@@ -292,4 +292,4 @@ class TestEcNumberThroughCleanup:
         clean_gff3_for_submission(annotated, cleaned)
         text = cleaned.read_text()
         assert "ec_number=3.2.1.92" in text
-        assert "Dbxref=KEGG:K28880" in text
+        assert "Note=KEGG:K28880" in text
