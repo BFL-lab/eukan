@@ -23,7 +23,7 @@ from eukan.infra.manifest import (
     step_key,
 )
 from eukan.infra.pipeline import run_orchestrated_step
-from eukan.infra.steps import step_dir, validate_or_raise
+from eukan.infra.steps import is_step_complete, step_dir
 from eukan.settings import PipelineConfig
 from eukan.validation import sanitize_genome_fasta, validate_fasta
 
@@ -165,15 +165,16 @@ def run_annotation_pipeline(
             manifest.steps.pop(step, None)
         save_manifest(config.manifest_dir, manifest)
     else:
-        # Validate manifest: check completed steps have valid output
+        # Nothing to do only if every step is already recorded AND the final
+        # consensus output is still intact (existence + non-empty + valid GFF).
+        # A missing/corrupt output makes is_step_complete return None, so we
+        # fall through to _execute_steps, which rebuilds it via the same
+        # per-step check. Any step not yet in the manifest is also pending.
         expected = _expected_steps(config)
-        validate_or_raise(manifest, expected, _STEP_TO_FLAG)
-
-        # Check if there's any work to do
         pending = [s for s in expected if s not in manifest.steps]
         if not pending:
-            final = config.work_dir / "final.gff3"
-            if final.exists():
+            final = is_step_complete(manifest, step_key(ANNOTATION, "consensus_models"))
+            if final is not None:
                 log.info("All steps complete. Use --run-* flags to re-run specific steps.")
                 return final
         save_manifest(config.manifest_dir, manifest)
@@ -205,12 +206,7 @@ _ANNOTATION_STEP_FLAGS: dict[str, str] = {
     "augustus":             "--run-augustus",
     "snap":                 "--run-snap",
     "codingquarry":         "--run-snap",
-    "evm_consensus_models": "--run-consensus",
-}
-
-# Manifest-key form of the same mapping, for validate_step_outputs.
-_STEP_TO_FLAG: dict[str, str] = {
-    step_key(ANNOTATION, name): flag for name, flag in _ANNOTATION_STEP_FLAGS.items()
+    "consensus_models": "--run-consensus",
 }
 
 
@@ -257,7 +253,7 @@ def _expected_steps(config: PipelineConfig) -> list[str]:
         steps.extend(["snap", "codingquarry"])
     else:
         steps.append("snap")
-    steps.append("evm_consensus_models")
+    steps.append("consensus_models")
     return [step_key(ANNOTATION, s) for s in steps]
 
 
@@ -269,22 +265,22 @@ def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
 
       - has_transcripts + is_fungus
             ORF || GeneMark, then spaln (intron-hinted), AUGUSTUS,
-            SNAP || CodingQuarry, EVM(spaln, augustus, snap, cq, trans)
+            SNAP || CodingQuarry, consensus(spaln, augustus, snap, cq, trans)
       - has_transcripts + not is_fungus
             ORF || GeneMark, spaln, AUGUSTUS, *no SNAP/CodingQuarry*,
-            EVM(spaln, augustus, trans)
+            consensus(spaln, augustus, trans)
       - no transcripts + (is_fungus | is_protist)
             GeneMark, spaln, AUGUSTUS, SNAP || CodingQuarry,
-            EVM(spaln, augustus, snap, cq)
+            consensus(spaln, augustus, snap, cq)
       - no transcripts + neither
-            GeneMark, spaln, AUGUSTUS, SNAP, EVM(spaln, augustus, snap, genemark)
+            GeneMark, spaln, AUGUSTUS, SNAP, consensus(spaln, augustus, snap, genemark)
     """
     ev: dict[str, Path] = {}
     ev = _phase_orf_and_genemark(config, manifest, ev)
     ev = _phase_protein_alignment(config, manifest, ev)
     ev = _phase_augustus(config, manifest, ev)
     ev = _phase_snap_codingquarry(config, manifest, ev)
-    return _phase_evm(config, manifest, ev)
+    return _phase_consensus(config, manifest, ev)
 
 
 def _phase_orf_and_genemark(
@@ -368,15 +364,28 @@ def _phase_snap_codingquarry(
     return ev
 
 
-def _phase_evm(
+def _consensus_scalars(config: PipelineConfig) -> list[str]:
+    """Config values that change combinr consensus output, folded into the consensus
+    step's resume fingerprint so a change re-runs it on resume (in addition to the
+    explicit ``--run-consensus``). ``combinr_stringent_overlap`` tunes the
+    ``--alt-splice`` isoform grouping; weights and the genetic code feed the consensus
+    engine directly."""
+    return [
+        f"weights={config.weights}",
+        f"genetic_code={config.genetic_code}",
+        f"combinr_stringent_overlap={config.combinr_stringent_overlap}",
+    ]
+
+
+def _phase_consensus(
     config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
 ) -> Path:
-    """Phase 5: EVM consensus. Argument order varies with which evidence ran."""
-    evm_args: list[Path] = [ev["spaln"], ev["augustus"]]
+    """Phase 5: combinr consensus. Argument order varies with which evidence ran."""
+    consensus_args: list[Path] = [ev["spaln"], ev["augustus"]]
     if "snap" in ev:
-        evm_args.append(ev["snap"])
+        consensus_args.append(ev["snap"])
     if "codingquarry" in ev:
-        evm_args.append(ev["codingquarry"])
+        consensus_args.append(ev["codingquarry"])
 
     transcripts: Path | None = None
     if config.has_transcripts:
@@ -384,12 +393,11 @@ def _phase_evm(
         transcripts = config.transcripts_gff
     elif "snap" in ev and not (config.is_fungus or config.is_protist):
         # Protein-only non-fungus/protist: stand GeneMark in as the
-        # transcript_alignments input EVM expects (there is no PASA
-        # output here). The file is staged under nr_transcripts.gff3
-        # in run_evm so EVM's perl scripts find it by name.
+        # transcript_alignments input the consensus engine expects.
         transcripts = ev["genemark"]
 
     return _run_step(
-        config, manifest, "evm_consensus_models", build_consensus_models,
-        *evm_args, transcripts=transcripts,
+        config, manifest, "consensus_models", build_consensus_models,
+        *consensus_args, transcripts=transcripts,
+        input_scalars=_consensus_scalars(config),
     )

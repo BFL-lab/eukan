@@ -7,8 +7,7 @@ minimal and isinstance-friendly::
 
     EukanError
     ├── ConfigurationError
-    │   ├── InvalidOptionError
-    │   └── StaleManifestError
+    │   └── InvalidOptionError
     ├── ValidationError
     │   ├── FastaValidationError
     │   └── GFFValidationError
@@ -52,28 +51,6 @@ class ConfigurationError(EukanError):
 
 class InvalidOptionError(ConfigurationError):
     """An option value is out of range or an incompatible combination was given."""
-
-
-class StaleManifestError(ConfigurationError):
-    """A previous run's manifest references outputs that are missing or invalid.
-
-    Raised when ``validate_step_outputs`` finds steps marked complete in
-    ``eukan-run.json`` whose output files have since been deleted or
-    corrupted. Each line of the message lists a specific step plus the
-    re-run flag the user should pass.
-    """
-
-    def __init__(self, errors: list[str]) -> None:
-        self.errors = list(errors)
-        message = "stale manifest entries:\n  " + "\n  ".join(self.errors)
-        super().__init__(
-            message,
-            hint="Re-run with the suggested --run-* flag, or pass --force "
-            "to re-run from scratch.",
-        )
-
-    def format_for_cli(self) -> tuple[str, list[str]]:
-        return "Error: stale manifest entries", list(self.errors)
 
 
 class ValidationError(EukanError):

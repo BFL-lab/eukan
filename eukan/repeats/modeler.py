@@ -128,4 +128,22 @@ def run_modeler(config: RepeatsConfig) -> Path:
             if candidate.exists():
                 families = candidate
                 break
+
+    if not families.exists():
+        # RepeatModeler can exit 0 yet emit no classified families library when
+        # RepeatClassifier's Dfam-derived libraries (RepeatMasker.lib /
+        # RepeatPeps.lib) are absent — classification dies but discovery still
+        # wrote an unclassified consensus. Fall back to it: it is a valid
+        # softmasking library; the missing classification only changes repeat
+        # *labels*, not which bases get masked.
+        partial = _salvage_partial_library(sdir)
+        if partial is not None:
+            log.warning(
+                "RepeatModeler emitted no classified families library "
+                "(RepeatClassifier needs Dfam libs); softmasking with the "
+                "unclassified consensus from %s.",
+                partial.relative_to(sdir),
+            )
+            shutil.copy2(partial, families)
+
     return families

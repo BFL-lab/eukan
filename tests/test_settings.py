@@ -171,11 +171,11 @@ class TestAssemblyConfig:
         assert config.memory_gb == 12
 
 
-class TestDefaultTrinityMemoryGb:
-    """Direct tests for ``_default_trinity_memory_gb`` against fixture meminfo."""
+class TestDefaultAssemblyMemoryGb:
+    """Direct tests for ``_default_assembly_memory_gb`` against fixture meminfo."""
 
     def test_uses_mem_available_at_60_percent(self, tmp_path):
-        from eukan.settings import _default_trinity_memory_gb
+        from eukan.settings import _default_assembly_memory_gb
 
         # 32 GiB total, 16 GiB available -> 0.6 * 16 = 9.6 -> 9
         meminfo = tmp_path / "meminfo"
@@ -184,10 +184,10 @@ class TestDefaultTrinityMemoryGb:
             "MemFree:         8388608 kB\n"
             "MemAvailable:   16777216 kB\n"
         )
-        assert _default_trinity_memory_gb(str(meminfo)) == 9
+        assert _default_assembly_memory_gb(str(meminfo)) == 9
 
     def test_falls_back_to_half_total_without_mem_available(self, tmp_path):
-        from eukan.settings import _default_trinity_memory_gb
+        from eukan.settings import _default_assembly_memory_gb
 
         # No MemAvailable line. 32 GiB total -> 16 GiB.
         meminfo = tmp_path / "meminfo"
@@ -195,10 +195,10 @@ class TestDefaultTrinityMemoryGb:
             "MemTotal:       33554432 kB\n"
             "MemFree:         8388608 kB\n"
         )
-        assert _default_trinity_memory_gb(str(meminfo)) == 16
+        assert _default_assembly_memory_gb(str(meminfo)) == 16
 
     def test_floor_at_4_gib_on_low_memory(self, tmp_path):
-        from eukan.settings import _default_trinity_memory_gb
+        from eukan.settings import _default_assembly_memory_gb
 
         # 4 GiB total, 1 GiB available -> 0.6 * 1 = 0.6 -> floored to 4.
         meminfo = tmp_path / "meminfo"
@@ -206,19 +206,19 @@ class TestDefaultTrinityMemoryGb:
             "MemTotal:        4194304 kB\n"
             "MemAvailable:    1048576 kB\n"
         )
-        assert _default_trinity_memory_gb(str(meminfo)) == 4
+        assert _default_assembly_memory_gb(str(meminfo)) == 4
 
     def test_returns_4_when_meminfo_missing(self, tmp_path):
-        from eukan.settings import _default_trinity_memory_gb
+        from eukan.settings import _default_assembly_memory_gb
 
-        assert _default_trinity_memory_gb(str(tmp_path / "no-such-file")) == 4
+        assert _default_assembly_memory_gb(str(tmp_path / "no-such-file")) == 4
 
     def test_returns_4_on_malformed_meminfo(self, tmp_path):
-        from eukan.settings import _default_trinity_memory_gb
+        from eukan.settings import _default_assembly_memory_gb
 
         meminfo = tmp_path / "meminfo"
         meminfo.write_text("MemAvailable:   not-a-number kB\n")
-        assert _default_trinity_memory_gb(str(meminfo)) == 4
+        assert _default_assembly_memory_gb(str(meminfo)) == 4
 
 
 class TestFunctionalConfig:

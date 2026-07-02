@@ -7,7 +7,7 @@ seen on eukan output:
    from ``product=`` values. Without this, table2asn rewrites every
    product to "hypothetical protein", losing all functional annotation.
 2. Strip ``(Fragment)`` from product names (NCBI SUSPECT_PHRASES fatal).
-3. Drop mRNAs that have no CDS children (PASA isoforms whose ORFs were
+3. Drop mRNAs that have no CDS children (transcript isoforms whose ORFs were
    not called). Drops the parent gene if no CDS-bearing siblings remain.
 4. Cap ``inference=`` to at most ``INFERENCE_CAP`` accessions per feature.
 5. Move ``Dbxref=KEGG:K…`` to ``Note=KEGG:K…``. KEGG is not in NCBI's

@@ -6,6 +6,12 @@ gmes_linux_64*.tar.gz
 ./databases
 table2asn
 *.sbt
+*fq.gz
+*fastq
+*fastq.gz
+*contig_6362*
+transcripts.fasta
+tmp/
 
 # Test data (downloaded from NCBI, large files)
 tests/data/genome.fasta*

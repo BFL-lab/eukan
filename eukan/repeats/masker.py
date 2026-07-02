@@ -64,6 +64,12 @@ def run_masker(config: RepeatsConfig, families: Path) -> tuple[Path, Path]:
             staged_genome.name,
         ],
         cwd=sdir,
+        # We mask against the de novo *families* library, so FamDB/Dfam is not
+        # needed. The bioconda package nonetheless defaults FAMDB_DIR to a
+        # data-less famdb install, making RepeatMasker abort at startup running
+        # `famdb.py info` for its version banner. Forcing FAMDB_DIR empty (a
+        # documented RepeatMaskerConfig env override) skips that probe entirely.
+        extra_env={"FAMDB_DIR": ""},
     )
 
     masked_src = sdir / f"{config.genome.name}.masked"

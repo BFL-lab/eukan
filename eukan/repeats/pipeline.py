@@ -18,7 +18,7 @@ from eukan.infra.pipeline import (
 from eukan.infra.pipeline import (
     force_steps_from_run_flags as _force_steps_from_run_flags,
 )
-from eukan.infra.steps import is_step_complete, validate_or_raise
+from eukan.infra.steps import is_step_complete
 from eukan.repeats.masker import run_masker
 from eukan.repeats.modeler import run_modeler
 from eukan.settings import RepeatsConfig
@@ -77,14 +77,13 @@ def run_repeats(
     """
     manifest = get_or_create_manifest(config.manifest_dir, config)
     forced = set(force_steps or ())
-    flag_map = {step_key(REPEATS, s.name): s.flag for s in _STEPS if s.flag}
 
     if forced:
         active = [s.name for s in _STEPS if step_key(REPEATS, s.name) in forced]
     else:
+        # Missing/corrupt outputs of completed steps are detected per-step
+        # below by is_step_complete / run_orchestrated_step, which rebuild them.
         active = [s.name for s in _STEPS]
-        expected = [step_key(REPEATS, n) for n in active if n != "modeler" or not config.lib]
-        validate_or_raise(manifest, expected, flag_map)
 
     save_manifest(config.manifest_dir, manifest)
 

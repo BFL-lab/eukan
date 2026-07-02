@@ -1,15 +1,18 @@
 # Auto-generated from tools.toml — do not edit manually.
 # Regenerate with: python scripts/generate-env.py
 #
+# Create with STRICT channel priority (bioconda requirement — without it the
+# solver mixes channel builds and yields inconsistent deps, e.g. r-stringi vs icu):
+#   CONDA_CHANNEL_PRIORITY=strict conda env create -f environment.yml
+#
 # Tools requiring manual installation:
 #   - genemark: Requires a license from https://topaz.gatech.edu/GeneMark/license_download.cgi
 #   - fitild: Build from source: git clone https://github.com/ogotoh/fitild && cd fitild/src && ./configure && make
+#   - combinr: Download the combinr v0.1.1 release binary from https://github.com/BFL-lab/combinr/releases and put it on PATH (or run scripts/install-extras.sh, or set EUKAN_ASSEMBLE_COMBINR_PATH).
 #
 # Tools bundled with parent packages (no separate install):
-#   - makdbs: bundled with parent package
-#   - cdbfasta: bundled with parent package
-#   - seqclean: bundled with parent package
 #   - jellyfish: bundled with parent package
+#   - makdbs: bundled with parent package
 #   - BuildDatabase: bundled with parent package
 #   - gff2gbSmallDNA.pl: bundled with parent package
 #   - optimize_augustus.pl: bundled with parent package
@@ -27,16 +30,11 @@
 #   - sortgrcd: bundled with parent package
 #   - makblk.pl: bundled with parent package
 #   - gthconsensus: bundled with parent package
-#   - write_EVM_commands.pl: bundled with parent package
-#   - recombine_EVM_partial_outputs.pl: bundled with parent package
-#   - convert_EVM_outputs_to_GFF3.pl: bundled with parent package
-#   - Load_Current_Gene_Annotations.dbi: bundled with parent package
-#   - build_comprehensive_transcriptome.dbi: bundled with parent package
 
 name: eukan
 channels:
-  - bioconda
   - conda-forge
+  - bioconda
   - defaults
 
 dependencies:
@@ -47,31 +45,27 @@ dependencies:
   - augustus>=3.5
   - codingquarry>=2.0
   - diamond
-  - evidencemodeler>=2.1
-  - fasta3
   - genomethreader>=1.7
-  - gmap>=2024
-  - pasa>=2.5
   - repeatmasker>=4.1
   - repeatmodeler>=2.0
   - rmblast
   - samtools>=1.20
+  - segemehl>=0.3.4
   - snap
+  - spades>=4.3
   - spaln>=3.0
   - star>=2.7
+  - stringtie>=3.0
   - table2asn>=1.28
   - trf>=4.09
   - trinity>=2.15
-  - ucsc-blat
 
   # Build dependencies (needed to compile fitild from source)
   - gsl
   - liblbfgs
 
-  # Perl (needed by AUGUSTUS, PASA, EVM, GeneMark helper scripts)
+  # Perl (needed by AUGUSTUS and GeneMark helper scripts)
   - perl
-  - perl-bioperl
-  - perl-dbd-sqlite
   - perl-yaml
   - perl-hash-merge
   - perl-mce

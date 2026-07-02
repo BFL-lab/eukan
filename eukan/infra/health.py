@@ -11,6 +11,7 @@ import os
 import shutil
 import signal
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,12 +26,17 @@ from eukan.infra.tools_registry import Tool, load_tools
 # corrupted binary, missing kernel feature). See _crash_signal().
 _FATAL_SIGNALS = {"SIGILL", "SIGSEGV", "SIGBUS", "SIGABRT", "SIGFPE"}
 
-# Substrings that bash/zsh emit when a child of a wrapper script is killed
-# by a fatal signal. The wrapper's own exit code is 128+N (signal-encoded),
-# but its stderr also carries these human-readable strings. Treat them as
-# broken so wrappers like /bin/STAR (which pick a SIMD variant and exec it)
-# get caught even when the wrapper itself exits with the encoded code.
-_SHELL_CRASH_STRINGS = ("Illegal instruction", "Segmentation fault", "Bus error")
+# Substrings that bash/zsh emit when a child of a wrapper script is killed by
+# a fatal signal, mapped to the signal name. The wrapper's own exit code is
+# 128+N (signal-encoded, handled by _crash_signal), but its stderr also carries
+# these human-readable strings — so wrappers like /bin/STAR (which pick a SIMD
+# variant and exec it) get caught even when the wrapper exits with the encoded
+# code.
+_CRASH_STRING_TO_SIGNAL = {
+    "Illegal instruction": "SIGILL",
+    "Segmentation fault": "SIGSEGV",
+    "Bus error": "SIGBUS",
+}
 
 
 def _crash_signal(returncode: int) -> str | None:
@@ -105,13 +111,9 @@ def check_tool(tool: Tool) -> CheckResult:
         # nested call).
         crash_sig = _crash_signal(result.returncode)
         if crash_sig is None:
-            for s in _SHELL_CRASH_STRINGS:
-                if s in output:
-                    crash_sig = {
-                        "Illegal instruction": "SIGILL",
-                        "Segmentation fault": "SIGSEGV",
-                        "Bus error": "SIGBUS",
-                    }[s]
+            for crash_str, sig_name in _CRASH_STRING_TO_SIGNAL.items():
+                if crash_str in output:
+                    crash_sig = sig_name
                     break
 
         # Many bioinformatics tools exit non-zero on --help or with no args
@@ -226,11 +228,21 @@ class PythonCheckResult:
     detail: str
 
 
-def check_python_deps() -> list[PythonCheckResult]:
-    """Verify that Python dependencies are importable and functional."""
-    results: list[PythonCheckResult] = []
+def _check_python_dep(name: str, probe: Callable[[], str]) -> PythonCheckResult:
+    """Run one dependency probe, turning any exception into a failed result.
 
-    # Module imports
+    ``probe`` performs the functional check and returns the success detail
+    string (or raises). This keeps each check to its happy-path body plus a
+    returned detail, with the try/except handled once here.
+    """
+    try:
+        return PythonCheckResult(name, True, probe())
+    except Exception as e:
+        return PythonCheckResult(name, False, str(e))
+
+
+def _check_module_imports() -> PythonCheckResult:
+    """Import every first-party module, collecting any failures."""
     modules = [
         "eukan", "eukan.cli", "eukan.settings", "eukan.infra.health",
         "eukan.infra.runner", "eukan.infra.manifest", "eukan.infra.steps", "eukan.infra.pipeline", "eukan.infra.logging", "eukan.infra.environ",
@@ -243,101 +255,93 @@ def check_python_deps() -> list[PythonCheckResult]:
         "eukan.compare", "eukan.compare.engine", "eukan.compare.format",
         "eukan.compare.models",
     ]
-    import_failures = []
+    failures = []
     for mod in modules:
         try:
             __import__(mod)
         except Exception as e:
-            import_failures.append(f"{mod}: {e}")
-    if import_failures:
-        results.append(PythonCheckResult(
-            "module imports", False, "; ".join(import_failures)
-        ))
-    else:
-        results.append(PythonCheckResult(
-            "module imports", True, f"all {len(modules)} modules OK"
-        ))
+            failures.append(f"{mod}: {e}")
+    if failures:
+        return PythonCheckResult("module imports", False, "; ".join(failures))
+    return PythonCheckResult("module imports", True, f"all {len(modules)} modules OK")
 
-    # pyhmmer functional check
-    try:
-        import pyhmmer.easel
-        import pyhmmer.hmmer
-        alpha = pyhmmer.easel.Alphabet.amino()
-        seq = pyhmmer.easel.TextSequence(
-            name=b"test", sequence="MKFLILLFNILCLFPVLAADNH"
-        ).digitize(alpha)
-        hits = list(pyhmmer.hmmer.phmmer([seq], [seq], cpus=1))  # type: ignore[list-item]
-        assert len(hits) == 1 and len(hits[0]) >= 1
-        results.append(PythonCheckResult("pyhmmer", True, "phmmer search works"))
-    except Exception as e:
-        results.append(PythonCheckResult("pyhmmer", False, str(e)))
 
-    # gffutils functional check
-    try:
-        import gffutils
-        gff = "chr1\ttest\tgene\t100\t500\t.\t+\t.\tID=g1"
-        db = gffutils.create_db(gff, ":memory:", from_string=True)
-        genes = list(db.features_of_type("gene"))
-        assert len(genes) == 1
-        results.append(PythonCheckResult("gffutils", True, "in-memory DB works"))
-    except Exception as e:
-        results.append(PythonCheckResult("gffutils", False, str(e)))
+def _probe_pyhmmer() -> str:
+    import pyhmmer.easel
+    import pyhmmer.hmmer
+    alpha = pyhmmer.easel.Alphabet.amino()
+    seq = pyhmmer.easel.TextSequence(
+        name=b"test", sequence="MKFLILLFNILCLFPVLAADNH"
+    ).digitize(alpha)
+    hits = list(pyhmmer.hmmer.phmmer([seq], [seq], cpus=1))  # type: ignore[list-item]
+    assert len(hits) == 1 and len(hits[0]) >= 1
+    return "phmmer search works"
 
-    # BioPython functional check
-    try:
-        import io
 
-        from Bio import SeqIO
-        from Bio.Seq import Seq
-        from Bio.SeqRecord import SeqRecord
-        record = SeqRecord(Seq("ATGAAATAA"), id="test")
-        buf = io.StringIO()
-        SeqIO.write(record, buf, "fasta")
-        buf.seek(0)
-        parsed = list(SeqIO.parse(buf, "fasta"))
-        assert len(parsed) == 1
-        results.append(PythonCheckResult("biopython", True, "sequence I/O works"))
-    except Exception as e:
-        results.append(PythonCheckResult("biopython", False, str(e)))
+def _probe_gffutils() -> str:
+    import gffutils
+    gff = "chr1\ttest\tgene\t100\t500\t.\t+\t.\tID=g1"
+    db = gffutils.create_db(gff, ":memory:", from_string=True)
+    assert len(list(db.features_of_type("gene"))) == 1
+    return "in-memory DB works"
 
-    # pydantic-settings functional check
-    try:
-        import tempfile
 
-        from eukan.settings import PipelineConfig
-        with tempfile.NamedTemporaryFile(suffix=".fa") as f:
-            config = PipelineConfig(genome=Path(f.name), proteins=[Path(f.name)])
-            assert config.num_cpu >= 1
-        results.append(PythonCheckResult("pydantic-settings", True, "config loads OK"))
-    except Exception as e:
-        results.append(PythonCheckResult("pydantic-settings", False, str(e)))
+def _probe_biopython() -> str:
+    import io
 
-    # scipy functional check (used by `eukan compare` for inter-prediction stats)
-    try:
-        from scipy.stats import (
-            chi2_contingency,
-            false_discovery_control,
-            ks_2samp,
-        )
-        d, _ = ks_2samp([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
-        assert 0.0 <= d <= 1.0
-        chi2_res = chi2_contingency([[10, 20], [30, 40]])
-        assert int(chi2_res.dof) == 1
-        adj = false_discovery_control([0.01, 0.5], method="bh")
-        assert len(adj) == 2
-        results.append(PythonCheckResult("scipy", True, "ks_2samp/chi2/BH work"))
-    except Exception as e:
-        results.append(PythonCheckResult("scipy", False, str(e)))
+    from Bio import SeqIO
+    from Bio.Seq import Seq
+    from Bio.SeqRecord import SeqRecord
+    record = SeqRecord(Seq("ATGAAATAA"), id="test")
+    buf = io.StringIO()
+    SeqIO.write(record, buf, "fasta")
+    buf.seek(0)
+    assert len(list(SeqIO.parse(buf, "fasta"))) == 1
+    return "sequence I/O works"
 
-    # Tool registry
-    try:
-        tools = load_tools()
-        assert len(tools) > 10
-        results.append(PythonCheckResult("tool registry", True, f"{len(tools)} tools loaded from tools.toml"))
-    except Exception as e:
-        results.append(PythonCheckResult("tool registry", False, str(e)))
 
-    return results
+def _probe_pydantic_settings() -> str:
+    import tempfile
+
+    from eukan.settings import PipelineConfig
+    with tempfile.NamedTemporaryFile(suffix=".fa") as f:
+        config = PipelineConfig(genome=Path(f.name), proteins=[Path(f.name)])
+        assert config.num_cpu >= 1
+    return "config loads OK"
+
+
+def _probe_scipy() -> str:
+    from scipy.stats import (
+        chi2_contingency,
+        false_discovery_control,
+        ks_2samp,
+    )
+    d, _ = ks_2samp([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
+    assert 0.0 <= d <= 1.0
+    chi2_res = chi2_contingency([[10, 20], [30, 40]])
+    assert int(chi2_res.dof) == 1
+    adj = false_discovery_control([0.01, 0.5], method="bh")
+    assert len(adj) == 2
+    return "ks_2samp/chi2/BH work"
+
+
+def _probe_tool_registry() -> str:
+    tools = load_tools()
+    assert len(tools) > 10
+    return f"{len(tools)} tools loaded from tools.toml"
+
+
+def check_python_deps() -> list[PythonCheckResult]:
+    """Verify that Python dependencies are importable and functional."""
+    return [
+        _check_module_imports(),
+        _check_python_dep("pyhmmer", _probe_pyhmmer),
+        _check_python_dep("gffutils", _probe_gffutils),
+        _check_python_dep("biopython", _probe_biopython),
+        _check_python_dep("pydantic-settings", _probe_pydantic_settings),
+        _check_python_dep("scipy", _probe_scipy),
+        _check_python_dep("tool registry", _probe_tool_registry),
+    ]
 
 
 # ---------------------------------------------------------------------------

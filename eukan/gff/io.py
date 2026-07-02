@@ -18,7 +18,7 @@ from eukan.gff import create_gff_db
 from eukan.infra.genome import ContigIndex
 
 
-def count_gff3_features(gff3_path: Path, feature_type: str = "gene") -> int:
+def count_gff3_features(gff3_path: str | Path, feature_type: str = "gene") -> int:
     """Count features of a given type in a GFF3 file by scanning column 3.
 
     Fast line-based parsing — does not load the file into a database.

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 import pytest
 
 from eukan.exceptions import ExternalToolError, MissingToolError
+from eukan.infra import runner
 from eukan.infra.runner import (
     _RUNNING,
     _track,
@@ -143,6 +145,33 @@ class TestRunCmd:
         assert "BOOM" in exc_info.value.stderr_snippet
 
 
+class TestRunCmdResourceCleanup:
+    """Redirect file handles must not leak if setup raises before Popen."""
+
+    @staticmethod
+    def _fd_count() -> int:
+        return len(os.listdir(f"/proc/{os.getpid()}/fd"))
+
+    @pytest.mark.skipif(
+        not os.path.isdir(f"/proc/{os.getpid()}/fd"),
+        reason="needs /proc fd listing",
+    )
+    def test_setup_failure_does_not_leak_redirect_handles(self, tmp_path, monkeypatch):
+        """A raise between opening the out/err files and starting the child
+        must still close them. Pre-ExitStack this leaked 2 fds per call."""
+        def boom(_cmd):
+            raise RuntimeError("tool-name boom")
+
+        monkeypatch.setattr(runner, "_tool_name", boom)
+
+        baseline = self._fd_count()
+        for _ in range(40):
+            with pytest.raises(RuntimeError, match="tool-name boom"):
+                run_cmd(["true"], cwd=tmp_path, out_file="o.txt", err_file="e.txt")
+        # No monotonic growth: handles were closed each time.
+        assert self._fd_count() <= baseline + 1
+
+
 class TestRunPiped:
     def test_missing_first_command_raises_missing_tool_error(self, tmp_path):
         with pytest.raises(MissingToolError) as exc_info:
@@ -153,3 +182,39 @@ class TestRunPiped:
         with pytest.raises(MissingToolError) as exc_info:
             run_piped(["true"], ["definitely-not-a-real-binary-xyz"], cwd=tmp_path)
         assert exc_info.value.tool == "definitely-not-a-real-binary-xyz"
+
+    def test_producer_failure_surfaces_even_when_consumer_succeeds(self, tmp_path):
+        # cat drains the input and exits 0, but the producer exits non-zero —
+        # this must NOT be silently swallowed (the segemehl-OOM-masking bug).
+        with pytest.raises(ExternalToolError) as exc_info:
+            run_piped(["bash", "-c", "echo hi; exit 7"], ["cat"], cwd=tmp_path)
+        assert exc_info.value.returncode == 7
+        assert exc_info.value.tool == "bash"
+
+    def test_consumer_failure_reports_producer_exit(self, tmp_path):
+        # Consumer fails on an empty stream; the producer's non-zero exit is
+        # folded into the error message so the real cause is visible.
+        with pytest.raises(ExternalToolError) as exc_info:
+            run_piped(
+                ["bash", "-c", "exit 9"],
+                ["bash", "-c", "head -c1 >/dev/null; exit 1"],
+                cwd=tmp_path,
+            )
+        assert "exited 9" in exc_info.value.stderr_snippet
+
+    def test_chatty_producer_stderr_does_not_deadlock(self, tmp_path):
+        # >64 KB on the producer's stderr would deadlock an unread PIPE; the
+        # temp-file drain must let the pipeline complete normally.
+        out = run_piped(
+            ["python3", "-c", "import sys; sys.stderr.write('X' * 200000); print('data')"],
+            ["cat"],
+            cwd=tmp_path,
+        )
+        assert out.strip() == "data"
+
+    def test_producer_sigpipe_is_not_an_error(self, tmp_path):
+        # `yes` produces forever; the consumer reads one byte and exits 0, so
+        # the producer dies of SIGPIPE. That early-close is legitimate, not a
+        # failure, and must not raise.
+        out = run_piped(["yes"], ["head", "-c", "1"], cwd=tmp_path)
+        assert out == "y"

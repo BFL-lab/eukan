@@ -11,6 +11,7 @@ Builds tiny in-memory BAMs + small FASTA fixtures to exercise:
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pysam
@@ -328,6 +329,32 @@ def test_diagnose_bam_trans_splicing_signature(
     assert soft.cluster_to_loci["CCCCCCCCCCCC"] == 1
     # No N ops → no introns
     assert intron.n_introns_total == 0
+
+
+def test_diagnose_bam_tallies_polya_without_perturbing_sl_verdict(tmp_path, synthetic_genome):
+    # Reads whose only soft-clip is a poly-A 3' tail: counted in report.polya, but
+    # poly-A is low-complexity so it must NOT register as a trans-splicing (SL) call.
+    contigs = [("chr1", 1000)]
+    reads = [
+        dict(
+            query_name=f"r{i}",
+            query_sequence="ACGTACGTAC" + "A" * 20,  # 10 M aligned + 20S poly-A tail
+            flag=0,
+            reference_id=0,
+            reference_start=100 + i * 50,
+            mapping_quality=60,
+            cigartuples=[(0, 10), (4, 20)],
+        )
+        for i in range(5)
+    ]
+    bam = _write_bam(tmp_path / "polya.bam", contigs, reads)
+    report = diagnose_bam(bam, synthetic_genome, min_clip_len=8, min_mapq=20)
+
+    assert report.polya.n_polya == 5
+    assert report.polya.n_polyt == 0
+    assert report.polya.n_clips_examined == 5
+    verdict = compute_verdict(report)
+    assert verdict.trans_splicing.call == "ABSENT"  # poly-A is not an SL signal
 
 
 def test_diagnose_bam_filters_low_mapq_and_secondary(tmp_path, synthetic_genome):
@@ -940,3 +967,59 @@ def test_split_tolerance_per_locus_tolerant_cross_locus_strict(
     assert soft.n_clusters == 3
     assert soft.cluster_to_loci["TTTTGGGGGGGG"] == 1
     assert soft.cluster_to_loci["TTTTGGGGGGGT"] == 2  # locus A's H=1 variant + locus B
+
+
+# --- adapter WARNING in the soft-clip analysis -----------------------------
+
+
+def test_log_trans_splicing_verdict_flags_adapter(caplog):
+    """A dominant soft-clip cluster that is Illumina adapter read-through is
+    reported as adapter contamination, not as a spliced leader."""
+    from eukan.assembly.align_hints import _log_trans_splicing_verdict
+    report = _make_report(
+        top_clusters=[("AGATCGGAAGAG", 2000, 20_000)],
+        canonical_pct=99.0,
+        cluster_consensus={"AGATCGGAAGAG": "AGATCGGAAGAGCACACGTCTG"},
+    )
+    verdict = compute_verdict(report)
+    assert verdict.trans_splicing.call == "STRONG"  # adapter looks like trans-splicing
+    with caplog.at_level(logging.WARNING):
+        _log_trans_splicing_verdict(verdict.trans_splicing)
+    text = caplog.text.lower()
+    assert "adapter" in text
+    assert "spliced leader" in text
+    # The misleading "trans-splicing STRONG" line must not be emitted on its own.
+    assert "top motif" not in text
+
+
+def test_log_trans_splicing_verdict_flags_adapter_even_when_absent(caplog):
+    """Adapter is surfaced even when its support is below the trans-splicing
+    thresholds (call ABSENT)."""
+    from eukan.assembly.align_hints import _log_trans_splicing_verdict
+    report = _make_report(
+        top_clusters=[("AGATCGGAAGAG", 20, 500)],  # below MODERATE
+        canonical_pct=99.0,
+        cluster_consensus={"AGATCGGAAGAG": "AGATCGGAAGAGCACACGTCTG"},
+    )
+    verdict = compute_verdict(report)
+    assert verdict.trans_splicing.call == "ABSENT"
+    with caplog.at_level(logging.WARNING):
+        _log_trans_splicing_verdict(verdict.trans_splicing)
+    assert "adapter" in caplog.text.lower()
+
+
+def test_log_trans_splicing_verdict_genuine_sl_not_flagged(caplog):
+    """A genuine (non-adapter) spliced-leader signal logs the trans-splicing
+    warning and says nothing about adapters."""
+    from eukan.assembly.align_hints import _log_trans_splicing_verdict
+    report = _make_report(
+        top_clusters=[("ATCGATCGATCG", 2000, 20_000)],
+        canonical_pct=99.0,
+        cluster_consensus={"ATCGATCGATCG": "GGGGGGATCGATCGATCGATCG"},
+    )
+    verdict = compute_verdict(report)
+    with caplog.at_level(logging.WARNING):
+        _log_trans_splicing_verdict(verdict.trans_splicing)
+    text = caplog.text.lower()
+    assert "adapter" not in text
+    assert "trans-splicing signal strong" in text

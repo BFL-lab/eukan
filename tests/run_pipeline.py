@@ -9,8 +9,8 @@ Usage:
 Full pipeline order:
     1. Database fetch (UniProt or KOfam, plus Pfam — see --homology-db)
     2. Repeat masking (RepeatModeler + RepeatMasker)
-    3. Transcriptome assembly (STAR + Trinity + PASA)
-    4. Genome annotation (GeneMark + spaln + AUGUSTUS + SNAP + EVM)
+    3. Transcriptome assembly (STAR + Trinity de novo/genome-guided + combinr)
+    4. Genome annotation (GeneMark + spaln + AUGUSTUS + SNAP + combinr)
     5. Functional annotation (homology + Pfam hmmscan on predicted proteins)
     6. NCBI submission prep (table2asn validation + .sqn)
 
@@ -52,7 +52,10 @@ def _run_eukan(args: list[str], cwd: Path, label: str) -> subprocess.CompletedPr
     sys.stdout.flush()
     result = subprocess.run(cmd, cwd=cwd)
     if result.returncode != 0:
-        raise RuntimeError(f"{label} failed (exit {result.returncode})")
+        # The caller prefixes "{label} failed: " when reporting, so keep this
+        # message label-free to avoid "Repeat masking failed: Repeat masking
+        # failed (exit 1)" style doubling.
+        raise RuntimeError(f"exited with code {result.returncode}")
     return result
 
 
@@ -151,8 +154,8 @@ def test_pipeline_cmd(
     Runs all steps of the annotation workflow via the eukan CLI:
       1. eukan db-fetch        Download Pfam + the chosen --homology-db
       2. eukan mask-repeats    RepeatModeler + RepeatMasker (soft-mask)
-      3. eukan assemble        STAR mapping + Trinity + PASA
-      4. eukan annotate        GeneMark + spaln + AUGUSTUS + SNAP + EVM
+      3. eukan assemble        STAR mapping + Trinity (de novo/genome-guided) + combinr
+      4. eukan annotate        GeneMark + spaln + AUGUSTUS + SNAP + combinr
       5. eukan func-annot      Homology + Pfam hmmscan on predicted proteins
       6. eukan prep-submission table2asn validation + .sqn
 
@@ -261,8 +264,10 @@ def test_pipeline_cmd(
             click.echo(f"\n  Repeat masking failed: {e}")
             if not repeat_lib.exists():
                 click.echo(
-                    f"  Hint: RepeatModeler often fails on small genomes; "
-                    f"supply a library at {repeat_lib} to skip it.",
+                    f"  Hint: a pre-built library at {repeat_lib} skips "
+                    f"RepeatModeler (which often fails on small genomes); it "
+                    f"will not fix RepeatMasker/Dfam-FamDB errors like the one "
+                    f"above.",
                 )
             click.echo("  Continuing with unmasked genome.")
 

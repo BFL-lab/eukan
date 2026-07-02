@@ -217,14 +217,14 @@ class TestAnalyzeSpliceSites:
         path.write_text("".join(lines))
 
     def test_basic_analysis(self, tmp_path):
-        from eukan.assembly.star import _analyze_splice_sites
+        from eukan.assembly.align_hints import analyze_splice_sites
 
         genome = tmp_path / "genome.fa"
         self._write_genome(genome)
         sj_file = tmp_path / "STAR_SJ.out.tab"
         self._write_sj_tab(sj_file)
 
-        _analyze_splice_sites(sj_file, genome, tmp_path)
+        analyze_splice_sites(sj_file, genome, tmp_path)
 
         summary_path = tmp_path / "splice_site_summary.json"
         assert summary_path.exists()
@@ -243,14 +243,14 @@ class TestAnalyzeSpliceSites:
         assert summary["AT-AC"]["unique_reads"] == 50
 
     def test_empty_sj_file(self, tmp_path):
-        from eukan.assembly.star import _analyze_splice_sites
+        from eukan.assembly.align_hints import analyze_splice_sites
 
         genome = tmp_path / "genome.fa"
         genome.write_text(">chr1\nACGTACGT\n")
         sj_file = tmp_path / "STAR_SJ.out.tab"
         sj_file.write_text("")
 
-        _analyze_splice_sites(sj_file, genome, tmp_path)
+        analyze_splice_sites(sj_file, genome, tmp_path)
 
         with open(tmp_path / "splice_site_summary.json") as f:
             summary = json.load(f)

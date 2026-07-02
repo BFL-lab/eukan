@@ -13,6 +13,7 @@ from eukan.cli._framework import (
     force_option,
     genome_option,
     numcpu_option,
+    resolve_optional_path,
 )
 
 
@@ -66,7 +67,7 @@ def mask_repeats(
         manifest_dir=Path.cwd(),
         num_cpu=numcpu,
         engine=engine.lower(),
-        lib=lib.resolve() if lib else None,
+        lib=resolve_optional_path(lib),
     ))
 
     force_steps = force_steps_from_run_flags(

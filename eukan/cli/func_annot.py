@@ -12,6 +12,7 @@ from eukan.cli._framework import (
     drop_none,
     force_option,
     numcpu_option,
+    resolve_optional_path,
 )
 
 
@@ -95,11 +96,11 @@ def func_annot(
         num_cpu=numcpu,
         evalue=evalue,
         homology_db=homology_db.lower(),
-        uniprot_db=uniprot.resolve() if uniprot else None,
-        kofam_db=kofam.resolve() if kofam else None,
-        ko_list_path=ko_list.resolve() if ko_list else None,
-        pfam_db=pfam.resolve() if pfam else None,
-        gff3_path=gff3.resolve() if gff3 else None,
+        uniprot_db=resolve_optional_path(uniprot),
+        kofam_db=resolve_optional_path(kofam),
+        ko_list_path=resolve_optional_path(ko_list),
+        pfam_db=resolve_optional_path(pfam),
+        gff3_path=resolve_optional_path(gff3),
     ))
     run_functional_annotation(config, force=force)
     click.echo("Done.")

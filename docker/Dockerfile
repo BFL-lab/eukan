@@ -11,9 +11,10 @@
 # ============================= BUILDER STAGE =================================
 FROM condaforge/mambaforge:latest AS builder
 
-# System packages needed for building fitild
+# System packages needed for building fitild and spaln from source, plus
+# curl/xz to fetch and unpack the pre-built combinr release tarball.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git autoconf \
+    build-essential git autoconf curl ca-certificates xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
@@ -31,6 +32,21 @@ RUN mamba env create -f environment.yml \
 
 # Activate the eukan environment for all subsequent RUN commands
 SHELL ["conda", "run", "-n", "eukan", "/bin/bash", "-c"]
+
+# Trinity's bundled C++ needs no special handling here: the conda env installs
+# bioconda's current trinity build (compiled -march=x86-64-v3, AVX2/BMI2). The
+# former x86-64-v2 pins (star/augustus/spaln/spades/stringtie/trinity) were
+# dropped now that the deployment host is AVX2-capable, so this image requires
+# an x86-64-v3 (Haswell+/Broadwell+) CPU at runtime.
+# scripts/fix-trinity-avx2.sh remains only as a manual recovery tool for hosts
+# without AVX2 (it rebuilds Trinity's binaries at a lower -march).
+#
+# TRINITY_HOME: bioconda's current trinity build (h077b44d_6) installs the whole
+# Trinity tree directly under the env's bin/ (bin/Trinity, bin/util, bin/trinity-
+# plugins, ...) — there is no longer an opt/trinity-<version> dir to symlink (the
+# old x86-64-v2 _0 build had one). The package's own activate.d hook sets
+# TRINITY_HOME=$PREFIX/bin, so the runtime ENV below points there; it is
+# version-independent, so no per-version symlink is needed.
 
 # ---------------------------------------------------------------------------
 # 2. Build fitild from source (gsl + liblbfgs come from the conda env)
@@ -65,6 +81,27 @@ RUN git clone --depth 1 https://github.com/ogotoh/spaln /tmp/spaln_src \
        /opt/conda/envs/eukan/share/spaln/alndbs/ \
     && chmod +x /opt/conda/envs/eukan/share/spaln/alndbs/*.pl \
     && rm -rf /tmp/spaln_src
+
+# ---------------------------------------------------------------------------
+# 2c. combinr — pre-built release binary (Rust tool, not on conda)
+#
+# combinr provides `combinr assemble` (transcript consolidation) and
+# `combinr consensus` (weighted consensus gene models), both required by the
+# assemble/annotate pipelines. Pull the pinned, statically-linked musl build
+# from the GitHub release, verify its SHA-256, and install onto PATH (the conda
+# env's bin/, already first on PATH in the runtime stage). Bump VERSION and
+# SHA256 together to upgrade; they are validated against each other at build.
+# ---------------------------------------------------------------------------
+ARG COMBINR_VERSION=0.1.1
+ARG COMBINR_SHA256=913c9698124cc3891c01d738cb775bcd5918f7af57ddd499108420d1aed7c222
+RUN combinr_dir="combinr-x86_64-unknown-linux-musl" \
+    && curl -fsSL -o "/tmp/${combinr_dir}.tar.xz" \
+       "https://github.com/BFL-lab/combinr/releases/download/v${COMBINR_VERSION}/${combinr_dir}.tar.xz" \
+    && echo "${COMBINR_SHA256}  /tmp/${combinr_dir}.tar.xz" | sha256sum -c - \
+    && tar xJf "/tmp/${combinr_dir}.tar.xz" -C /tmp \
+    && install -m 0755 "/tmp/${combinr_dir}/combinr" /opt/conda/envs/eukan/bin/combinr \
+    && rm -rf "/tmp/${combinr_dir}.tar.xz" "/tmp/${combinr_dir}" \
+    && combinr --version
 
 # ---------------------------------------------------------------------------
 # 3. GeneMark (optional — requires user-provided license files)
@@ -217,7 +254,7 @@ ENV CONDA_DEFAULT_ENV=eukan \
     AUGUSTUS_CONFIG_PATH="/opt/conda/envs/eukan/config" \
     QUARRY_PATH="/opt/conda/envs/eukan/opt/codingquarry-2.0/QuarryFiles" \
     EVM_HOME="/opt/conda/envs/eukan/opt/evidencemodeler-2.1.0" \
-    TRINITY_HOME="/opt/conda/envs/eukan/opt/trinity-2.15.2" \
+    TRINITY_HOME="/opt/conda/envs/eukan/bin" \
     PASAHOME="/opt/conda/envs/eukan/opt/pasa-2.5.3" \
     ALN_TAB="/opt/conda/envs/eukan/share/spaln/table" \
     ALN_DBS="/opt/conda/envs/eukan/share/spaln/seqdb" \

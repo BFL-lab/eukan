@@ -16,10 +16,10 @@ from eukan.annotation.training import build_training_set
 from eukan.exceptions import ToolEnvError
 from eukan.gff import create_gff_db
 from eukan.gff.io import featuredb2gff3_file
-from eukan.infra.artifacts import Artifact
-from eukan.infra.artifacts import find as find_artifact
+from eukan.infra.artifacts import Artifact, find_or_warn
 from eukan.infra.concurrency import parallel_map
 from eukan.infra.logging import get_logger
+from eukan.infra.manifest import load_manifest
 from eukan.infra.runner import run_cmd, run_piped
 from eukan.infra.steps import step_dir
 from eukan.infra.utils import concat_files, package_resource, symlink
@@ -63,7 +63,9 @@ def _get_splice_sites_flag(config: PipelineConfig) -> list[str]:
     Falls back to a blanket allowance when ``allow_noncanonical_splice``
     is set but no summary exists.
     """
-    summary_path = find_artifact(config.work_dir, Artifact.SPLICE_SUMMARY)
+    summary_path = find_or_warn(
+        config.work_dir, Artifact.SPLICE_SUMMARY, load_manifest(config.manifest_dir),
+    )
     allowed: set[str] = set()
 
     if summary_path is not None:
@@ -120,7 +122,9 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
     # Auto-discover RepeatMasker hints from `eukan mask-repeats`. The RM
     # extrinsic source has weights in both our augustus.config and AUGUSTUS's
     # stock extrinsic.MPE.cfg, so the file just needs to be appended.
-    rm_hints = find_artifact(config.work_dir, Artifact.REPEATMASK_HINTS)
+    rm_hints = find_or_warn(
+        config.work_dir, Artifact.REPEATMASK_HINTS, load_manifest(config.manifest_dir),
+    )
     if rm_hints is not None:
         log.info("Including RepeatMasker hints: %s", rm_hints.name)
         hint_files.append(rm_hints)

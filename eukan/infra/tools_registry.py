@@ -11,11 +11,14 @@ Schema (per-tool, all fields optional unless noted)::
     required_by     = ["annotate"]                   # subcommands needing this tool
     conda_package   = "augustus"                     # omit if not on bioconda
     min_version     = "3.5"                          # conda pin; omit for unpinned
+    conda_pin       = "=<version>=<build>"           # exact version=build; overrides
+                                                     # min_version in environment.yml
+                                                     # (e.g. to hold a CPU-compatible build)
     install_hint    = "..."                          # shown when tool missing
 
     env_vars = [                                     # env vars the tool needs
         { var = "AUGUSTUS_CONFIG_PATH", path = "config" },
-        { var = "PASAHOME", add_to_path = ["scripts"] },
+        { var = "TOOL_HOME", add_to_path = ["scripts"] },
     ]
     conda_path_dirs = ["opt/genemark"]               # prepended to PATH
     conda_lib_dirs  = ["lib"]                        # LD_LIBRARY_PATH (subprocess-only)
@@ -27,7 +30,7 @@ environment (e.g., a Dockerfile ENV line).
 
 ``add_to_path`` dirs are resolved relative to the env var's value and
 prepended to ``PATH`` — used for helper scripts bundled inside a tool's
-install tree (e.g., ``$PASAHOME/scripts``).
+install tree (e.g., ``$TOOL_HOME/scripts``).
 """
 
 from __future__ import annotations
@@ -63,6 +66,7 @@ class Tool:
     conda_lib_dirs: tuple[str, ...] = ()
     conda_package: str | None = None
     min_version: str | None = None
+    conda_pin: str | None = None
     install_hint: str | None = None
 
     @property
@@ -95,6 +99,7 @@ def _parse_tool(name: str, cfg: dict[str, Any]) -> Tool:
         conda_lib_dirs=tuple(cfg.get("conda_lib_dirs", ())),
         conda_package=cfg.get("conda_package"),
         min_version=cfg.get("min_version"),
+        conda_pin=cfg.get("conda_pin"),
         install_hint=cfg.get("install_hint"),
     )
 

@@ -33,40 +33,21 @@ CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 # Sentinel epilog markers; the real text is built lazily on first --help so
 # importing BioPython for the genetic-code tables doesn't tax -h users.
 FULL_CODE_TABLE = "__EUKAN_FULL_CODE_TABLE__"
-PASA_CODE_TABLE = "__EUKAN_PASA_CODE_TABLE__"
 
 
 def _resolve_epilog(value: str) -> str:
     """Resolve an epilog sentinel to its rendered text. Pass-through otherwise."""
     if value == FULL_CODE_TABLE:
         return _full_code_table_text()
-    if value == PASA_CODE_TABLE:
-        return _pasa_code_table_text()
     return value
 
 
 def _full_code_table_text() -> str:
     from Bio.Data import CodonTable
 
-    from eukan.infra.genetic_code import _PASA_NAMES
-
     lines = ["Genetic codes (NCBI translation tables):", ""]
     for cid, table in sorted(CodonTable.unambiguous_dna_by_id.items()):
-        marker = " *" if cid in _PASA_NAMES else ""
-        lines.append(f"  {cid:>2}  {table.names[0]}{marker}")
-    lines.append("")
-    lines.append("  * = also supported by PASA (eukan assemble)")
-    return "\n".join(lines)
-
-
-def _pasa_code_table_text() -> str:
-    from eukan.infra.genetic_code import _PASA_NAMES, GeneticCode
-
-    lines = ["Genetic codes supported by PASA:", ""]
-    for cid in sorted(_PASA_NAMES):
-        gc = GeneticCode(cid)
-        ncbi_name = gc.codon_table.names[0]
-        lines.append(f"  {cid:>2}  {ncbi_name} ({gc.pasa_name})")
+        lines.append(f"  {cid:>2}  {table.names[0]}")
     return "\n".join(lines)
 
 
@@ -239,6 +220,15 @@ def drop_none(**kwargs) -> dict:
     must not overwrite a value those sources would have provided.
     """
     return {k: v for k, v in kwargs.items() if v is not None}
+
+
+def resolve_optional_path(path: Path | None) -> Path | None:
+    """Resolve an optional CLI path to an absolute path, preserving ``None``.
+
+    Centralizes the ``x.resolve() if x else None`` idiom repeated when
+    plumbing optional path arguments into configs.
+    """
+    return path.resolve() if path else None
 
 
 def numcpu_option(func):

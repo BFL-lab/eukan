@@ -11,6 +11,7 @@ from typing import NamedTuple
 
 MERGE_THRESHOLD = 0.50  # prediction must cover >50% of ref to count as merged
 FRAG_THRESHOLD = 0.50   # prediction must overlap >=50% of its own length
+PERFECT_THRESHOLD = 0.99  # Sn/Sp at or above this counts as a "perfect" overlap
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +180,14 @@ class GeneStats:
     def mean_f1(self) -> float:
         return _safe_mean(self.f1_values)
 
+    @property
+    def perfect_sn_count(self) -> int:
+        return sum(1 for v in self.sn_values if v >= PERFECT_THRESHOLD)
+
+    @property
+    def perfect_sp_count(self) -> int:
+        return sum(1 for v in self.sp_values if v >= PERFECT_THRESHOLD)
+
 
 @dataclass
 class SubfeatureStats:
@@ -220,6 +229,14 @@ class SubfeatureStats:
     @property
     def mean_f1(self) -> float:
         return _safe_mean(self.f1_values)
+
+    @property
+    def perfect_sn_count(self) -> int:
+        return sum(1 for v in self.sn_values if v >= PERFECT_THRESHOLD)
+
+    @property
+    def perfect_sp_count(self) -> int:
+        return sum(1 for v in self.sp_values if v >= PERFECT_THRESHOLD)
 
 
 # ---------------------------------------------------------------------------

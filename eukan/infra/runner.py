@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import subprocess
+import tempfile
 import threading
 import time
 from collections.abc import Iterator
@@ -147,25 +148,28 @@ def run_cmd(
     cmd_str = " ".join(cmd)
     log.debug("Running: %s (cwd=%s)", cmd_str, cwd)
 
-    # File handles' lifetimes span the subprocess call; closed in finally.
-    in_handle = open(cwd / in_file, "rb") if in_file else None  # noqa: SIM115
-    out_handle = open(cwd / out_file, "wb") if out_file else None  # noqa: SIM115
-    err_handle = open(cwd / err_file, "wb") if err_file else None  # noqa: SIM115
+    # An ExitStack owns the redirect file handles so they're closed
+    # unconditionally — even if setup between opening them and starting the
+    # subprocess (fileno(), env build, Popen) raises before _tracked_popen's
+    # own cleanup could run.
+    with contextlib.ExitStack() as stack:
+        in_handle = stack.enter_context(open(cwd / in_file, "rb")) if in_file else None
+        out_handle = stack.enter_context(open(cwd / out_file, "wb")) if out_file else None
+        err_handle = stack.enter_context(open(cwd / err_file, "wb")) if err_file else None
 
-    stdin_target: int | None = in_handle.fileno() if in_handle else None
-    stdout_target: int = out_handle.fileno() if out_handle else subprocess.DEVNULL
-    stderr_target: int = err_handle.fileno() if err_handle else subprocess.PIPE
+        stdin_target: int | None = in_handle.fileno() if in_handle else None
+        stdout_target: int = out_handle.fileno() if out_handle else subprocess.DEVNULL
+        stderr_target: int = err_handle.fileno() if err_handle else subprocess.PIPE
 
-    tool = _tool_name(cmd)
-    # External tools occasionally emit non-UTF-8 bytes on stderr (e.g.
-    # AUGUSTUS surfaces raw locale-encoded bytes from its C++ layer); a
-    # strict decoder would crash before we ever see the message. errors
-    # only applies in text mode — pass it only when text=True so binary
-    # mode (binary=True) keeps returning raw bytes.
-    text_kwargs: dict[str, object] = (
-        {"text": True, "errors": "replace"} if not binary else {"text": False}
-    )
-    try:
+        tool = _tool_name(cmd)
+        # External tools occasionally emit non-UTF-8 bytes on stderr (e.g.
+        # AUGUSTUS surfaces raw locale-encoded bytes from its C++ layer); a
+        # strict decoder would crash before we ever see the message. errors
+        # only applies in text mode — pass it only when text=True so binary
+        # mode (binary=True) keeps returning raw bytes.
+        text_kwargs: dict[str, object] = (
+            {"text": True, "errors": "replace"} if not binary else {"text": False}
+        )
         with _tracked_popen(
             cmd,
             cwd=cwd,
@@ -187,10 +191,6 @@ def run_cmd(
                     tool=tool, returncode=-1, cmd=cmd,
                     stderr_snippet=str(exc),
                 ) from exc
-    finally:
-        for h in (in_handle, out_handle, err_handle):
-            if h is not None:
-                h.close()
 
     if stderr is None:
         stderr_text = ""
@@ -228,9 +228,14 @@ def run_piped(
     log.debug("Running pipe: %s", cmd_str)
 
     env = _subprocess_env()
-    with _tracked_popen(
+    # Drain the producer's stderr to a temp file rather than an unread PIPE: an
+    # unread stderr PIPE deadlocks any producer chatty enough to fill the
+    # ~64 KB buffer before the consumer drains its stdout. Capturing it also
+    # lets us report *why* the producer died (e.g. an OOM kill) instead of
+    # only the consumer's downstream symptom.
+    with tempfile.TemporaryFile() as p1_err, _tracked_popen(
         cmd1, cwd=cwd, env=env, missing_tool=_tool_name(cmd1),
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=p1_err,
     ) as p1:
         assert p1.stdout is not None  # PIPE was requested above
         try:
@@ -246,6 +251,8 @@ def run_piped(
             p1.wait()
             raise
         p1.wait()
+        p1_err.seek(0)
+        producer_err = p1_err.read().decode(errors="replace")
 
     output = stdout.decode(errors="replace")
 
@@ -255,12 +262,31 @@ def run_piped(
 
     if p2.returncode != 0:
         stderr_text = stderr.decode(errors="replace")
+        # Fold in the producer's fate so a crashed/OOM-killed producer feeding
+        # an empty stream isn't masked by the consumer's "no input" error.
+        if p1.returncode not in (0, None):
+            stderr_text = (
+                f"{_tool_name(cmd1)} (producer) exited {p1.returncode}: "
+                f"{producer_err.strip()}\n{stderr_text}"
+            )
         raise ExternalToolError(
             f"{_tool_name(cmd2)} failed (exit {p2.returncode})",
             tool=_tool_name(cmd2),
             returncode=p2.returncode,
             cmd=cmd2,
             stderr_snippet=stderr_text,
+        )
+
+    # Consumer succeeded but the producer failed: its output was truncated, so
+    # the pipeline result is unreliable. SIGPIPE (-13 / 141) is excluded — that
+    # just means the consumer stopped reading early, which is legitimate.
+    if p1.returncode not in (0, None, -13, 141):
+        raise ExternalToolError(
+            f"{_tool_name(cmd1)} failed (exit {p1.returncode})",
+            tool=_tool_name(cmd1),
+            returncode=p1.returncode,
+            cmd=cmd1,
+            stderr_snippet=producer_err,
         )
 
     return output

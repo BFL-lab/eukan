@@ -24,7 +24,12 @@ def generate_environment_yml() -> str:
         if not tool.conda_package or tool.conda_package in seen:
             continue
         seen.add(tool.conda_package)
-        pin = f">={tool.min_version}" if tool.min_version else ""
+        if tool.conda_pin:
+            pin = tool.conda_pin
+        elif tool.min_version:
+            pin = f">={tool.min_version}"
+        else:
+            pin = ""
         conda_deps.append(f"  - {tool.conda_package}{pin}")
 
     # Tools requiring manual install
@@ -43,6 +48,10 @@ def generate_environment_yml() -> str:
         "# Auto-generated from tools.toml — do not edit manually.",
         "# Regenerate with: python scripts/generate-env.py",
         "#",
+        "# Create with STRICT channel priority (bioconda requirement — without it the",
+        "# solver mixes channel builds and yields inconsistent deps, e.g. r-stringi vs icu):",
+        "#   CONDA_CHANNEL_PRIORITY=strict conda env create -f environment.yml",
+        "#",
         "# Tools requiring manual installation:",
         *manual,
         "#",
@@ -51,8 +60,12 @@ def generate_environment_yml() -> str:
         "",
         "name: eukan",
         "channels:",
-        "  - bioconda",
+        # bioconda requires this exact channel order (conda-forge first), paired
+        # with strict channel priority; a bioconda-first / flexible-priority solve
+        # mixes builds across channels and yields inconsistent runtime deps (e.g.
+        # an r-stringi linked against an icu version not in the env).
         "  - conda-forge",
+        "  - bioconda",
         "  - defaults",
         "",
         "dependencies:",
@@ -66,10 +79,8 @@ def generate_environment_yml() -> str:
         "  - gsl",
         "  - liblbfgs",
         "",
-        "  # Perl (needed by AUGUSTUS, PASA, EVM, GeneMark helper scripts)",
+        "  # Perl (needed by AUGUSTUS and GeneMark helper scripts)",
         "  - perl",
-        "  - perl-bioperl",
-        "  - perl-dbd-sqlite",
         "  - perl-yaml",
         "  - perl-hash-merge",
         "  - perl-mce",

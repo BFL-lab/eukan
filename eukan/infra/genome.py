@@ -33,8 +33,13 @@ class ContigIndex:
 
     def __getitem__(self, contig_id: str) -> SeqRecord:
         if contig_id != self._cache_id:
+            # Load before touching the cache: a missing contig must raise
+            # KeyError (which get() catches) without leaving _cache_id set
+            # to the missing id while _cache_record stays stale/None -- that
+            # corrupts a subsequent same-id lookup into an AssertionError.
+            record = self._index[contig_id]
             self._cache_id = contig_id
-            self._cache_record = self._index[contig_id]
+            self._cache_record = record
         # Either we just populated the cache, or contig_id matched
         assert self._cache_record is not None
         return self._cache_record

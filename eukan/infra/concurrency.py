@@ -1,7 +1,7 @@
 """Shared concurrency helper for the four ThreadPool sites in eukan.
 
 The ``ThreadPoolExecutor`` pattern was reproduced ad-hoc in the
-annotation pipeline, AUGUSTUS split-prediction, EVM partition
+annotation pipeline, AUGUSTUS split-prediction, consensus partition
 execution, and the concordance pass triad. Each site has a slightly
 different shape but the same intent: fan out, collect, raise on first
 worker failure.

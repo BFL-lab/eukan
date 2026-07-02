@@ -66,8 +66,8 @@ class TestFormatDiskFullUnit:
 
     def test_external_tool_with_quota_stderr_matches(self):
         exc = ExternalToolError(
-            "trinity failed",
-            tool="Trinity",
+            "rnaspades failed",
+            tool="rnaSPAdes",
             returncode=1,
             stderr_snippet="write error: Disk quota exceeded",
         )

@@ -51,6 +51,27 @@ def _title_block(ref_path: str, pred_path: str, w: int) -> list[str]:
     ]
 
 
+def _format_overlap_metrics_block(stats: GeneStats | SubfeatureStats, noun: str) -> list[str]:
+    """Lines for the 'Overlap-based metrics' section, or [] when no matches.
+
+    *noun* labels the matched units (e.g. "matched genes" / "matched pairs").
+    Callers own the surrounding blank lines.
+    """
+    if not stats.sn_values:
+        return []
+    n = len(stats.sn_values)
+    return [
+        f"  Overlap-based metrics (n={n:,} {noun}):",
+        f"    Mean Sn (ovl/ref):   {_pct(stats.mean_sn):>6}  {_bar(stats.mean_sn)}",
+        f"    Mean Sp (ovl/pred):  {_pct(stats.mean_sp):>6}  {_bar(stats.mean_sp)}",
+        f"    Mean F1:             {_pct(stats.mean_f1):>6}  {_bar(stats.mean_f1)}",
+        f"    Median Sn: {_pct(median(stats.sn_values)):>6}  |  "
+        f"Median Sp: {_pct(median(stats.sp_values)):>6}",
+        f"    Perfect Sn (>=99%): {stats.perfect_sn_count:,}/{n:,}  |  "
+        f"Perfect Sp (>=99%): {stats.perfect_sp_count:,}/{n:,}",
+    ]
+
+
 def _format_gene_block(gs: GeneStats, w: int) -> list[str]:
     """Detailed gene-level breakdown. Begins with a blank separator line."""
     lines: list[str] = [
@@ -85,22 +106,7 @@ def _format_gene_block(gs: GeneStats, w: int) -> list[str]:
     lines.append(f"    F1:           {_pct(gs.f1):>6}")
     lines.append("")
 
-    if gs.sn_values:
-        n = len(gs.sn_values)
-        lines.append(f"  Overlap-based metrics (n={n:,} matched genes):")
-        lines.append(f"    Mean Sn (ovl/ref):   {_pct(gs.mean_sn):>6}  {_bar(gs.mean_sn)}")
-        lines.append(f"    Mean Sp (ovl/pred):  {_pct(gs.mean_sp):>6}  {_bar(gs.mean_sp)}")
-        lines.append(f"    Mean F1:             {_pct(gs.mean_f1):>6}  {_bar(gs.mean_f1)}")
-        lines.append(
-            f"    Median Sn: {_pct(median(gs.sn_values)):>6}  |  "
-            f"Median Sp: {_pct(median(gs.sp_values)):>6}"
-        )
-        perfect_sn = sum(1 for v in gs.sn_values if v >= 0.99)
-        perfect_sp = sum(1 for v in gs.sp_values if v >= 0.99)
-        lines.append(
-            f"    Perfect Sn (>=99%): {perfect_sn:,}/{n:,}  |  "
-            f"Perfect Sp (>=99%): {perfect_sp:,}/{n:,}"
-        )
+    lines.extend(_format_overlap_metrics_block(gs, "matched genes"))
 
     if gs.boundary_5p:
         abs_5p = [abs(v) for v in gs.boundary_5p]
@@ -153,23 +159,10 @@ def _format_subfeat_block(ss: SubfeatureStats, w: int) -> list[str]:
     lines.append(f"    Precision:    {_pct(ss.precision):>6}")
     lines.append(f"    F1:           {_pct(ss.f1):>6}")
 
-    if ss.sn_values:
-        n = len(ss.sn_values)
+    overlap = _format_overlap_metrics_block(ss, "matched pairs")
+    if overlap:
         lines.append("")
-        lines.append(f"  Overlap-based metrics (n={n:,} matched pairs):")
-        lines.append(f"    Mean Sn (ovl/ref):   {_pct(ss.mean_sn):>6}  {_bar(ss.mean_sn)}")
-        lines.append(f"    Mean Sp (ovl/pred):  {_pct(ss.mean_sp):>6}  {_bar(ss.mean_sp)}")
-        lines.append(f"    Mean F1:             {_pct(ss.mean_f1):>6}  {_bar(ss.mean_f1)}")
-        lines.append(
-            f"    Median Sn: {_pct(median(ss.sn_values)):>6}  |  "
-            f"Median Sp: {_pct(median(ss.sp_values)):>6}"
-        )
-        perfect_sn = sum(1 for v in ss.sn_values if v >= 0.99)
-        perfect_sp = sum(1 for v in ss.sp_values if v >= 0.99)
-        lines.append(
-            f"    Perfect Sn (>=99%): {perfect_sn:,}/{n:,}  |  "
-            f"Perfect Sp (>=99%): {perfect_sp:,}/{n:,}"
-        )
+        lines.extend(overlap)
 
     return lines
 

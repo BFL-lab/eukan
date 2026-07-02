@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pyhmmer
 
-from eukan.functional.search import HitResults, _decode
+from eukan.functional.search import HitResults, _decode, _load_digital_sequences
 from eukan.infra.logging import get_logger
 
 log = get_logger(__name__)
@@ -114,13 +114,6 @@ def extract_ec_numbers(definition: str) -> tuple[str, list[str]]:
 # ---------------------------------------------------------------------------
 # Search via pyhmmer hmmscan (mirrors the Pfam search path)
 # ---------------------------------------------------------------------------
-
-
-def _load_digital_sequences(fasta_path: Path) -> list[pyhmmer.easel.DigitalSequence]:
-    alphabet = pyhmmer.easel.Alphabet.amino()
-    with pyhmmer.easel.SequenceFile(str(fasta_path), digital=True, alphabet=alphabet) as sf:
-        seqs: list[pyhmmer.easel.DigitalSequence] = list(sf)  # type: ignore[arg-type]
-    return seqs
 
 
 def _hit_score_and_evalue(

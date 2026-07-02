@@ -127,7 +127,7 @@ def prep_submission(
     Use --print-command to inspect the exact table2asn invocation, or
     --extra-args to append flags not exposed here.
     """
-    from eukan.cli._framework import drop_none
+    from eukan.cli._framework import drop_none, resolve_optional_path
     from eukan.infra.layout import step_work_dir
     from eukan.settings import SubmissionConfig
     from eukan.submission import run_prep_submission
@@ -140,15 +140,15 @@ def prep_submission(
         isolate=isolate,
         source_info=source_info,
         locus_tag_prefix=locus_tag_prefix,
-        genome=genome.resolve() if genome else None,
-        gff3=gff3.resolve() if gff3 else None,
+        genome=resolve_optional_path(genome),
+        gff3=resolve_optional_path(gff3),
         cleanup=cleanup,
         mode=mode,
         assembly_type=assembly_type,
         extra_args=shlex.split(extra_args) if extra_args else None,
         cleanup_gff3=cleanup_gff3,
-        output_file=output_file.resolve() if output_file else None,
-        output_dir=output_dir.resolve() if output_dir else None,
+        output_file=resolve_optional_path(output_file),
+        output_dir=resolve_optional_path(output_dir),
     ))
 
     sqn = run_prep_submission(config, print_only=print_command, dry_run=dry_run)

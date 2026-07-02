@@ -138,13 +138,33 @@ class TestToolRegistry:
         assert "augustus" in names
         assert "samtools" in names
 
+    # stringtie/rnaspades were replaced by Trinity (both modes) in the active
+    # pipeline. They're dormant: required_by is intentionally empty so
+    # `eukan check assemble` doesn't demand them, but they keep a conda_package
+    # so they stay installable via environment.yml.
+    _DORMANT = frozenset({"stringtie", "rnaspades"})
+
     def test_tool_fields(self):
         """Tools should have all required fields populated."""
         tools = load_tools()
         for tool in tools:
             assert tool.binary
             assert tool.version_cmd
-            assert len(tool.required_by) > 0
+            if tool.name in self._DORMANT:
+                # Dormant tools: no subcommand requires them, but they stay
+                # installable (conda_package retained for environment.yml).
+                assert tool.required_by == ()
+                assert tool.conda_package
+            else:
+                assert len(tool.required_by) > 0
+
+    def test_segemehl_registered(self):
+        """segemehl (bioconda 0.3.4) is registered for the assemble pipeline."""
+        seg = {t.name: t for t in load_tools()}["segemehl"]
+        assert seg.binary == "segemehl.x"
+        assert seg.conda_package == "segemehl"
+        assert seg.min_version == "0.3.4"
+        assert "assemble" in seg.required_by
 
 
 class TestRunChecks:
@@ -232,3 +252,8 @@ class TestGenerateEnv:
         """spaln should appear only once despite spaln/makdbs sharing a package."""
         content = generate_environment_yml()
         assert content.count("- spaln") == 1
+
+    def test_includes_segemehl(self):
+        """segemehl is emitted from tools.toml with its bioconda version pin."""
+        content = generate_environment_yml()
+        assert "segemehl>=0.3.4" in content

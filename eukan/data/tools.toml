@@ -13,6 +13,12 @@
 #   required_by     = which eukan subcommands need this tool
 #   conda_package   = bioconda/conda-forge package name (omit if not available)
 #   min_version     = minimum version for conda pin (omit for unpinned)
+#   conda_pin       = exact "=version=build" pin; overrides min_version. Use to
+#                     hold a tool at a CPU-compatible build when bioconda's
+#                     latest targets a microarch the host lacks (e.g. an
+#                     x86-64-v4/AVX-512 build would SIGILL on this x86-64-v3
+#                     host). No tool is currently pinned — the deployment host
+#                     is x86-64-v3 (AVX2/BMI2), so the default latest builds run.
 #   install_hint    = shown by `eukan check` when the tool is missing
 #
 #   env_vars = [ { var, path?, add_to_path? }, ... ]
@@ -64,7 +70,7 @@ conda_path_dirs = ["opt/genemark"]
 [diamond]
 binary = "diamond"
 version_cmd = ["diamond", "version"]
-required_by = ["annotate"]
+required_by = ["assemble", "annotate"]
 conda_package = "diamond"
 
 [samtools]
@@ -80,6 +86,56 @@ version_cmd = ["STAR", "--version"]
 required_by = ["assemble"]
 conda_package = "star"
 min_version = "2.7"
+
+[stringtie]
+binary = "stringtie"
+version_cmd = ["stringtie", "--version"]
+# DORMANT: Trinity (genome-guided) replaced StringTie in the active pipeline.
+# Kept installable (conda_package retained, so it stays in environment.yml) in
+# case the unwired stringtie module is re-activated; required_by emptied so
+# `eukan check assemble` does not demand it.
+required_by = []
+conda_package = "stringtie"
+min_version = "3.0"
+
+[segemehl]
+binary = "segemehl.x"
+version_cmd = ["segemehl.x", "--help"]
+required_by = ["assemble"]
+conda_package = "segemehl"
+min_version = "0.3.4"
+
+[rnaspades]
+binary = "rnaspades.py"
+version_cmd = ["rnaspades.py", "--version"]
+# DORMANT: Trinity (de novo) replaced rnaSPAdes in the active pipeline. Kept
+# installable (conda_package retained, so it stays in environment.yml) in case
+# the unwired rnaspades module is re-activated; required_by emptied so
+# `eukan check assemble` does not demand it.
+required_by = []
+# rnaspades.py ships in the bioconda 'spades' package.
+conda_package = "spades"
+min_version = "4.3"
+
+[trinity]
+binary = "Trinity"
+version_cmd = ["Trinity", "--version"]
+required_by = ["assemble"]
+conda_package = "trinity"
+min_version = "2.15"
+# TRINITY_HOME points at the env's bin/ (bioconda's current build installs the
+# Trinity tree there); set by the Dockerfile ENV. eukan only calls `Trinity` on
+# PATH — the wrapper self-locates via FindBin — so this is declared just so
+# `eukan check` reports it.
+env_vars = [{ var = "TRINITY_HOME" }]
+
+[jellyfish]
+binary = "jellyfish"
+version_cmd = ["jellyfish", "--version"]
+required_by = ["assemble"]
+# jellyfish is a Trinity dependency — Trinity's conda package pulls it in.
+# Don't pin a conda_package here to avoid conflicts with the unrelated
+# Python 'jellyfish' package on defaults channel.
 
 [spaln]
 binary = "spaln"
@@ -107,59 +163,19 @@ install_hint = "Build from source: git clone https://github.com/ogotoh/fitild &&
 conda_path_dirs = ["opt/fitild/src"]
 conda_lib_dirs = ["lib"]
 
-[evidencemodeler]
-binary = "partition_EVM_inputs.pl"
-version_cmd = ["partition_EVM_inputs.pl"]
-required_by = ["annotate"]
-conda_package = "evidencemodeler"
-min_version = "2.1"
-# EVM_HOME points at a versioned directory; set by the Dockerfile ENV.
-env_vars = [{ var = "EVM_HOME" }]
-conda_path_dirs = ["bin/EvmUtils", "bin/EvmUtils/misc"]
-
-[cdbfasta]
-binary = "cdbfasta"
-version_cmd = ["cdbfasta", "-v"]
-required_by = ["annotate"]
-# bundled with PASA
-
-[trinity]
-binary = "Trinity"
-version_cmd = ["Trinity", "--version"]
-required_by = ["assemble"]
-conda_package = "trinity"
-min_version = "2.15"
-# TRINITY_HOME is version-specific; set by the Dockerfile ENV.
-env_vars = [{ var = "TRINITY_HOME" }]
-
-[pasa]
-binary = "Launch_PASA_pipeline.pl"
-version_cmd = ["Launch_PASA_pipeline.pl", "--version"]
-required_by = ["annotate", "assemble"]
-conda_package = "pasa"
-min_version = "2.5"
-# PASAHOME is version-specific; set by the Dockerfile ENV.
-# scripts/ is appended to PATH relative to $PASAHOME.
-env_vars = [{ var = "PASAHOME", add_to_path = ["scripts"] }]
-
-[blat]
-binary = "blat"
-version_cmd = ["blat"]
-required_by = ["assemble"]
-conda_package = "ucsc-blat"
-
-[gmap]
-binary = "gmap"
-version_cmd = ["gmap", "--version"]
-required_by = ["assemble"]
-conda_package = "gmap"
-min_version = "2024"
-
-[seqclean]
-binary = "seqclean"
-version_cmd = ["seqclean", "-h"]
-required_by = ["assemble"]
-# bundled with PASA
+[combinr]
+binary = "combinr"
+version_cmd = ["combinr", "--version"]
+required_by = ["assemble", "annotate"]
+# Rust tool, not on conda. The Docker image installs the pinned pre-built
+# release binary, and scripts/install-extras.sh fetches the same binary for a
+# local conda env. To install by hand, download the archive for your platform
+# from https://github.com/BFL-lab/combinr/releases (v0.1.1), extract `combinr`,
+# and put it on PATH (or set the combinr_path config /
+# EUKAN_ASSEMBLE_COMBINR_PATH). Consolidates transcript-to-genome BAMs into
+# non-redundant models (assemble) and builds weighted consensus gene models
+# (annotate).
+install_hint = "Download the combinr v0.1.1 release binary from https://github.com/BFL-lab/combinr/releases and put it on PATH (or run scripts/install-extras.sh, or set EUKAN_ASSEMBLE_COMBINR_PATH)."
 
 [genomethreader]
 binary = "gth"
@@ -167,20 +183,6 @@ version_cmd = ["gth", "-version"]
 required_by = ["annotate"]
 conda_package = "genomethreader"
 min_version = "1.7"
-
-[jellyfish]
-binary = "jellyfish"
-version_cmd = ["jellyfish", "--version"]
-required_by = ["assemble"]
-# jellyfish is a Trinity dependency — Trinity's conda package pulls it in.
-# Don't pin a conda_package here to avoid conflicts with the unrelated
-# Python 'jellyfish' package on defaults channel.
-
-[fasta3]
-binary = "fasta36"
-version_cmd = ["fasta36"]
-required_by = ["assemble"]
-conda_package = "fasta3"
 
 [trf]
 binary = "trf"
@@ -319,36 +321,6 @@ binary = "gthconsensus"
 version_cmd = ["gthconsensus", "-version"]
 required_by = ["annotate"]
 # bundled with GenomeThreader
-
-[write_EVM_commands]
-binary = "write_EVM_commands.pl"
-version_cmd = ["write_EVM_commands.pl"]
-required_by = ["annotate"]
-# bundled with EVidenceModeler
-
-[recombine_EVM_partial_outputs]
-binary = "recombine_EVM_partial_outputs.pl"
-version_cmd = ["recombine_EVM_partial_outputs.pl"]
-required_by = ["annotate"]
-# bundled with EVidenceModeler
-
-[convert_EVM_outputs_to_GFF3]
-binary = "convert_EVM_outputs_to_GFF3.pl"
-version_cmd = ["convert_EVM_outputs_to_GFF3.pl"]
-required_by = ["annotate"]
-# bundled with EVidenceModeler
-
-[load_current_gene_annotations]
-binary = "Load_Current_Gene_Annotations.dbi"
-version_cmd = ["Load_Current_Gene_Annotations.dbi"]
-required_by = ["annotate"]
-# bundled with PASA (under $PASAHOME/scripts/, added to PATH via add_to_path)
-
-[build_comprehensive_transcriptome]
-binary = "build_comprehensive_transcriptome.dbi"
-version_cmd = ["build_comprehensive_transcriptome.dbi"]
-required_by = ["assemble"]
-# bundled with PASA (under $PASAHOME/scripts/, added to PATH via add_to_path)
 
 [table2asn]
 binary = "table2asn"
