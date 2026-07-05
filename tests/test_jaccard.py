@@ -12,11 +12,9 @@ from eukan.assembly import jaccard as j
 from eukan.assembly.jaccard import (
     Trough,
     _candidate_troughs,
-    _chr_bin_nbits,
     _group_and_pick_best,
     _partition_exons,
     _require_hills,
-    _sa_index_nbases,
     clip_gff3,
     coverage_array,
     find_clip_points,
@@ -264,22 +262,6 @@ def test_split_fasta_record_drops_short_pieces():
     assert [len(s) for s in segs] == [240, 150]  # [11..250]=240, [251..400]=150
 
 
-# --- STAR index sizing -----------------------------------------------------
-
-
-def test_sa_index_nbases_caps_and_scales():
-    assert _sa_index_nbases(10**12) == "14"     # capped
-    assert int(_sa_index_nbases(80)) < 8         # small for a tiny set
-    assert _sa_index_nbases(0) == "2"            # degenerate guard
-
-
-def test_chr_bin_nbits_scales_down_for_many_short_refs():
-    # ~76k contigs averaging ~1.3 kb -> bins must drop well below the default 18.
-    assert int(_chr_bin_nbits(97_000_000, 76_198)) <= 11
-    assert _chr_bin_nbits(3_000_000_000, 25) == "18"  # few large refs -> capped
-    assert _chr_bin_nbits(0, 0) == "18"               # degenerate guard
-
-
 # --- GFF3 / GTF split path -------------------------------------------------
 
 
@@ -413,7 +395,7 @@ def test_clip_stringtie_gtf_splits_fused_model(tmp_path, monkeypatch):
     bam = tmp_path / "jaccard_stringtie_Aligned.sortedByCoord.out.bam"
     _header_bam(bam, {"STRG.1.1": 80})  # spliced length of the transcript
 
-    monkeypatch.setattr(j, "_star_map_to_transcripts", lambda cfg, fa, tag: bam)
+    monkeypatch.setattr(j, "map_reads_to_transcripts", lambda cfg, fa, tag: bam)
     monkeypatch.setattr(j, "iter_fragment_spans", lambda b: iter([("STRG.1.1", [(1, 80)])]))
     # decouple from the jaccard math (tested elsewhere): clip the 80 bp tx at 45.
     monkeypatch.setattr(j, "find_clip_points", lambda spans, length, **kw: [45])
@@ -441,7 +423,7 @@ def test_clip_threads_config_knobs_into_find_clip_points(tmp_path, monkeypatch):
     )
     bam = tmp_path / "jaccard_stringtie_Aligned.sortedByCoord.out.bam"
     _header_bam(bam, {"STRG.1.1": 80})
-    monkeypatch.setattr(j, "_star_map_to_transcripts", lambda cfg, fa, tag: bam)
+    monkeypatch.setattr(j, "map_reads_to_transcripts", lambda cfg, fa, tag: bam)
     monkeypatch.setattr(j, "iter_fragment_spans", lambda b: iter([("STRG.1.1", [(1, 80)])]))
     captured: dict[str, float] = {}
 
@@ -472,7 +454,7 @@ def test_clip_one_fasta_threads_config_knobs(tmp_path, monkeypatch):
     src.write_text(">c1\n" + "ACGT" * 50 + "\n")
     bam = tmp_path / "rnaspades.jaccard_Aligned.sortedByCoord.out.bam"
     _header_bam(bam, {"c1": 200})
-    monkeypatch.setattr(j, "_star_map_to_transcripts", lambda cfg, fa, tag: bam)
+    monkeypatch.setattr(j, "map_reads_to_transcripts", lambda cfg, fa, tag: bam)
     monkeypatch.setattr(j, "iter_fragment_spans", lambda b: iter([("c1", [(1, 200)])]))
     captured: dict[str, float] = {}
 

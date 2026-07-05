@@ -32,30 +32,21 @@ from eukan.cli._framework import (
     help="Strand-specific library type.",
 )
 @optgroup.option(
-    "--aligner", type=click.Choice(["auto", "star", "segemehl"]),
+    "--non-canonical", "non_canonical", type=click.Choice(["auto", "force", "off"]),
     default="auto", show_default=True,
-    help="Read aligner. 'auto' (default) maps with STAR, then re-maps with "
-    "splice-agnostic segemehl when the diagnostic finds extensive non-canonical "
-    "splicing (so StringTie/hints aren't biased by STAR's canonical alignment). "
-    "'star' skips that escalation; 'segemehl' maps with segemehl from the start.",
-)
-@optgroup.option(
-    "--align-mode", "-t", type=click.Choice(["EndToEnd", "Local"]),
-    default="Local", show_default=True,
-    help="STAR read alignment mode (end-to-end vs soft-clipped local). "
-    "STAR only; ignored when --aligner segemehl.",
-)
-@optgroup.option(
-    "--splice-permissive", is_flag=True, default=False,
-    help="Allow non-canonical splice sites (GC-AG, AT-AC). "
-    "Sets splice boundary stringency to 0 and retains non-canonical junctions.",
+    help="Non-canonical splice mapping. minimap2 maps with the splice preset; "
+    "'auto' (default) re-maps with the non-canonical flags "
+    "(-J 0 -C 3 --splice-flank=no) when the soft-clip diagnostic finds extensive "
+    "non-canonical splicing (so hints/assembly aren't biased by the canonical "
+    "alignment). 'force' always applies them; 'off' never does.",
 )
 @optgroup.option(
     "--diagnose-softclips/--no-diagnose-softclips", default=True,
     show_default=True,
-    help="Run the soft-clip + intron diagnostic after STAR. "
+    help="Run the soft-clip + intron diagnostic after read mapping. "
     "Detects trans-splicing (via de novo splice-leader clusters) and "
-    "non-canonical splice prevalence; surfaces both as INFO/WARNING.",
+    "non-canonical splice prevalence; surfaces both as INFO/WARNING and gates "
+    "the --non-canonical auto re-map.",
 )
 @code_option(default=1)
 @optgroup.option("--min-intron", "-m", type=int, default=20, show_default=True, help="Minimum intron length.")
@@ -160,8 +151,9 @@ from eukan.cli._framework import (
          "Defaults to 60 percent of currently-available memory (floored at 4 GiB).",
 )
 @optgroup.group("Re-run steps")
-@optgroup.option("--run-star", "-A", is_flag=True, help="Force re-run STAR read mapping.")
-@optgroup.option("--run-segemehl", is_flag=True, help="Force re-run segemehl read mapping.")
+@optgroup.option(
+    "--run-minimap2", "-A", is_flag=True, help="Force re-run minimap2 read mapping."
+)
 @optgroup.option(
     "--run-trinity", "-T", is_flag=True,
     help="Force re-run Trinity de novo + genome-guided assembly.",
@@ -172,7 +164,7 @@ from eukan.cli._framework import (
 )
 @optgroup.option(
     "--run-map-transcripts", is_flag=True,
-    help="Force re-run STAR transcript→genome mapping.",
+    help="Force re-run minimap2 transcript→genome mapping.",
 )
 @optgroup.option(
     "--run-strand-correct", is_flag=True,
@@ -209,10 +201,8 @@ def assemble(
     phred: str,
     numcpu: int,
     strand_specific: str | None,
-    aligner: str,
-    align_mode: str,
-    run_star: bool,
-    run_segemehl: bool,
+    non_canonical: str,
+    run_minimap2: bool,
     run_trinity: bool,
     run_jaccard: bool,
     run_map_transcripts: bool,
@@ -236,7 +226,6 @@ def assemble(
     sl_adapter_filter: bool | None,
     combinr_path: Path | None,
     uniprot: Path | None,
-    splice_permissive: bool,
     diagnose_softclips: bool,
     code: int,
     memory_gb: int | None,
@@ -283,8 +272,7 @@ def assemble(
         max_intron_len=max_intron,
         phred_quality=int(phred),
         num_cpu=numcpu,
-        aligner=aligner,
-        align_mode=align_mode,
+        non_canonical=non_canonical,
         jaccard_clip=jaccard_clip,
         jaccard_greediness=jaccard_greediness,
         jaccard_max_trough=jaccard_max_trough,
@@ -299,7 +287,6 @@ def assemble(
         sl_adapter_filter=sl_adapter_filter,
         combinr_path=resolve_optional_path(combinr_path),
         uniprot_db=resolve_optional_path(uniprot),
-        splice_permissive=splice_permissive,
         diagnose_softclips=diagnose_softclips,
         genetic_code=str(code),
         left_reads=resolve_optional_path(left),
@@ -310,8 +297,7 @@ def assemble(
     ))
 
     force_steps = force_steps_from_run_flags(
-        aligner=aligner,
-        run_star=run_star, run_segemehl=run_segemehl,
+        run_minimap2=run_minimap2,
         run_trinity=run_trinity, run_jaccard=run_jaccard,
         run_map_transcripts=run_map_transcripts,
         run_strand_correct=run_strand_correct, run_defuse=run_defuse,

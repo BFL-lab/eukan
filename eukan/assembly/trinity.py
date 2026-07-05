@@ -93,7 +93,7 @@ def run_trinity(config: AssemblyConfig) -> None:
     Both modes emit transcript-coordinate FASTAs (``trinity-gg.fasta`` and
     ``trinity-denovo.fasta``); the genome-guided BAM only *clusters* reads per
     locus, so like the de novo set the result is mapped back to the genome by
-    :func:`eukan.assembly.star.map_transcripts`. The two sets overlap heavily
+    :func:`eukan.assembly.minimap2.map_transcripts_minimap2`. The two sets overlap heavily
     (same reads) — combinr consolidates the redundancy downstream.
     """
     _run_trinity_mode(

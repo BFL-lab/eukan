@@ -80,12 +80,13 @@ required_by = ["annotate", "assemble"]
 conda_package = "samtools"
 min_version = "1.20"
 
-[star]
-binary = "STAR"
-version_cmd = ["STAR", "--version"]
+[minimap2]
+binary = "minimap2"
+version_cmd = ["minimap2", "--version"]
 required_by = ["assemble"]
-conda_package = "star"
-min_version = "2.7"
+conda_package = "minimap2"
+# 2.29 introduced the splice:sr short-read spliced preset used for read mapping.
+min_version = "2.29"
 
 [stringtie]
 binary = "stringtie"
@@ -97,13 +98,6 @@ version_cmd = ["stringtie", "--version"]
 required_by = []
 conda_package = "stringtie"
 min_version = "3.0"
-
-[segemehl]
-binary = "segemehl.x"
-version_cmd = ["segemehl.x", "--help"]
-required_by = ["assemble"]
-conda_package = "segemehl"
-min_version = "0.3.4"
 
 [rnaspades]
 binary = "rnaspades.py"

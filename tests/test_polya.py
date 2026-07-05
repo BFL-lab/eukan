@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pysam
 
-from eukan.assembly import segemehl as seg
+from eukan.assembly.bam_utils import _write_unmapped_fasta
 from eukan.assembly.polya import (
     POLYA_DIAGNOSTIC,
     PolyAStats,
@@ -18,7 +18,6 @@ from eukan.assembly.polya import (
     tally_clip,
     write_polya_section,
 )
-from eukan.assembly.segemehl import _write_unmapped_fasta
 from eukan.infra.artifacts import Artifact
 from eukan.settings import AssemblyConfig
 
@@ -178,7 +177,7 @@ def test_write_polya_section_merges(tmp_path):
     assert data["reads"] == {"n_polyA_3p": 9} and data["transcripts"] == {"n_polyA_3p": 0}
 
 
-# --- segemehl unmapped-transcript capture ----------------------------------
+# --- unmapped-transcript capture -------------------------------------------
 
 
 def test_write_unmapped_fasta_extracts_only_unmapped(tmp_path):
@@ -200,28 +199,34 @@ def test_write_unmapped_fasta_extracts_only_unmapped(tmp_path):
     assert "tx_M" not in text
 
 
-def test_map_one_transcript_set_segemehl_captures_unmapped(tmp_path, monkeypatch):
-    # Drive the REAL map_one_transcript_set_segemehl body: the unmapped FASTA must be
+def test_map_one_transcript_set_captures_unmapped(tmp_path, monkeypatch):
+    # Drive the REAL minimap2._map_one_transcript_set body: the unmapped FASTA must be
     # extracted from the unsorted BAM BEFORE the -F 4 sort/filter drops the records.
-    def fake_run_cmd(cmd, **kw):
-        if cmd and cmd[0] == "segemehl.x" and "-q" in cmd:
-            out = Path(cmd[cmd.index("-o") + 1])
-            _write_bam(out, [("c1", 100)], [
-                dict(query_name="tx_M", query_sequence="ACGT" * 10, flag=0,
-                     reference_id=0, reference_start=5, cigartuples=[(0, 40)]),
-                dict(query_name="tx_U", query_sequence="GGGGCCCCAAAATTTT", flag=4,
-                     reference_id=-1, reference_start=-1, cigartuples=None),
-            ])
-        # index build (-x) and `samtools index` are no-ops here
+    from eukan.assembly import minimap2
 
-    monkeypatch.setattr(seg, "run_cmd", fake_run_cmd)
-    monkeypatch.setattr(seg, "_coordinate_sort_and_filter", lambda *a, **k: None)
+    def fake_piped(cmd1, cmd2, **kw):
+        # emulate `minimap2 ... | samtools view -b -o <unsorted> -`
+        out = Path(cmd2[cmd2.index("-o") + 1])
+        _write_bam(tmp_path / out.name, [("c1", 100)], [
+            dict(query_name="tx_M", query_sequence="ACGT" * 10, flag=0,
+                 reference_id=0, reference_start=5, cigartuples=[(0, 40)]),
+            dict(query_name="tx_U", query_sequence="GGGGCCCCAAAATTTT", flag=4,
+                 reference_id=-1, reference_start=-1, cigartuples=None),
+        ])
+        return ""
+
+    monkeypatch.setattr(minimap2, "run_piped", fake_piped)
+    monkeypatch.setattr(minimap2, "run_cmd", lambda *a, **k: None)
+    monkeypatch.setattr(minimap2, "_coordinate_sort_and_filter", lambda *a, **k: None)
+    monkeypatch.setattr(minimap2, "_bam_is_complete", lambda _p: False)
 
     (tmp_path / "genome.fa").write_text(">c1\n" + "ACGT" * 100 + "\n")
     query = tmp_path / "trinity-denovo.fasta"
     query.write_text(">tx_M\nACGT\n>tx_U\nGGGG\n")
     config = AssemblyConfig(genome=tmp_path / "genome.fa", work_dir=tmp_path, num_cpu=1)
-    seg.map_one_transcript_set_segemehl(config, query, "trinity-denovo.genome.bam")
+    minimap2._map_one_transcript_set(
+        config, query, "trinity-denovo.genome.bam", non_canonical=False
+    )
 
     fa = tmp_path / "trinity-denovo.unmapped_transcripts.fasta"
     assert fa.exists()
@@ -269,7 +274,7 @@ def test_run_softclip_diagnostic_backfills_reads_section_on_resume(tmp_path):
     assert data["reads"]["n_polyA_3p"] == 3  # re-created via the poly-A-only pass
 
 
-# --- star._finalize_transcript_diagnostics ---------------------------------
+# --- minimap2._finalize_transcript_diagnostics -----------------------------
 
 
 def _finalize_setup(tmp_path):
@@ -282,7 +287,7 @@ def _finalize_setup(tmp_path):
 
 
 def test_finalize_transcript_diagnostics_writes_sections(tmp_path):
-    from eukan.assembly.star import _finalize_transcript_diagnostics
+    from eukan.assembly.minimap2 import _finalize_transcript_diagnostics
 
     _finalize_setup(tmp_path)
     (tmp_path / "trinity-denovo.unmapped_transcripts.fasta").write_text(
@@ -297,7 +302,7 @@ def test_finalize_transcript_diagnostics_writes_sections(tmp_path):
 
 
 def test_finalize_transcript_diagnostics_respects_diagnose_off(tmp_path):
-    from eukan.assembly.star import _finalize_transcript_diagnostics
+    from eukan.assembly.minimap2 import _finalize_transcript_diagnostics
 
     _finalize_setup(tmp_path)
     (tmp_path / "trinity-denovo.unmapped_transcripts.fasta").write_text(">u1\nACGT\n")
@@ -310,7 +315,7 @@ def test_finalize_transcript_diagnostics_respects_diagnose_off(tmp_path):
 
 
 def test_finalize_transcript_diagnostics_handles_absent_unmapped_fasta(tmp_path):
-    from eukan.assembly.star import _finalize_transcript_diagnostics
+    from eukan.assembly.minimap2 import _finalize_transcript_diagnostics
 
     _finalize_setup(tmp_path)  # NO unmapped FASTA on disk (e.g. reused BAM)
     config = AssemblyConfig(genome=tmp_path / "genome.fa", work_dir=tmp_path, num_cpu=1)

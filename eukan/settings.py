@@ -315,8 +315,11 @@ class AssemblyConfig(_StepRunSettings):
     max_intron_len: int = 5000
     phred_quality: int = 33
     strand_specific: str | None = None
-    aligner: Literal["auto", "star", "segemehl"] = "auto"
-    align_mode: str = "Local"
+    non_canonical: Literal["auto", "force", "off"] = "auto"
+    """Non-canonical splice mapping control. ``auto`` (default) layers the
+    non-canonical minimap2 flags (``-J 0 -C 3 --splice-flank=no``) on top of the
+    splice preset only when the soft-clip diagnostic calls non-canonical splicing
+    ``EXTENSIVE``; ``force`` always applies them; ``off`` never does."""
     jaccard_clip: bool = True
     """Run the in-house jaccard clipping step over the Trinity transcript FASTAs
     (both de novo and genome-guided), splitting two adjacent loci fused into one
@@ -346,7 +349,6 @@ class AssemblyConfig(_StepRunSettings):
     ``jaccard_max_trough`` up to this value, so even at very low read-pair depth a dip
     shallower than this is never treated as a fusion. LOWER it to keep low-coverage
     clipping stringent; raise it to allow splitting on fainter low-coverage troughs."""
-    splice_permissive: bool = False
     diagnose_softclips: bool = True
 
     # --- Genome-guided assembly (StringTie) stringency ---
@@ -433,37 +435,20 @@ class AssemblyConfig(_StepRunSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def aligner_bam(self) -> str:
-        """The read BAM downstream genome-guided steps (StringTie, SL read-side) use.
+        """The read BAM downstream genome-guided steps (Trinity gg, SL read-side) use.
 
-        segemehl's BAM when it was selected explicitly, or when ``auto`` escalated
-        to a segemehl re-map after detecting extensive non-canonical splicing (its
-        BAM is then on disk); otherwise STAR's. The escalation makes segemehl's
-        splice-agnostic mapping — not STAR's canonical-biased one — the basis for
-        genome-guided assembly.
+        minimap2 is the sole aligner, so this is a single constant; the escalation
+        to non-canonical mapping overwrites this same BAM in place.
         """
-        seg = "segemehl_Aligned.sortedByCoord.out.bam"
-        if self.aligner == "segemehl" or (
-            self.aligner == "auto" and (self.work_dir / seg).exists()
-        ):
-            return seg
-        return "STAR_Aligned.sortedByCoord.out.bam"
+        return "minimap2_Aligned.sortedByCoord.out.bam"
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def reads_args_star(self) -> list[str]:
+    def reads_args_minimap2(self) -> list[str]:
         if self.left_reads and self.right_reads:
             return [str(self.left_reads), str(self.right_reads)]
         elif self.single_reads:
             return [str(self.single_reads)]
-        raise ValueError("No read files provided")
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def reads_args_segemehl(self) -> list[str]:
-        if self.left_reads and self.right_reads:
-            return ["-q", str(self.left_reads), "-p", str(self.right_reads)]
-        elif self.single_reads:
-            return ["-q", str(self.single_reads)]
         raise ValueError("No read files provided")
 
     @computed_field  # type: ignore[prop-decorator]

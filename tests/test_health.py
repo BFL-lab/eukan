@@ -158,13 +158,13 @@ class TestToolRegistry:
             else:
                 assert len(tool.required_by) > 0
 
-    def test_segemehl_registered(self):
-        """segemehl (bioconda 0.3.4) is registered for the assemble pipeline."""
-        seg = {t.name: t for t in load_tools()}["segemehl"]
-        assert seg.binary == "segemehl.x"
-        assert seg.conda_package == "segemehl"
-        assert seg.min_version == "0.3.4"
-        assert "assemble" in seg.required_by
+    def test_minimap2_registered(self):
+        """minimap2 (bioconda >= 2.29 for splice:sr) is registered for assemble."""
+        mm2 = {t.name: t for t in load_tools()}["minimap2"]
+        assert mm2.binary == "minimap2"
+        assert mm2.conda_package == "minimap2"
+        assert mm2.min_version == "2.29"
+        assert "assemble" in mm2.required_by
 
 
 class TestRunChecks:
@@ -253,7 +253,7 @@ class TestGenerateEnv:
         content = generate_environment_yml()
         assert content.count("- spaln") == 1
 
-    def test_includes_segemehl(self):
-        """segemehl is emitted from tools.toml with its bioconda version pin."""
+    def test_includes_minimap2(self):
+        """minimap2 is emitted from tools.toml with its bioconda version pin."""
         content = generate_environment_yml()
-        assert "segemehl>=0.3.4" in content
+        assert "minimap2>=2.29" in content

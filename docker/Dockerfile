@@ -12,9 +12,13 @@
 FROM condaforge/mambaforge:latest AS builder
 
 # System packages needed for building fitild and spaln from source, plus
-# curl/xz to fetch and unpack the pre-built combinr release tarball.
+# curl/xz to fetch and unpack the pre-built combinr release tarball. jq must be
+# on PATH before `mamba env create`: bioconductor data packages (pulled in
+# transitively by trinity's R stack, e.g. bioconductor-genomeinfodbdata) run a
+# post-link script that calls yq -> jq to parse their data-URL JSON, and the
+# mambaforge base image does not ship jq — without it the env create aborts.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git autoconf curl ca-certificates xz-utils \
+    build-essential git autoconf curl ca-certificates xz-utils jq \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
@@ -139,7 +143,9 @@ RUN genemark_tar=$(ls /tmp/_genemark/gmes_linux_64*.tar.gz 2>/dev/null | head -1
 #   - AUGUSTUS pre-shipped species (165 of 166) — eukan always trains from
 #     scratch via new_species.pl using the `generic` template
 #   - GeneMark GeneMark-E-tests + ProtHint — test data + EP+ mode (unused)
-#   - bin/k8 — minimap2 JS shell helper, no consumer here
+#   - bin/k8 — JS shell for minimap2's paftools.js only; eukan calls the
+#     minimap2 binary directly (BAM via samtools/pysam), never paftools, so the
+#     read/transcript mapping is unaffected by removing it
 # ---------------------------------------------------------------------------
 RUN find /opt/conda/envs/eukan -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true \
     && find /opt/conda/envs/eukan -name "*.a" -delete 2>/dev/null || true \

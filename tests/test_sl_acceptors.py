@@ -57,7 +57,7 @@ def _make_bam(path, reads, ref="chr1", ref_len=100_000):
 
 def _config(tmp_path, **kw):
     return AssemblyConfig(
-        genome=tmp_path / "g.fa", work_dir=tmp_path, aligner="segemehl", num_cpu=1, **kw
+        genome=tmp_path / "g.fa", work_dir=tmp_path, num_cpu=1, **kw
     )
 
 
@@ -151,7 +151,7 @@ def test_consensus_none_without_signal(tmp_path):
 
 def test_detect_pools_reads_and_de_novo(tmp_path):
     cfg = _config(tmp_path, sl_sequence=SL)
-    _make_bam(tmp_path / "segemehl_Aligned.sortedByCoord.out.bam",
+    _make_bam(tmp_path / "minimap2_Aligned.sortedByCoord.out.bam",
               [("r1", 0, 100, [(4, 10), (0, 30)], SL + "A" * 30)])           # acceptor 101 (+)
     _make_bam(tmp_path / "trinity-denovo.genome.bam",
               [("t1", 0, 100, [(0, 10), (1, 10), (0, 10)], "A" * 10 + SL + "A" * 10)])  # 111 (+)
@@ -166,7 +166,7 @@ def test_detect_pools_reads_and_de_novo(tmp_path):
 def test_detect_clusters_and_unions_sources(tmp_path):
     cfg = _config(tmp_path, sl_sequence=SL, sl_cluster_window=5)
     # Two acceptors 2 bp apart (within the window) from different sources → one site.
-    _make_bam(tmp_path / "segemehl_Aligned.sortedByCoord.out.bam",
+    _make_bam(tmp_path / "minimap2_Aligned.sortedByCoord.out.bam",
               [("r1", 0, 100, [(4, 10), (0, 30)], SL + "A" * 30)])                       # 101
     _make_bam(tmp_path / "trinity-denovo.genome.bam",
               [("t1", 0, 102, [(4, 10), (0, 30)], SL + "A" * 30)])                       # 103
@@ -221,7 +221,7 @@ def test_detect_is_orientation_aware(tmp_path):
 
 def test_detect_noop_without_signal(tmp_path):
     cfg = _config(tmp_path)  # no override, no verdict, no de novo signal
-    _make_bam(tmp_path / "segemehl_Aligned.sortedByCoord.out.bam",
+    _make_bam(tmp_path / "minimap2_Aligned.sortedByCoord.out.bam",
               [("r1", 0, 100, [(0, 30)], "A" * 30)])  # clean, no clip
     detect_sl_acceptors(cfg)
 
@@ -323,7 +323,7 @@ def test_detect_adapter_only_is_noop(tmp_path):
     """S. pombe in miniature: the only soft-clip / insertion signal is Illumina
     adapter read-through, so no SL consensus is recovered and no acceptors written."""
     cfg = _config(tmp_path)
-    _make_bam(tmp_path / "segemehl_Aligned.sortedByCoord.out.bam",
+    _make_bam(tmp_path / "minimap2_Aligned.sortedByCoord.out.bam",
               [("r1", 0, 100, [(0, 30), (4, 16)], "A" * 30 + ADAPT16)])  # trailing adapter clip
     _make_bam(tmp_path / "trinity-denovo.genome.bam", _denovo_ins_reads(3, ADAPT16, "a"))
     detect_sl_acceptors(cfg)

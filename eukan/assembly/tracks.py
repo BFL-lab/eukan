@@ -7,7 +7,7 @@ downstream evidence step (strand_correct → defuse → sl_cut → combinr) proc
 the two tracks uniformly, replacing the old "one de novo set + one StringTie
 GFF3" special-casing.
 
-``segemehl._TRANSCRIPT_SETS`` is the single source of truth for which tracks
+``bam_utils._TRANSCRIPT_SETS`` is the single source of truth for which tracks
 exist; everything here is derived from it so adding/removing a track is a
 one-line change there.
 """
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from eukan.assembly.segemehl import _TRANSCRIPT_SETS
+from eukan.assembly.bam_utils import _TRANSCRIPT_SETS
 
 # Per-track model-file variants, latest-wins (most-processed first). Each is
 # ``<stem>{suffix}`` where ``<stem>`` is e.g. ``trinity-denovo.genome``:
@@ -29,7 +29,7 @@ _MODEL_VARIANTS = (".defuse.gff3", ".stranded.gff3", ".gff3")
 def mapped_transcript_stems() -> tuple[str, ...]:
     """The ``<assembler>.genome`` model-file prefixes for the mapped tracks.
 
-    Derived from ``segemehl._TRANSCRIPT_SETS`` — e.g.
+    Derived from ``bam_utils._TRANSCRIPT_SETS`` — e.g.
     ``("trinity-denovo.genome", "trinity-gg.genome")``. Append a variant suffix
     (``.gff3``, ``.stranded.gff3``, ``.defuse.gff3``, ``.maxintron.gff3``,
     ``.cut.gff3``) to name that track's file.

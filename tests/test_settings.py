@@ -138,23 +138,23 @@ class TestAssemblyConfig:
 
         assert config.min_intron_len == 20
         assert config.max_intron_len == 5000
-        assert config.align_mode == "Local"
+        assert config.non_canonical == "auto"
         assert config.name == "genome"
 
-    def test_reads_args_star(self, tmp_path):
+    def test_reads_args_minimap2(self, tmp_path):
         genome = tmp_path / "genome.fa"
         genome.touch()
         left = tmp_path / "left.fq"
         right = tmp_path / "right.fq"
         config = AssemblyConfig(genome=genome, left_reads=left, right_reads=right)
-        assert config.reads_args_star == [str(left), str(right)]
+        assert config.reads_args_minimap2 == [str(left), str(right)]
 
     def test_reads_args_single(self, tmp_path):
         genome = tmp_path / "genome.fa"
         genome.touch()
         single = tmp_path / "reads.fq"
         config = AssemblyConfig(genome=genome, single_reads=single)
-        assert config.reads_args_star == [str(single)]
+        assert config.reads_args_minimap2 == [str(single)]
 
     def test_memory_gb_default_uses_meminfo(self, tmp_path):
         genome = tmp_path / "genome.fa"

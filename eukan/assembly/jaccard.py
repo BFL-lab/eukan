@@ -38,8 +38,6 @@ Jaccard clipping needs read PAIRS; with single-end reads the step is a no-op.
 
 from __future__ import annotations
 
-import math
-import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,17 +47,11 @@ import pysam
 from Bio import SeqIO
 from Bio.Seq import Seq
 
-from eukan.assembly.star import (
-    _STAR_BAM_SORT_RAM,
-    _STAR_GENOME_GENERATE_RAM,
-    _is_gzipped,
-)
-from eukan.exceptions import ExternalToolError
+from eukan.assembly.minimap2 import map_reads_to_transcripts
 from eukan.gff import create_gff_db
 from eukan.gff.io import iter_assembled_sequences
 from eukan.infra.genome import ContigIndex
 from eukan.infra.logging import get_logger
-from eukan.infra.runner import run_cmd
 from eukan.settings import AssemblyConfig
 
 log = get_logger(__name__)
@@ -346,18 +338,6 @@ def split_fasta_record(seq: str, clips: list[int], min_segment: int) -> list[str
 # ---------------------------------------------------------------------------
 
 
-def _sa_index_nbases(total_ref_len: int) -> str:
-    """STAR ``--genomeSAindexNbases`` scaled to the reference total length.
-
-    STAR's own recommendation: ``min(14, log2(totalLength)/2 - 1)``. A transcript
-    set spans 1 Mb-200 Mb, so unlike a genome index this must be computed.
-    """
-    if total_ref_len <= 0:
-        return "2"
-    n = int(math.log2(total_ref_len) / 2 - 1)
-    return str(min(14, max(2, n)))
-
-
 def _genome_stats(fasta: Path) -> tuple[int, int]:
     """Total sequence length and sequence count in *fasta* (one pass)."""
     total = n = 0
@@ -365,79 +345,6 @@ def _genome_stats(fasta: Path) -> tuple[int, int]:
         total += len(rec.seq)
         n += 1
     return total, n
-
-
-def _chr_bin_nbits(total_ref_len: int, n_seqs: int) -> str:
-    """STAR ``--genomeChrBinNbits`` for a many-short-reference index.
-
-    STAR's guidance: ``min(18, log2(totalLength / numReferences))``. A de novo
-    transcript set has tens of thousands of short contigs, so the default (18 =>
-    256 kb bins per contig) would waste enormous RAM; scaling it down is required.
-    """
-    if total_ref_len <= 0 or n_seqs <= 0:
-        return "18"
-    return str(min(18, max(4, int(math.log2(max(total_ref_len // n_seqs, 16))))))
-
-
-def _star_map_to_transcripts(config: AssemblyConfig, fasta: Path, tag: str) -> Path:
-    """Map paired reads to *fasta* ungapped (no introns); return a sorted+indexed BAM.
-
-    Builds a transcript-set STAR index, maps with ``--alignEndsType EndToEnd``
-    and ``--alignIntronMax 1`` (forbids spliced alignment — transcripts have no
-    introns), then sorts and indexes. The index dir is removed afterwards.
-    """
-    wd = config.work_dir
-    index_dir = wd / f"jaccard_index_{tag}"
-    prefix = f"jaccard_{tag}_"
-    bam = wd / f"{prefix}Aligned.sortedByCoord.out.bam"
-
-    total_len, n_seqs = _genome_stats(fasta)
-    shutil.rmtree(index_dir, ignore_errors=True)
-    index_dir.mkdir()
-    run_cmd(
-        [
-            "STAR",
-            "--genomeSAindexNbases", _sa_index_nbases(total_len),
-            "--genomeChrBinNbits", _chr_bin_nbits(total_len, n_seqs),
-            "--limitGenomeGenerateRAM", _STAR_GENOME_GENERATE_RAM,
-            "--runThreadN", str(config.num_cpu),
-            "--runMode", "genomeGenerate",
-            "--genomeDir", str(index_dir),
-            "--genomeFastaFiles", str(fasta),
-        ],
-        cwd=wd,
-    )
-
-    reads = config.reads_args_star
-    zcat_args = (
-        ["--readFilesCommand", "zcat"]
-        if Path(reads[0]).suffix in (".gz", ".gzip") or _is_gzipped(Path(reads[0]))
-        else []
-    )
-    quality_args = ["--outQSconversionAdd", "-31"] if config.phred_quality == 64 else []
-    star_cmd = [
-        "STAR",
-        "--runThreadN", str(config.num_cpu),
-        "--genomeDir", str(index_dir),
-        "--readFilesIn", *reads,
-        "--alignEndsType", "EndToEnd",
-        "--alignIntronMax", "1",       # forbid introns: ungapped mapping to transcripts
-        "--alignMatesGapMax", str(_MAX_INSERT),
-        "--outSAMtype", "BAM", "SortedByCoordinate",
-        "--outFileNamePrefix", prefix,
-        "--limitBAMsortRAM", _STAR_BAM_SORT_RAM,
-        *zcat_args,
-        *quality_args,
-    ]
-    try:
-        run_cmd(star_cmd, cwd=wd)
-    except ExternalToolError:
-        log.warning("STAR failed mapping reads to %s, retrying with STARlong.", fasta.name)
-        run_cmd(["STARlong", *star_cmd[1:]], cwd=wd)
-
-    run_cmd(["samtools", "index", bam.name], cwd=wd)
-    shutil.rmtree(index_dir, ignore_errors=True)
-    return bam
 
 
 def iter_fragment_spans(
@@ -505,7 +412,7 @@ def _clip_knobs(config: AssemblyConfig) -> _ClipKnobs:
 
 def _clip_one_fasta(config: AssemblyConfig, src: Path, out: Path) -> tuple[int, int, int]:
     """Jaccard-clip every record in *src* into *out*; return (n_in, n_out, n_clipped)."""
-    bam = _star_map_to_transcripts(config, src, out.name.replace(".fasta", ""))
+    bam = map_reads_to_transcripts(config, src, out.name.replace(".fasta", ""))
 
     handle = pysam.AlignmentFile(str(bam), "rb")
     ref_len = dict(zip(handle.references, handle.lengths, strict=False))
@@ -872,7 +779,7 @@ def _clip_stringtie_gtf(config: AssemblyConfig) -> tuple[int, int]:
 
     spliced = wd / "stringtie.spliced.fasta"
     _write_spliced_fasta(models, config.genome, spliced)
-    bam = _star_map_to_transcripts(config, spliced, "stringtie")
+    bam = map_reads_to_transcripts(config, spliced, "stringtie")
 
     handle = pysam.AlignmentFile(str(bam), "rb")
     ref_len = dict(zip(handle.references, handle.lengths, strict=False))

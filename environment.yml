@@ -46,15 +46,14 @@ dependencies:
   - codingquarry>=2.0
   - diamond
   - genomethreader>=1.7
+  - minimap2>=2.29
   - repeatmasker>=4.1
   - repeatmodeler>=2.0
   - rmblast
   - samtools>=1.20
-  - segemehl>=0.3.4
   - snap
   - spades>=4.3
   - spaln>=3.0
-  - star>=2.7
   - stringtie>=3.0
   - table2asn>=1.28
   - trf>=4.09

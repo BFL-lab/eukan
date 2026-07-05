@@ -9,10 +9,9 @@ from eukan.assembly.combinr import run_combinr
 from eukan.assembly.defuse import run_defuse
 from eukan.assembly.jaccard import run_jaccard
 from eukan.assembly.max_intron import run_max_intron_split
-from eukan.assembly.segemehl import map_reads_segemehl
+from eukan.assembly.minimap2 import map_reads_minimap2, map_transcripts_minimap2
 from eukan.assembly.sl_acceptors import detect_sl_acceptors
 from eukan.assembly.sl_cut import run_sl_cut
-from eukan.assembly.star import map_reads, map_reads_auto, map_transcripts
 from eukan.assembly.strand_correction import run_strand_correction
 from eukan.assembly.trinity import run_trinity
 from eukan.infra.artifacts import Artifact
@@ -36,7 +35,7 @@ from eukan.settings import AssemblyConfig
 
 def _resolved_transcript_queries(config: AssemblyConfig) -> list[Path]:
     """The transcript FASTAs map_transcripts maps (the jaccard sibling if present)."""
-    from eukan.assembly.segemehl import _TRANSCRIPT_SETS, _resolve_query
+    from eukan.assembly.bam_utils import _TRANSCRIPT_SETS, _resolve_query
 
     return [_resolve_query(config.work_dir, name) for name, _ in _TRANSCRIPT_SETS]
 
@@ -149,30 +148,21 @@ def _defuse_scalars(config: AssemblyConfig) -> list[str]:
     ]
 
 
-def _aligner_step(aligner: str) -> StepSpec:
-    """The read-mapping StepSpec for the selected aligner.
-
-    ``auto`` (default) and ``star`` share the ``star`` step (STAR runs first either
-    way); ``auto`` additionally re-maps with segemehl when non-canonical splicing is
-    extensive (see :func:`star.map_reads_auto`). ``segemehl`` maps with segemehl only.
-    """
-    if aligner == "segemehl":
-        return StepSpec(
-            "segemehl", map_reads_segemehl,
-            "segemehl_Aligned.sortedByCoord.out.bam", "--run-segemehl",
-        )
+def _read_mapping_step() -> StepSpec:
+    """The read-mapping StepSpec: minimap2 (splice:sr), with the non-canonical
+    escalation handled inside :func:`minimap2.map_reads_minimap2`."""
     return StepSpec(
-        "star", map_reads_auto if aligner == "auto" else map_reads,
-        "STAR_Aligned.sortedByCoord.out.bam", "-A / --run-star",
+        "minimap2", map_reads_minimap2,
+        "minimap2_Aligned.sortedByCoord.out.bam", "-A / --run-minimap2",
     )
 
 
-def _steps_for(aligner: str) -> list[StepSpec]:
-    """Assembly steps: <aligner> → trinity (de novo + genome-guided) → jaccard
+def _steps_for() -> list[StepSpec]:
+    """Assembly steps: minimap2 → trinity (de novo + genome-guided) → jaccard
     → map_transcripts → strand_correct → defuse → max_intron_split → sl_detect
     → sl_cut → combinr."""
     return [
-        _aligner_step(aligner),
+        _read_mapping_step(),
         # Trinity assembles both de novo and genome-guided transcript FASTAs;
         # genome-guided reads the aligner BAM (config.aligner_bam) only to cluster
         # reads per locus, so its output is still a transcript FASTA mapped back to
@@ -188,7 +178,7 @@ def _steps_for(aligner: str) -> list[StepSpec]:
         # inert, since is_step_complete never reaches the fingerprint check.
         StepSpec("jaccard", run_jaccard, None, "--run-jaccard"),
         StepSpec(
-            "map_transcripts", map_transcripts,
+            "map_transcripts", map_transcripts_minimap2,
             "trinity-denovo.genome.bam", "--run-map-transcripts",
             inputs=_resolved_transcript_queries,
         ),
@@ -242,11 +232,10 @@ def _steps_for(aligner: str) -> list[StepSpec]:
 # Within-pipeline data dependencies: re-running a step (via its --run-* flag)
 # invalidates every step that consumes its output, so those are forced too. The
 # read aligner is cascaded because Trinity genome-guided (config.aligner_bam) and
-# SL read-side detection read its BAM — and in 'auto' mode that BAM may switch from
-# STAR to segemehl. Each edge below is "producer -> direct consumers".
+# SL read-side detection read its BAM. Each edge below is "producer -> direct
+# consumers".
 _DOWNSTREAM: dict[str, tuple[str, ...]] = {
-    "star": ("trinity", "sl_detect"),
-    "segemehl": ("trinity", "sl_detect"),
+    "minimap2": ("trinity", "sl_detect"),
     "trinity": ("jaccard",),
     # jaccard rewrites the Trinity FASTAs into .jaccard.fasta siblings that
     # map_transcripts maps, so re-running it re-runs map_transcripts (which
@@ -278,9 +267,7 @@ def _expand_downstream(selected: set[str]) -> set[str]:
 
 def force_steps_from_run_flags(
     *,
-    aligner: str = "star",
-    run_star: bool = False,
-    run_segemehl: bool = False,
+    run_minimap2: bool = False,
     run_trinity: bool = False,
     run_jaccard: bool = False,
     run_map_transcripts: bool = False,
@@ -298,13 +285,12 @@ def force_steps_from_run_flags(
     *and every downstream step that consumes its output* (``_DOWNSTREAM``): e.g.
     ``--run-map-transcripts`` re-maps the Trinity transcripts and then re-runs
     strand_correct, defuse, max_intron_split, sl_detect, sl_cut, and combinr, which
-    read the new BAM (directly or transitively). The inactive aligner's flag is a
-    harmless no-op. Returns keys in pipeline order.
+    read the new BAM (directly or transitively). Returns keys in pipeline order.
     """
-    steps = _steps_for(aligner)
+    steps = _steps_for()
     valid = {s.name for s in steps}
     flags = {
-        "star": run_star, "segemehl": run_segemehl, "trinity": run_trinity,
+        "minimap2": run_minimap2, "trinity": run_trinity,
         "jaccard": run_jaccard,
         "map_transcripts": run_map_transcripts,
         "strand_correct": run_strand_correct, "defuse": run_defuse,
@@ -329,7 +315,7 @@ def run_assembly(
 ) -> None:
     """Run the assembly pipeline with manifest tracking."""
     run_simple_pipeline(
-        ASSEMBLY, _steps_for(config.aligner), config,
+        ASSEMBLY, _steps_for(), config,
         force_steps=force_steps,
         skip=lambda s: (s.name == "jaccard" and not config.jaccard_clip)
         or (s.name == "defuse" and not (config.defuse and config.uniprot_db is not None)),
