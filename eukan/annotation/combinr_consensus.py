@@ -153,7 +153,9 @@ def run_combinr_consensus(
     """Build consensus gene models with ``combinr consensus`` into ``consensus_models.gff3``.
 
     Transcript evidence (when present) enables ``--alt-splice`` so combinr emits
-    alternative isoforms with UTRs derived from the consensus CDS.
+    alternative isoforms with UTRs derived from the consensus CDS. Every run also
+    writes ``combinr.evidence_report.txt`` beside the models: a QC report of the
+    evidence supporting each gene's exons and introns (EVM ``.evm.out`` style).
     """
     log.info("Running combinr consensus model building...")
     have_transcripts = _stage_combinr_inputs(config, sdir, evidence, transcripts)
@@ -166,6 +168,8 @@ def run_combinr_consensus(
         "--genetic-code", str(config.genetic_code),
         "-t", str(config.num_cpu),
         "--format", "gff3",
+        # QC side-output; the flag needs combinr >= 0.3.0.
+        "--evidence-report", "combinr.evidence_report.txt",
     ]
     if (sdir / "prot.match.gff3").exists():
         cmd += ["--protein-alignments", "prot.match.gff3"]
@@ -178,4 +182,5 @@ def run_combinr_consensus(
         ]
 
     run_cmd(cmd, cwd=sdir, out_file="consensus_models.gff3")
+    log.info("combinr evidence report: %s", sdir / "combinr.evidence_report.txt")
     return sdir / "consensus_models.gff3"

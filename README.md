@@ -511,7 +511,7 @@ The annotation pipeline (`eukan annotate`) runs the following steps:
 3. **Protein alignment**:  Spliced alignment via spaln (intron-rich genomes, > 25% introns/gene) or GenomeThreader (intron-poor). See [Protein alignment modes](#protein-alignment-modes).
 4. **AUGUSTUS**:  Train species-specific parameters from concordant GeneMark/protein models, then predict genes using protein + RNA-seq hints. Non-canonical splice sites (e.g., AT-AC) are allowed automatically when supported by sufficient junction evidence from the minimap2 read alignments (>= 10 junctions, >= 50 unique reads, and >= 1% of all junctions); `--splice-permissive` drops the 1% share requirement so rarer types pass.
 5. **SNAP**:  Train and predict (all kingdoms). **CodingQuarry** also runs for fungus/protist genomes.
-6. **combinr consensus**:  Build weighted consensus gene models from all evidence sources, folding in UTRs and alternative isoforms from the transcript evidence in a single pass.
+6. **combinr consensus**:  Build weighted consensus gene models from all evidence sources, folding in UTRs and alternative isoforms from the transcript evidence in a single pass. Next to the models, `consensus_models/combinr.evidence_report.txt` lists for each gene the evidence supporting every exon and intron (EVM `.evm.out` style); it uses combinr's gene IDs from `consensus_models/consensus_models.gff3`, which `final.gff3` replaces with locus tags.
 7. **Final output**:  Assign sequential locus tags and correct CDS phases. Non-overlapping transcript ORFs not captured by the consensus are patched into the final model set.
 
 Output: `final.gff3` in the working directory.

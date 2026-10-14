@@ -247,6 +247,7 @@ def test_run_combinr_consensus_command_with_transcripts(tmp_path, monkeypatch):
     assert "--alt-splice" in cmd
     # stringent-overlap accompanies the alt-splice isoform grouping; 0.0 = off default.
     assert cmd[cmd.index("--stringent-overlap") + 1] == "0.0"
+    assert cmd[cmd.index("--evidence-report") + 1] == "combinr.evidence_report.txt"
     assert kw["out_file"] == "consensus_models.gff3"
 
 
@@ -284,6 +285,8 @@ def test_run_combinr_consensus_command_without_transcripts(tmp_path, monkeypatch
     assert "--alt-splice" not in cmd
     assert "--stringent-overlap" not in cmd  # rides with the alt-splice grouping only
     assert "--protein-alignments" in cmd  # protein evidence still passed
+    # the evidence report is always on, not tied to transcript evidence
+    assert cmd[cmd.index("--evidence-report") + 1] == "combinr.evidence_report.txt"
 
 
 def test_combinr_path_override(tmp_path, monkeypatch):
@@ -428,3 +431,17 @@ def test_combinr_consensus_end_to_end(tmp_path, combinr_bin):
         )
         for m in cds
     ), "expected a UTR-bearing isoform from the wider transcript"
+
+    # QC side-output: per gene a "# <gene ID> <locus> orient(...) score(...) ..."
+    # header, then the evidence behind each exon/intron. Header IDs are combinr's
+    # own, i.e. those in consensus_models.gff3 (final.gff3 renames genes).
+    sdir = tmp_path / "consensus_models"
+    report = sdir / "combinr.evidence_report.txt"
+    assert report.exists() and report.stat().st_size > 0
+    gene_ids = {
+        cc._parse_attrs(row[8])["ID"]
+        for row in _read_rows(sdir / "consensus_models.gff3")
+        if row[2] == "gene"
+    }
+    headers = [ln[2:].split()[0] for ln in report.read_text().splitlines() if ln.startswith("# ")]
+    assert any(h in gene_ids for h in headers), (headers, gene_ids)
