@@ -164,12 +164,12 @@ required_by = ["assemble", "annotate"]
 # Rust tool, not on conda. The Docker image installs the pinned pre-built
 # release binary, and scripts/install-extras.sh fetches the same binary for a
 # local conda env. To install by hand, download the archive for your platform
-# from https://github.com/BFL-lab/combinr/releases (v0.1.1), extract `combinr`,
+# from https://github.com/BFL-lab/combinr/releases (v0.3.0), extract `combinr`,
 # and put it on PATH (or set the combinr_path config /
 # EUKAN_ASSEMBLE_COMBINR_PATH). Consolidates transcript-to-genome BAMs into
 # non-redundant models (assemble) and builds weighted consensus gene models
 # (annotate).
-install_hint = "Download the combinr v0.1.1 release binary from https://github.com/BFL-lab/combinr/releases and put it on PATH (or run scripts/install-extras.sh, or set EUKAN_ASSEMBLE_COMBINR_PATH)."
+install_hint = "Download the combinr v0.3.0 release binary from https://github.com/BFL-lab/combinr/releases and put it on PATH (or run scripts/install-extras.sh, or set EUKAN_ASSEMBLE_COMBINR_PATH)."
 
 [genomethreader]
 binary = "gth"
