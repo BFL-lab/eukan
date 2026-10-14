@@ -199,7 +199,6 @@ Pipeline parameters:
   -S, --strand-specific [RF|FR|R|F]
                                    Strand-specific library type (RF/FR for paired, R/F for single).
   -t, --align-mode [EndToEnd|Local] STAR alignment mode. [default: Local]
-  --splice-permissive              Allow non-canonical splice sites (GC-AG, AT-AC).
   -c, --code INTEGER               NCBI genetic code table number. [default: 1]
   -m, --min-intron INTEGER         Min intron length. [default: 20]
   -M, --max-intron INTEGER         Max intron length. [default: 5000]
