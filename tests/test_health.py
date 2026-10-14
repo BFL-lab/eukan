@@ -1,5 +1,7 @@
 """Tests for eukan.infra.health and eukan.infra.conda_env."""
 
+import tomllib
+from pathlib import Path
 
 from eukan.infra.conda_env import generate_environment_yml
 from eukan.infra.health import (
@@ -257,3 +259,11 @@ class TestGenerateEnv:
         """minimap2 is emitted from tools.toml with its bioconda version pin."""
         content = generate_environment_yml()
         assert "minimap2>=2.29" in content
+
+    def test_python_floor_matches_pyproject(self):
+        """The conda python floor tracks pyproject's; a lower one fails at `pip: .`."""
+        pyproject = tomllib.loads(
+            (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text()
+        )
+        floor = pyproject["tool"]["poetry"]["dependencies"]["python"].split(",")[0]
+        assert f"  - python{floor}," in generate_environment_yml()

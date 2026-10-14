@@ -70,7 +70,7 @@ def generate_environment_yml() -> str:
         "",
         "dependencies:",
         "  # Python",
-        "  - python>=3.10,<3.13",
+        "  - python>=3.11,<3.13",
         "",
         "  # External tools",
         *sorted(conda_deps),
