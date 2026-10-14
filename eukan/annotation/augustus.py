@@ -41,13 +41,15 @@ _AUGUSTUS_BUILTIN_SPLICE = {"gtag", "gcag"}
 def _splice_type_to_augustus(name: str) -> str | None:
     """Convert a splice site type name (e.g. ``GC-AG``) to a 4-char AUGUSTUS value.
 
-    Returns ``None`` for entries that don't look like valid dinucleotide pairs
-    (e.g. ``"unknown"``).
+    Returns ``None`` for entries that aren't a pair of A/C/G/T dinucleotides:
+    ``"unknown"``, malformed names, and types with other bases such as ``NN-AC``
+    (junctions in assembly gaps). AUGUSTUS accepts only a/c/g/t patterns and
+    rejects the whole ``--allow_hinted_splicesites`` option if any one of them
+    contains anything else.
     """
-    parts = name.split("-")
-    if len(parts) == 2 and len(parts[0]) == 2 and len(parts[1]) == 2:
-        return (parts[0] + parts[1]).lower()
-    return None
+    if re.fullmatch(r"[ACGT]{2}-[ACGT]{2}", name.upper()) is None:
+        return None
+    return name.replace("-", "").lower()
 
 
 def _get_splice_sites_flag(config: PipelineConfig) -> list[str]:
@@ -58,7 +60,9 @@ def _get_splice_sites_flag(config: PipelineConfig) -> list[str]:
     evidence.  A type must pass both an absolute count threshold and a
     proportional threshold (fraction of total junctions) to be accepted.
     All observed types that pass are included — not just the well-known
-    semi-canonical pairs (GC-AG, AT-AC).
+    semi-canonical pairs (GC-AG, AT-AC) — except types with bases other than
+    A/C/G/T (e.g. ``NN-AC`` from junctions in assembly gaps), which AUGUSTUS
+    cannot accept; those are dropped with a warning.
 
     Falls back to a blanket allowance when ``allow_noncanonical_splice``
     is set but no summary exists.
@@ -84,14 +88,27 @@ def _get_splice_sites_flag(config: PipelineConfig) -> list[str]:
             min_reads = _MIN_UNIQUE_READS
             min_fraction = _MIN_FRACTION
 
+        non_acgt: dict[str, int] = {}
         for splice_type, stats in summary.items():
             count = stats["count"]
             fraction = count / total_junctions if total_junctions > 0 else 0.0
             if count < min_junctions or stats["unique_reads"] < min_reads or fraction < min_fraction:
                 continue
             aug_name = _splice_type_to_augustus(splice_type)
-            if aug_name and aug_name not in _AUGUSTUS_BUILTIN_SPLICE:
+            if aug_name is None:
+                # "unknown" = junction outside the genome, not a base problem
+                if splice_type != "unknown":
+                    non_acgt[splice_type] = count
+            elif aug_name not in _AUGUSTUS_BUILTIN_SPLICE:
                 allowed.add(aug_name)
+
+        if non_acgt:
+            log.warning(
+                "Ignoring %d splice-site types with non-ACGT bases "
+                "(junctions in assembly gaps?): %s",
+                len(non_acgt),
+                ", ".join(f"{t} ({n} junctions)" for t, n in non_acgt.items()),
+            )
 
     elif config.allow_noncanonical_splice:
         # No STAR evidence — blanket allowance for common non-canonical types
