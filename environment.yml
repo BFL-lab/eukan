@@ -8,7 +8,7 @@
 # Tools requiring manual installation:
 #   - genemark: Requires a license from https://topaz.gatech.edu/GeneMark/license_download.cgi
 #   - fitild: Build from source: git clone https://github.com/ogotoh/fitild && cd fitild/src && ./configure && make
-#   - combinr: Download the combinr v0.1.1 release binary from https://github.com/BFL-lab/combinr/releases and put it on PATH (or run scripts/install-extras.sh, or set EUKAN_ASSEMBLE_COMBINR_PATH).
+#   - combinr: Download the combinr v0.3.0 release binary from https://github.com/BFL-lab/combinr/releases and put it on PATH (or run scripts/install-extras.sh, or set EUKAN_ASSEMBLE_COMBINR_PATH).
 #
 # Tools bundled with parent packages (no separate install):
 #   - jellyfish: bundled with parent package

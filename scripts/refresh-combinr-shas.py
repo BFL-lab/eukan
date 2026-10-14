@@ -6,7 +6,7 @@ combinr is fetched as a pinned pre-built release binary by both the Docker image
 each verifying a per-platform SHA-256. Those checksums only exist once the combinr
 GitHub release has built its assets, so after cutting a new combinr release run::
 
-    python scripts/refresh-combinr-shas.py 0.1.1
+    python scripts/refresh-combinr-shas.py 0.3.0
 
 This downloads the per-platform release tarballs, computes their SHA-256s, and
 writes both the version and the checksums into ``docker/Dockerfile`` and
@@ -80,7 +80,7 @@ def update_dockerfile(version: str, sha: str) -> None:
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("usage: refresh-combinr-shas.py <version>  (e.g. 0.1.1)", file=sys.stderr)
+        print("usage: refresh-combinr-shas.py <version>  (e.g. 0.3.0)", file=sys.stderr)
         return 2
     version = sys.argv[1].lstrip("v")
     print(f"Fetching combinr v{version} release checksums...", file=sys.stderr)

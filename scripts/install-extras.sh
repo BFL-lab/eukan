@@ -29,7 +29,7 @@ mkdir -p "$OPT"
 # Pinned combinr release (bump VERSION and the matching SHA-256 below together;
 # after a new release builds, run scripts/refresh-combinr-shas.py <version> to
 # fill the per-platform SHA-256s automatically).
-COMBINR_VERSION="0.1.1"
+COMBINR_VERSION="0.3.0"
 
 # Verify $2's SHA-256 against $1 using whichever tool is present (sha256sum on
 # Linux, shasum on macOS). Returns non-zero on mismatch.
@@ -100,16 +100,16 @@ install_combinr() {
     case "${os}:${arch}" in
         Linux:x86_64)
             target="x86_64-unknown-linux-musl"
-            sha="913c9698124cc3891c01d738cb775bcd5918f7af57ddd499108420d1aed7c222" ;;
+            sha="f937ec44aa28d2ab50f98995a5d879c42a303d347f112c5fbdde479f113dde14" ;;
         Linux:aarch64|Linux:arm64)
             target="aarch64-unknown-linux-musl"
-            sha="ade4e82277f5f3e297deb9b76be1e9a73df2852bd2b018378effa1bc1911205b" ;;
+            sha="4ca31949a5ec430b6295bee7e2f69166a8822fff03fe5c13f06acac650d0bcca" ;;
         Darwin:x86_64)
             target="x86_64-apple-darwin"
-            sha="2a0d21a36b8c8838fed3f481a909f1e72ab27d3919524ebadc8ee592263fb3fb" ;;
+            sha="74167aa9495ccd71f87d0905abef6ac4857cacc5362fc62e45d350a4e318d54a" ;;
         Darwin:arm64|Darwin:aarch64)
             target="aarch64-apple-darwin"
-            sha="c0dfef83489ba614379a65ccb3512ead7c2ab2da414033c4ecf301f2d0a4d7dc" ;;
+            sha="2966a502e5dd38deeab79347576f2ea2d316ba4a893cad28f83ac9ad98ef2b28" ;;
         *)
             echo "    No pre-built combinr binary for ${os}/${arch}." >&2
             echo "    Download a release from https://github.com/BFL-lab/combinr/releases" >&2
