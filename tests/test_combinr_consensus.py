@@ -20,15 +20,54 @@ from eukan.settings import PipelineConfig
 
 
 def _resolve_combinr() -> Path | None:
-    """Locate a combinr binary: $COMBINR_BIN, else PATH. None → skip e2e test."""
+    """Locate a combinr binary: $COMBINR_BIN, else PATH; None if neither.
+
+    A set-but-missing $COMBINR_BIN raises instead of falling back to PATH, so a
+    mistyped path errors the e2e test rather than silently skipping it.
+    """
     env = os.environ.get("COMBINR_BIN")
-    if env and Path(env).exists():
+    if env:
+        if not Path(env).exists():
+            raise RuntimeError(f"COMBINR_BIN is set but does not exist: {env}")
         return Path(env)
     on_path = shutil.which("combinr")
     return Path(on_path) if on_path else None
 
 
-_COMBINR = _resolve_combinr()
+@pytest.fixture
+def combinr_bin() -> Path:
+    """The real combinr binary, resolved at test setup rather than import so a bad
+    $COMBINR_BIN errors only the tests that use it. Skips when none is found."""
+    path = _resolve_combinr()
+    if path is None:
+        pytest.skip("combinr binary not found (set COMBINR_BIN or add to PATH)")
+    return path
+
+
+def test_resolve_combinr_missing_env_path_raises(tmp_path, monkeypatch):
+    """A set-but-missing $COMBINR_BIN is an error, not a fall-back to PATH."""
+    missing = tmp_path / "no-such-combinr"
+    monkeypatch.setenv("COMBINR_BIN", str(missing))
+    monkeypatch.setattr(shutil, "which", lambda name: "/elsewhere/combinr")
+    with pytest.raises(RuntimeError, match="COMBINR_BIN is set but does not exist") as exc:
+        _resolve_combinr()
+    assert str(missing) in str(exc.value)
+
+
+def test_resolve_combinr_env_path_wins_over_path(tmp_path, monkeypatch):
+    binary = tmp_path / "combinr"
+    binary.write_text("")
+    monkeypatch.setenv("COMBINR_BIN", str(binary))
+    monkeypatch.setattr(shutil, "which", lambda name: "/elsewhere/combinr")
+    assert _resolve_combinr() == binary
+
+
+def test_resolve_combinr_unset_falls_back_to_path(monkeypatch):
+    monkeypatch.delenv("COMBINR_BIN", raising=False)
+    monkeypatch.setattr(shutil, "which", lambda name: f"/opt/bin/{name}")
+    assert _resolve_combinr() == Path("/opt/bin/combinr")
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    assert _resolve_combinr() is None
 
 
 def _config(tmp_path: Path, **kw) -> PipelineConfig:
@@ -332,8 +371,7 @@ def test_combinr_handoff_preserves_isoforms_and_implicit_utr(tmp_path, monkeypat
     assert "contains=" in final.read_text()
 
 
-@pytest.mark.skipif(_COMBINR is None, reason="combinr binary not found (set COMBINR_BIN or add to PATH)")
-def test_combinr_consensus_end_to_end(tmp_path):
+def test_combinr_consensus_end_to_end(tmp_path, combinr_bin):
     """Real combinr binary through build_consensus_models on minimal inputs.
 
     A transcript wider than the predicted CDS must yield an isoform with UTR;
@@ -367,7 +405,7 @@ def test_combinr_consensus_end_to_end(tmp_path):
 
     cfg = PipelineConfig(
         genome=tmp_path / "genome.fa", proteins=[tmp_path / "proteins.faa"],
-        work_dir=tmp_path, num_cpu=2, combinr_path=_COMBINR,
+        work_dir=tmp_path, num_cpu=2, combinr_path=combinr_bin,
         transcripts_fasta=tmp_path / "nr_transcripts.fasta", transcripts_gff=nr,
         rnaseq_hints=tmp_path / "hints.gff",
     )
