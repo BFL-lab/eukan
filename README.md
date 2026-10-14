@@ -212,7 +212,7 @@ Re-run steps:
   -f, --force                      Force re-run all steps.
 ```
 
-The pipeline runs STAR mapping, genome-guided + de novo Trinity assembly, and combinr transcript consolidation. STAR also profiles splice site types from junction evidence (`splice_site_summary.json`), which the annotation pipeline uses to allow non-canonical splice sites in AUGUSTUS. If no step flags (`-A`, `-T`, `--run-combinr`) are given, all steps run.
+The pipeline runs minimap2 read mapping, genome-guided + de novo Trinity assembly, and combinr transcript consolidation. The read-mapping step also profiles splice site types from junction evidence (`splice_site_summary.json`), which the annotation pipeline uses to allow non-canonical splice sites in AUGUSTUS. If no step flags (`-A`, `-T`, `--run-combinr`) are given, all steps run.
 
 #### Soft-clip + intron BAM diagnostic
 
@@ -509,7 +509,7 @@ The annotation pipeline (`eukan annotate`) runs the following steps:
 1. **ORF finding**:  Identify ORFs in transcript assemblies (if provided). Uses the configured genetic code (`-c`/`--code`) so that alternative stop codons (e.g., code 6 where TAA/TAG encode glutamine) are handled correctly.
 2. **GeneMark**:  Ab initio gene prediction (ES mode, or ET mode if RNA-seq intron hints are available with >= 150 introns). Passes `--gcode` for non-standard genetic codes (codes 6 and 26).
 3. **Protein alignment**:  Spliced alignment via spaln (intron-rich genomes, > 25% introns/gene) or GenomeThreader (intron-poor). See [Protein alignment modes](#protein-alignment-modes).
-4. **AUGUSTUS**:  Train species-specific parameters from concordant GeneMark/protein models, then predict genes using protein + RNA-seq hints. Non-canonical splice sites (e.g., AT-AC) are allowed automatically when supported by sufficient junction evidence from STAR (>= 10 junctions, >= 50 unique reads, and >= 1% of all junctions); `--splice-permissive` drops the 1% share requirement so rarer types pass.
+4. **AUGUSTUS**:  Train species-specific parameters from concordant GeneMark/protein models, then predict genes using protein + RNA-seq hints. Non-canonical splice sites (e.g., AT-AC) are allowed automatically when supported by sufficient junction evidence from the minimap2 read alignments (>= 10 junctions, >= 50 unique reads, and >= 1% of all junctions); `--splice-permissive` drops the 1% share requirement so rarer types pass.
 5. **SNAP**:  Train and predict (all kingdoms). **CodingQuarry** also runs for fungus/protist genomes.
 6. **combinr consensus**:  Build weighted consensus gene models from all evidence sources, folding in UTRs and alternative isoforms from the transcript evidence in a single pass.
 7. **Final output**:  Assign sequential locus tags and correct CDS phases. Non-overlapping transcript ORFs not captured by the consensus are patched into the final model set.

@@ -117,7 +117,7 @@ def find_or_warn(
 ) -> Path | None:
     """Like :func:`find`, but warn when a *previously produced* artifact is gone.
 
-    Optional cross-pipeline artifacts (RepeatMasker hints, the STAR splice
+    Optional cross-pipeline artifacts (RepeatMasker hints, the splice-site
     summary, ...) are produced by one pipeline and consumed by another, which
     cannot rebuild them. :func:`find` returns ``None`` for a missing one and the
     consumer falls back silently. This variant additionally logs a WARNING when

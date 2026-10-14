@@ -1,4 +1,4 @@
-"""Post-alignment processing shared across aligners (STAR, segemehl).
+"""Post-alignment processing of the RNA-seq read alignments (minimap2).
 
 Derives the splice-junction / hint / diagnostic artifacts the rest of the
 pipeline consumes, from an aligner's coordinate-sorted BAM plus a STAR-format
@@ -8,10 +8,10 @@ pipeline consumes, from an aligner's coordinate-sorted BAM plus a STAR-format
 - ``hints_introns.gff`` + ``hints_coverage.gff`` — AUGUSTUS / GeneMark hints
 - ``softclip_diagnostic_summary.json`` — trans-splicing / non-canonical verdict
 
-STAR emits ``SJ.out.tab`` natively; aligners that don't (segemehl) build an
-equivalent from the BAM's N-CIGAR junctions via :func:`sj_table_from_bam`, then
-reuse the same downstream functions so the artifacts are byte-for-byte the same
-shape STAR produced.
+minimap2 emits no junction table, so :func:`sj_table_from_bam` builds the
+``SJ.out.tab`` equivalent from the BAM's N-CIGAR junctions and the downstream
+functions consume it unchanged; the artifacts keep the shape they had when STAR
+wrote the table natively.
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ def sj_table_from_bam(
 ) -> Path:
     """Derive a STAR-format ``SJ.out.tab`` from a BAM's N-CIGAR junctions.
 
-    For aligners without a native junction table (segemehl): walk primary
+    For aligners without a native junction table (minimap2): walk primary
     alignments, tally per-junction unique (``NH==1``) / multi (``NH>1``) read
     support, classify the donor/acceptor dinucleotide into a STAR motif code +
     strand, and emit the 9-column ``SJ.out.tab`` STAR would. Reuses the BAM-walk

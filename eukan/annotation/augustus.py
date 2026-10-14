@@ -54,7 +54,7 @@ def _splice_type_to_augustus(name: str) -> str | None:
 
 
 def _get_splice_sites_flag(config: PipelineConfig) -> list[str]:
-    """Build ``--allow_hinted_splicesites`` flag from STAR splice site evidence.
+    """Build ``--allow_hinted_splicesites`` flag from RNA-seq splice junction evidence.
 
     Reads ``splice_site_summary.json`` (written by the assembly pipeline)
     to determine which non-canonical splice site types have sufficient
@@ -112,7 +112,7 @@ def _get_splice_sites_flag(config: PipelineConfig) -> list[str]:
             )
 
     elif config.allow_noncanonical_splice:
-        # No STAR evidence — blanket allowance for common non-canonical types
+        # No junction evidence — blanket allowance for common non-canonical types
         allowed = {"atac"}
 
     if allowed:

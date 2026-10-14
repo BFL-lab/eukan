@@ -159,7 +159,7 @@ eukan/
 3. Protein alignment via spaln (intron-rich) or gth (intron-poor)
    - Default: fitild intron length distribution → spaln `-yI`
    - `--spsp`: species-specific parameters via `make_eij.pl`/`make_ssp.pl` → spaln `-T` (experimental, uses separate `prot_align_ssp/` step dir)
-4. AUGUSTUS training and prediction using protein + RNA-seq hints — auto-allows non-canonical splice sites from STAR evidence (`splice_site_summary.json`; >= 10 junctions, >= 50 unique reads, >= 1% of all junctions); `--splice-permissive` drops the 1% share gate, keeping the floors
+4. AUGUSTUS training and prediction using protein + RNA-seq hints — auto-allows non-canonical splice sites from RNA-seq junction evidence (`splice_site_summary.json`, derived from the minimap2 read alignments; >= 10 junctions, >= 50 unique reads, >= 1% of all junctions); `--splice-permissive` drops the 1% share gate, keeping the floors
 5. SNAP training and prediction (fungus/protist also runs CodingQuarry)
 6. Consensus model building, weighted by evidence type, via the external `combinr consensus` engine (weighted DP), genetic-code aware, which folds UTRs and alternative isoforms in from transcript evidence in a single pass. Protein (`prot.gff3`, CDS-format) and transcript (`nr_transcripts.gff3`, flat exon) evidence are converted to `Target=` match chains; ab initio predictions and the weights file are reused as-is. Isoform-grouping stringency is tunable via `--combinr-stringent-overlap`; the binary is resolved via `--combinr-path` or PATH.
 7. Final GFF3 formatting with locus tags
