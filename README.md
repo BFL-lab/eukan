@@ -195,24 +195,71 @@ Required input:
   -s, --single PATH               Single-end reads.
 
 Pipeline parameters:
-  -n, --numcpu INTEGER             Number of CPUs. [default: all]
+  -n, --numcpu INTEGER            Number of CPU threads. [default: all]
   -S, --strand-specific [RF|FR|R|F]
-                                   Strand-specific library type (RF/FR for paired, R/F for single).
-  -t, --align-mode [EndToEnd|Local] STAR alignment mode. [default: Local]
-  -c, --code INTEGER               NCBI genetic code table number. [default: 1]
-  -m, --min-intron INTEGER         Min intron length. [default: 20]
-  -M, --max-intron INTEGER         Max intron length. [default: 5000]
-  --phred [33|64]                  Phred quality score. [default: 33]
-  -j, --jaccard-clip               Enable jaccard clipping.
+                                  Strand-specific library type (RF/FR for paired, R/F for single).
+  --non-canonical [auto|force|off]
+                                  Non-canonical splice re-mapping with minimap2 (-J 0 -C 3
+                                  --splice-flank=no): 'auto' when the soft-clip diagnostic finds
+                                  extensive non-canonical splicing, 'force' always, 'off' never.
+                                  [default: auto]
+  --diagnose-softclips / --no-diagnose-softclips
+                                  Run the soft-clip + intron BAM diagnostic after read mapping
+                                  (trans-splicing, non-canonical splicing; gates --non-canonical
+                                  auto). [default: on]
+  -c, --code INTEGER              NCBI genetic code table number. [default: 1]
+  -m, --min-intron INTEGER        Minimum intron length. [default: 20]
+  -M, --max-intron INTEGER        Maximum intron length, hard-imposed: models are split at longer
+                                  introns and combinr/Trinity enforce it (0 disables the split).
+                                  [default: 5000]
+  --phred [33|64]                 Phred quality score. [default: 33]
+  -j, --jaccard-clip / --no-jaccard-clip
+                                  In-house jaccard clipping of fused Trinity transcripts (needs
+                                  paired reads). [default: on]
+  --jaccard-greediness FLOAT      Jaccard low-coverage sensitivity (0 = Trinity's fixed floor).
+                                  [default: 1.5]
+  --jaccard-max-trough FLOAT      Jaccard trough-depth gate; lower = more stringent. [default: 0.05]
+  --jaccard-min-delta FLOAT       Jaccard flanking-hill rise; higher = more stringent.
+                                  [default: 0.35]
+  --jaccard-max-adaptive-trough FLOAT
+                                  Ceiling on the coverage-adaptive trough gate. [default: 0.30]
+  --combinr-stringent-overlap FLOAT
+                                  combinr --stringent-overlap: min span overlap (% of the shorter
+                                  transcript) to cluster (0 = any overlap). [default: 0]
+  --sl-sequence TEXT              Override the spliced-leader sequence for trans-splice acceptor
+                                  detection.
+  --sl-cluster-window INTEGER     Genomic window (bp) for consolidating SL acceptor sites.
+                                  [default: 5]
+  --adapter-sequence TEXT         Extra adapter sequence to exclude from SL detection (repeatable).
+  --sl-adapter-filter / --no-sl-adapter-filter
+                                  Screen SL candidates against known sequencing adapters.
+                                  [default: on]
+  --combinr-path PATH             Path to the combinr binary (else PATH or
+                                  $EUKAN_ASSEMBLE_COMBINR_PATH).
+  --uniprot PATH                  SwissProt FASTA or diamond .dmnd: enables homology splice-strand
+                                  correction (unstranded libraries) and --defuse.
+  --defuse                        Split chimeric transcripts with >=2 distinct SwissProt hits
+                                  (requires --uniprot).
+  --defuse-overlap-tolerance FLOAT
+                                  Max fractional overlap for two hits to count as distinct.
+                                  [default: 0.10]
+  --memory-gb INTEGER             Assembly memory cap in GiB. [default: 60% of available, min 4]
 
 Re-run steps:
-  -A, --run-star                   Force re-run STAR read mapping.
-  -T, --run-trinity                Force re-run Trinity assembly.
-  --run-combinr                    Force re-run combinr transcript consolidation.
-  -f, --force                      Force re-run all steps.
+  -A, --run-minimap2              Force re-run minimap2 read mapping.
+  -T, --run-trinity               Force re-run Trinity de novo + genome-guided assembly.
+  --run-jaccard                   Force re-run jaccard clipping of fused transcripts.
+  --run-map-transcripts           Force re-run minimap2 transcript→genome mapping.
+  --run-strand-correct            Force re-run homology-based splice-strand correction.
+  --run-defuse                    Force re-run homology-based transcript de-fusion.
+  --run-max-intron-split          Force re-run the max-intron split of transcript models.
+  --run-sl-detect                 Force re-run SL trans-splice acceptor detection.
+  --run-sl-cut                    Force re-run the genomic SL cut of transcript models.
+  --run-combinr                   Force re-run combinr transcript consolidation.
+  -f, --force                     Force re-run all steps (ignore cached outputs).
 ```
 
-The pipeline runs minimap2 read mapping, genome-guided + de novo Trinity assembly, and combinr transcript consolidation. The read-mapping step also profiles splice site types from junction evidence (`splice_site_summary.json`), which the annotation pipeline uses to allow non-canonical splice sites in AUGUSTUS. If no step flags (`-A`, `-T`, `--run-combinr`) are given, all steps run.
+The pipeline runs minimap2 read mapping, genome-guided + de novo Trinity assembly, jaccard clipping of fused transcripts, minimap2 transcript→genome mapping, homology splice-strand correction (with `--uniprot`) and de-fusion (with `--defuse`), the max-intron split, spliced-leader acceptor detection and cut, and combinr transcript consolidation. The read-mapping step also profiles splice site types from junction evidence (`splice_site_summary.json`), which the annotation pipeline uses to allow non-canonical splice sites in AUGUSTUS. With no step flags, every enabled step runs and steps already completed in the work dir are skipped. A step flag (`-A`/`--run-minimap2`, `-T`/`--run-trinity`, `--run-jaccard`, `--run-map-transcripts`, `--run-strand-correct`, `--run-defuse`, `--run-max-intron-split`, `--run-sl-detect`, `--run-sl-cut`, `--run-combinr`) re-runs only that step plus every downstream step that consumes its output; `-f` alone re-runs every step.
 
 #### Soft-clip + intron BAM diagnostic
 

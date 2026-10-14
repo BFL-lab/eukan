@@ -234,7 +234,7 @@ Authoritative reference for shared flag spellings and option-group layout. New s
 | `-r` | `--reference` (compare), `--rnaseq-hints` (annotate) | Different commands, no real collision. |
 | `-e` | `--evalue` | func-annot. |
 | `-w` | `--weights` | annotate. |
-| `-t` | `--template` (prep-submission), `--align-mode` (assemble) | Different commands. |
+| `-t` | `--template` | prep-submission. |
 
 **Option groups**, in display order:
 
