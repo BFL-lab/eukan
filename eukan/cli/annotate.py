@@ -73,9 +73,10 @@ from eukan.cli._framework import (
 )
 @optgroup.option(
     "--splice-permissive", is_flag=True, default=False,
-    help="Allow non-canonical splice sites (GC-AG, AT-AC). "
-    "When assembly evidence exists, observed splice types are used automatically; "
-    "otherwise enables blanket allowance in AUGUSTUS.",
+    help="Allow rarer non-canonical splice sites in AUGUSTUS. With assembly evidence, "
+    "every observed donor-acceptor pair seen at >= 10 junctions by >= 50 unique reads "
+    "is allowed regardless of its share of all junctions (the default also requires "
+    ">= 1%); without evidence, allows AT-AC.",
 )
 @optgroup.group("Experimental")
 @optgroup.option(

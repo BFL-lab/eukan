@@ -171,19 +171,32 @@ class TestGetSpliceSitesFlag:
         config = self._make_config(tmp_path)
         assert _get_splice_sites_flag(config) == []
 
-    def test_summary_permissive_lowers_threshold(self, tmp_path):
-        """With --splice-permissive, even 1 junction should pass."""
+    def test_summary_permissive_keeps_absolute_floors(self, tmp_path):
+        """--splice-permissive still rejects types below the junction/read floors."""
         from eukan.annotation.augustus import _get_splice_sites_flag
 
         summary = {
             "GT-AG": {"count": 50000, "unique_reads": 1000000},
-            "AT-AC": {"count": 1, "unique_reads": 1},
+            "AT-AC": {"count": 1, "unique_reads": 1},    # below _MIN_JUNCTIONS
+            "TT-CA": {"count": 20, "unique_reads": 10},  # below _MIN_UNIQUE_READS
         }
         (tmp_path / "splice_site_summary.json").write_text(json.dumps(summary))
         config = self._make_config(tmp_path, allow_noncanonical=True)
-        result = _get_splice_sites_flag(config)
-        assert len(result) == 1
-        assert "atac" in result[0]
+        assert _get_splice_sites_flag(config) == []
+
+    def test_summary_permissive_drops_proportional_threshold(self, tmp_path):
+        """--splice-permissive admits a type the default rejects only for its share."""
+        from eukan.annotation.augustus import _get_splice_sites_flag
+
+        # AT-AC: 15 junctions, 200 reads (passes the floors) but
+        # 15/10015 = 0.15% (fails _MIN_FRACTION=1%, which permissive drops)
+        summary = {
+            "GT-AG": {"count": 10000, "unique_reads": 5000000},
+            "AT-AC": {"count": 15, "unique_reads": 200},
+        }
+        (tmp_path / "splice_site_summary.json").write_text(json.dumps(summary))
+        config = self._make_config(tmp_path, allow_noncanonical=True)
+        assert _get_splice_sites_flag(config) == ["--allow_hinted_splicesites=atac"]
 
     def test_builtin_types_excluded(self, tmp_path):
         """gcag is already built-in to AUGUSTUS — should not appear in flag."""
