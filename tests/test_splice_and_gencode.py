@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 from pathlib import Path
+
+import pytest
 
 from eukan.infra.genetic_code import GeneticCode
 
@@ -65,6 +69,18 @@ class TestSpliceTypeToAugustus:
         assert _splice_type_to_augustus("GTT-AG") is None  # 3-char donor
         assert _splice_type_to_augustus("G-A") is None     # 1-char
 
+    def test_non_acgt_returns_none(self):
+        """N (assembly gaps) or other non-ACGT bases can't be passed to AUGUSTUS."""
+        from eukan.annotation.augustus import _splice_type_to_augustus
+
+        for name in ("NN-AC", "nn-ac", "CT-NC", "AG-NG", "NN-NN", "RY-AG"):
+            assert _splice_type_to_augustus(name) is None, name
+
+    def test_lowercase_input(self):
+        from eukan.annotation.augustus import _splice_type_to_augustus
+
+        assert _splice_type_to_augustus("gc-ag") == "gcag"
+
 
 # ---------------------------------------------------------------------------
 # _get_splice_sites_flag
@@ -72,6 +88,13 @@ class TestSpliceTypeToAugustus:
 
 
 class TestGetSpliceSitesFlag:
+    # The N-containing types that the BFL-lab/eukan#8 --splice-permissive run
+    # passed to AUGUSTUS, which then rejected the whole option.
+    _REPORTED_N_TYPES = (
+        "AG-NG", "CT-NC", "CT-NN", "CT-NT", "GT-NN", "NN-AC",
+        "NN-AG", "NN-CG", "NN-GC", "NN-NC", "TT-NN",
+    )
+
     def _make_config(self, tmp_path, allow_noncanonical=False):
         from eukan.settings import PipelineConfig
 
@@ -148,19 +171,32 @@ class TestGetSpliceSitesFlag:
         config = self._make_config(tmp_path)
         assert _get_splice_sites_flag(config) == []
 
-    def test_summary_permissive_lowers_threshold(self, tmp_path):
-        """With --splice-permissive, even 1 junction should pass."""
+    def test_summary_permissive_keeps_absolute_floors(self, tmp_path):
+        """--splice-permissive still rejects types below the junction/read floors."""
         from eukan.annotation.augustus import _get_splice_sites_flag
 
         summary = {
             "GT-AG": {"count": 50000, "unique_reads": 1000000},
-            "AT-AC": {"count": 1, "unique_reads": 1},
+            "AT-AC": {"count": 1, "unique_reads": 1},    # below _MIN_JUNCTIONS
+            "TT-CA": {"count": 20, "unique_reads": 10},  # below _MIN_UNIQUE_READS
         }
         (tmp_path / "splice_site_summary.json").write_text(json.dumps(summary))
         config = self._make_config(tmp_path, allow_noncanonical=True)
-        result = _get_splice_sites_flag(config)
-        assert len(result) == 1
-        assert "atac" in result[0]
+        assert _get_splice_sites_flag(config) == []
+
+    def test_summary_permissive_drops_proportional_threshold(self, tmp_path):
+        """--splice-permissive admits a type the default rejects only for its share."""
+        from eukan.annotation.augustus import _get_splice_sites_flag
+
+        # AT-AC: 15 junctions, 200 reads (passes the floors) but
+        # 15/10015 = 0.15% (fails _MIN_FRACTION=1%, which permissive drops)
+        summary = {
+            "GT-AG": {"count": 10000, "unique_reads": 5000000},
+            "AT-AC": {"count": 15, "unique_reads": 200},
+        }
+        (tmp_path / "splice_site_summary.json").write_text(json.dumps(summary))
+        config = self._make_config(tmp_path, allow_noncanonical=True)
+        assert _get_splice_sites_flag(config) == ["--allow_hinted_splicesites=atac"]
 
     def test_builtin_types_excluded(self, tmp_path):
         """gcag is already built-in to AUGUSTUS — should not appear in flag."""
@@ -173,6 +209,87 @@ class TestGetSpliceSitesFlag:
         (tmp_path / "splice_site_summary.json").write_text(json.dumps(summary))
         config = self._make_config(tmp_path)
         # Both GT-AG (gtag) and GC-AG (gcag) are builtin
+        assert _get_splice_sites_flag(config) == []
+
+    @pytest.mark.parametrize("permissive", [False, True])
+    def test_non_acgt_types_excluded(self, tmp_path, permissive):
+        """Types with N never reach AUGUSTUS, in either mode, however well supported."""
+        from eukan.annotation.augustus import _get_splice_sites_flag
+
+        summary = {
+            "GT-AG": {"count": 20000, "unique_reads": 1000000},
+            "AT-AC": {"count": 2000, "unique_reads": 10000},
+            "NN-AC": {"count": 2000, "unique_reads": 10000},
+            "nn-ac": {"count": 2000, "unique_reads": 10000},
+            "CT-NC": {"count": 2000, "unique_reads": 10000},
+            "AG-NG": {"count": 2000, "unique_reads": 10000},
+        }
+        (tmp_path / "splice_site_summary.json").write_text(json.dumps(summary))
+        config = self._make_config(tmp_path, allow_noncanonical=permissive)
+        assert _get_splice_sites_flag(config) == ["--allow_hinted_splicesites=atac"]
+
+    def test_mixed_summary_keeps_only_acgt_types(self, tmp_path, caplog):
+        """Only ACGT types are allowed; the dropped N types are named in one warning."""
+        from eukan.annotation.augustus import _get_splice_sites_flag
+
+        # 57700 total junctions; every type passes all default thresholds.
+        summary = {
+            "GT-AG": {"count": 50000, "unique_reads": 1000000},
+            "GC-AG": {"count": 2000, "unique_reads": 9000},  # builtin
+            "CT-GC": {"count": 1500, "unique_reads": 8000},
+            "AT-AC": {"count": 1200, "unique_reads": 4000},
+            "CT-NC": {"count": 900, "unique_reads": 4000},
+            "NN-AC": {"count": 800, "unique_reads": 4000},
+            "TT-CA": {"count": 700, "unique_reads": 3000},
+            "unknown": {"count": 600, "unique_reads": 3000},
+        }
+        (tmp_path / "splice_site_summary.json").write_text(json.dumps(summary))
+        config = self._make_config(tmp_path)
+        with caplog.at_level(logging.WARNING, logger="eukan.annotation.augustus"):
+            result = _get_splice_sites_flag(config)
+
+        assert result == ["--allow_hinted_splicesites=atac,ctgc,ttca"]
+        warnings = [
+            r.getMessage() for r in caplog.records
+            if r.name == "eukan.annotation.augustus" and r.levelno == logging.WARNING
+        ]
+        assert len(warnings) == 1
+        assert "Ignoring 2 splice-site types with non-ACGT bases" in warnings[0]
+        assert "CT-NC (900 junctions)" in warnings[0]
+        assert "NN-AC (800 junctions)" in warnings[0]
+        assert "unknown" not in warnings[0]
+
+    def test_emitted_tokens_are_valid_augustus_patterns(self, tmp_path):
+        """Regression for BFL-lab/eukan#8: every emitted pattern is four of a/c/g/t."""
+        from eukan.annotation.augustus import _get_splice_sites_flag
+
+        summary = {"GT-AG": {"count": 50000, "unique_reads": 1000000}}
+        for splice_type in (*self._REPORTED_N_TYPES, "AT-AC", "CT-GC", "CT-AC", "GT-AT"):
+            summary[splice_type] = {"count": 100, "unique_reads": 1000}
+        (tmp_path / "splice_site_summary.json").write_text(json.dumps(summary))
+        config = self._make_config(tmp_path, allow_noncanonical=True)
+        result = _get_splice_sites_flag(config)
+
+        assert len(result) == 1
+        flag, value = result[0].split("=")
+        assert flag == "--allow_hinted_splicesites"
+        tokens = value.split(",")
+        assert all(re.fullmatch(r"[acgt]{4}", t) for t in tokens), tokens
+        assert sorted(tokens) == ["atac", "ctac", "ctgc", "gtat"]
+
+    @pytest.mark.parametrize("permissive", [False, True])
+    def test_only_non_acgt_and_builtin_types_no_flag(self, tmp_path, permissive):
+        """Nothing left to allow → no flag, never an empty --allow_hinted_splicesites=."""
+        from eukan.annotation.augustus import _get_splice_sites_flag
+
+        summary = {
+            "GT-AG": {"count": 20000, "unique_reads": 1000000},
+            "GC-AG": {"count": 2000, "unique_reads": 10000},
+            "NN-AC": {"count": 2000, "unique_reads": 10000},
+            "CT-NC": {"count": 2000, "unique_reads": 10000},
+        }
+        (tmp_path / "splice_site_summary.json").write_text(json.dumps(summary))
+        config = self._make_config(tmp_path, allow_noncanonical=permissive)
         assert _get_splice_sites_flag(config) == []
 
 
