@@ -142,7 +142,7 @@ def unmapped_transcripts(work_dir: Path, assembler: str) -> Path:
     """Per-assembler unmapped-transcript FASTA from the map_transcripts step.
 
     Filename pattern is ``<assembler>.unmapped_transcripts.fasta`` (e.g.
-    ``rnaspades.unmapped_transcripts.fasta``); written for reference only.
+    ``trinity-denovo.unmapped_transcripts.fasta``); written for reference only.
     """
     return work_dir / f"{assembler}.unmapped_transcripts.fasta"
 

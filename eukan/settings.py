@@ -275,9 +275,9 @@ class PipelineConfig(_StepRunSettings):
 
 
 def _default_assembly_memory_gb(meminfo_path: str = "/proc/meminfo") -> int:
-    """Safe default for the de novo assembler's memory cap, in GiB.
+    """Safe default for the assembler's memory cap, in GiB.
 
-    rnaSPAdes sizes its ``-m`` budget from this. We derive it from
+    Trinity sizes its ``--max_memory`` from this. We derive it from
     ``MemAvailable`` (the kernel's estimate of memory free for new processes)
     rather than ``MemTotal``, so the cap reflects what the machine can actually
     spare. Falls back to half of ``MemTotal``, then to a 4 GiB floor.

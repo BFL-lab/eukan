@@ -1,4 +1,4 @@
-"""Transcriptome assembly pipeline: read mapping, StringTie + rnaSPAdes assembly, SL trans-splice cut, combinr consolidation."""
+"""Transcriptome assembly pipeline: read mapping, Trinity assembly (de novo + genome-guided), SL trans-splice cut, combinr consolidation."""
 
 from eukan.assembly.pipeline import run_assembly
 

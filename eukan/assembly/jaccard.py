@@ -4,10 +4,10 @@ Trinity's ``--jaccard_clip`` post-processing.
 In gene-dense genomes with overlapping UTRs an assembler can string two
 independently-transcribed genes into a single contig. Trinity's
 ``--jaccard_clip`` detects these by mapping read pairs back to the assembled
-contigs and cutting where no read-pair fragment *bridges* a position; but it
-only ever clips Trinity's own output. This module applies the same logic
-uniformly to the de novo assembled transcripts (rnaSPAdes), so the
-consolidation step (combinr) never sees an un-clipped fused contig.
+contigs and cutting where no read-pair fragment *bridges* a position. This
+module applies the same logic, as a standalone step, to both Trinity transcript
+sets (de novo and genome-guided; Trinity's own ``--jaccard_clip`` is not passed),
+so the consolidation step (combinr) never sees an un-clipped fused contig.
 
 Algorithm (faithful to Trinity, see ``trinityrnaseq/util/support_scripts/``):
 
@@ -26,12 +26,13 @@ Algorithm (faithful to Trinity, see ``trinityrnaseq/util/support_scripts/``):
 5. Split the contig at the clip points (segments shorter than ``min_segment``
    dropped).
 
-The genome-anchored StringTie GTF is clipped the same way (:func:`_clip_stringtie_gtf`):
+DORMANT with the unwired stringtie module (Trinity replaced StringTie): the
+genome-anchored StringTie GTF is clipped the same way (:func:`_clip_stringtie_gtf`):
 reads are mapped to StringTie's spliced transcripts, the same coverage troughs are
 found, and the transcript>exon models are split at them (:func:`_split_models_at_clips`)
 into ``stringtie.jaccard.gff3`` — so a StringTie transcript fusing two adjacent loci is
-broken just as the de novo path keeps them separate. ``strand_correct``/``sl_cut`` then
-prefer that clipped GFF3 over the raw GTF (:func:`resolve_stringtie_models`).
+broken just as the de novo path keeps them separate. :func:`resolve_stringtie_models`
+prefers that clipped GFF3 over the raw GTF (no live step calls it).
 
 Jaccard clipping needs read PAIRS; with single-end reads the step is a no-op.
 """
@@ -449,7 +450,7 @@ def _clip_one_fasta(config: AssemblyConfig, src: Path, out: Path) -> tuple[int, 
 
 
 def run_jaccard(config: AssemblyConfig) -> None:
-    """Jaccard-clip the de novo transcript FASTAs and the StringTie GTF.
+    """Jaccard-clip both Trinity transcript FASTAs (and a dormant StringTie GTF).
 
     No-op on single-end reads (read-pair bridging is the clip signal).
     """
