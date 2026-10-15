@@ -174,7 +174,7 @@ def run_annotation_pipeline(
         pending = [s for s in expected if s not in manifest.steps]
         if not pending:
             final = is_step_complete(manifest, step_key(ANNOTATION, "consensus_models"))
-            if final is not None:
+            if isinstance(final, Path):
                 log.info("All steps complete. Use --run-* flags to re-run specific steps.")
                 return final
         save_manifest(config.manifest_dir, manifest)

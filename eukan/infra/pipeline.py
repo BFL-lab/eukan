@@ -52,7 +52,8 @@ class StepSpec:
             own files and return None.
         output: Filename under ``work_dir`` that the step is known to
             produce. Used for the manifest record's ``output_file`` and
-            for stale-output validation. ``None`` if no canonical output.
+            for stale-output validation. ``None`` if no canonical output;
+            such a step resumes on its input fingerprint alone (see ``inputs``).
         flag: Display string for the CLI re-run flag (e.g.
             ``"-A / --run-minimap2"``). Descriptive only: no code reads it,
             since a stale output is rebuilt rather than reported.
@@ -61,7 +62,11 @@ class StepSpec:
             files this step consumes from upstream steps. Their fingerprint
             is recorded on completion; on resume a change re-runs the step
             (instead of reusing an output built from inputs that changed).
-            ``None`` if the step has no inputs worth tracking.
+            ``None`` if the step has no inputs worth tracking. A step with
+            no ``output`` counts complete only while this fingerprint
+            matches, so it also names the files it writes: the fingerprint
+            is taken when the step completes, so a removed or rewritten
+            output then re-runs the step.
         scalars: Optional ``config -> [str, ...]`` resolver naming non-file
             inputs (e.g. ``"max_intron_len=2000"``) folded into the same
             fingerprint, so a change in a config value the step's behaviour
@@ -232,7 +237,7 @@ def run_orchestrated_step(
         )
         if cached:
             log.info("[%s] Already complete, skipping.", step_name)
-            return cached
+            return cached if isinstance(cached, Path) else None
 
     # Re-running a step that previously completed (forced, or its inputs changed):
     # drop the declared output (and clear_files) first, so step functions that reuse

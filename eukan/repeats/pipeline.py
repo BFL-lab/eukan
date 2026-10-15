@@ -95,7 +95,7 @@ def run_repeats(
         else:
             modeler_key = step_key(REPEATS, "modeler")
             cached = is_step_complete(manifest, modeler_key) if modeler_key not in forced else None
-            if cached:
+            if isinstance(cached, Path):
                 families = cached
             else:
                 run_orchestrated_step(
@@ -114,7 +114,7 @@ def run_repeats(
                 families = config.lib
             else:
                 cached = is_step_complete(manifest, step_key(REPEATS, "modeler"))
-                if cached is None:
+                if not isinstance(cached, Path):
                     from eukan.exceptions import ConfigurationError
                     raise ConfigurationError(
                         "RepeatMasker step requested but no families library found.",

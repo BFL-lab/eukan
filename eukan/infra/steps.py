@@ -15,6 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from eukan.exceptions import ConfigurationError, GFFValidationError
 from eukan.infra.logging import get_logger
@@ -226,7 +227,7 @@ def is_step_complete(
     input_scalars: list[str] | None = None,
     *,
     verify_md5: bool = True,
-) -> Path | None:
+) -> Path | Literal[True] | None:
     """Check if a step was completed in a previous run *and is still current*.
 
     Returns the recorded output path if the step is complete and its output is
@@ -242,12 +243,22 @@ def is_step_complete(
     input appeared, or a tracked config value changed) also makes the step
     stale and returns ``None``. A step with no recorded fingerprint (older
     manifest, or no declared inputs) is not treated as stale on that account.
+
+    A step that recorded no output has nothing on disk to check, so its input
+    fingerprint is all there is: it is complete (``True``) when it recorded one
+    and the fingerprint of *input_files* / *input_scalars* still matches it, and
+    it re-runs every time when it recorded none.
     """
     record = manifest.steps.get(step_name)
     if not record or record.status != StepStatus.completed:
         return None
     if not record.output_file:
-        return None
+        if (
+            record.input_md5 is None
+            or fingerprint_inputs(input_files, input_scalars) != record.input_md5
+        ):
+            return None
+        return True
     path = Path(record.output_file)
 
     if not path.exists():

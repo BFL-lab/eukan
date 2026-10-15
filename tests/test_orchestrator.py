@@ -438,6 +438,69 @@ class TestInputFingerprintResume:
         assert runs == []  # reused despite a (missing) declared input
 
 
+class TestOutputlessStepResume:
+    """A step with no declared output resumes on its recorded input fingerprint:
+    it is skipped while that matches and re-runs when it does not; one that
+    recorded no fingerprint re-runs every time."""
+
+    @staticmethod
+    def _run(tmp_path, manifest, fn, **fingerprint):
+        return run_orchestrated_step(
+            tmp_path, manifest, "assembly/x", fn, step_dir=tmp_path / "x", **fingerprint,
+        )
+
+    def test_unchanged_fingerprint_skips(self, tmp_path):
+        manifest = RunManifest()
+        inp = tmp_path / "in.txt"
+        inp.write_text("v1")
+        runs: list[int] = []
+        for _ in range(2):
+            result = self._run(
+                tmp_path, manifest, lambda: runs.append(1),
+                input_files=[inp], input_scalars=["knob=1"],
+            )
+            assert result is None
+        assert runs == [1]
+
+    def test_changed_input_or_scalar_reruns(self, tmp_path):
+        manifest = RunManifest()
+        inp = tmp_path / "in.txt"
+        inp.write_text("v1")
+        runs: list[int] = []
+        for content, knob in (("v1", 1), ("v2", 1), ("v2", 2)):
+            inp.write_text(content)
+            self._run(
+                tmp_path, manifest, lambda: runs.append(1),
+                input_files=[inp], input_scalars=[f"knob={knob}"],
+            )
+        assert runs == [1, 1, 1]
+
+    def test_no_fingerprint_always_reruns(self, tmp_path):
+        manifest = RunManifest()
+        runs: list[int] = []
+        for _ in range(2):
+            self._run(tmp_path, manifest, lambda: runs.append(1))
+        assert runs == [1, 1]
+
+    def test_removed_written_file_reruns(self, tmp_path):
+        # The step names the file it writes among its inputs; the fingerprint is
+        # taken after it runs, so removing that file re-runs the step.
+        manifest = RunManifest()
+        written = tmp_path / "written.txt"
+        runs: list[int] = []
+
+        def fn():
+            runs.append(1)
+            written.write_text("models")
+
+        for _ in range(2):
+            self._run(tmp_path, manifest, fn, input_files=[written])
+        written.unlink()
+        self._run(tmp_path, manifest, fn, input_files=[written])
+        assert runs == [1, 1]
+        assert written.exists()
+
+
 class TestAssemblyStepScalars:
     """Every step that consumes ``max_intron_len`` folds it into its resume
     fingerprint, so a changed ``-M`` re-runs it."""
