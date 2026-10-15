@@ -13,9 +13,9 @@ A poly-A tail sits at the mRNA 3' end, so it is an **A-rich ``3p`` soft-clip**; 
 here are expected in mRNA 5'->3' orientation, exactly as
 :func:`eukan.assembly.bam_diagnostic._extract_clips` yields them.
 
-The output is a per-section ``polyA_diagnostic.json`` (read-BAM "reads", de novo
-transcript-BAM "transcripts", and "unmapped_transcripts" tails) plus an INFO log —
-deliberately decoupled from the SL trans-splice verdict.
+The output is a per-section ``polyA_diagnostic.json`` (read-BAM "reads"; per Trinity
+track, transcript-BAM "transcripts" and "unmapped_transcripts" tails) plus an INFO
+log — deliberately decoupled from the SL trans-splice verdict.
 """
 
 from __future__ import annotations

@@ -297,8 +297,38 @@ def test_finalize_transcript_diagnostics_writes_sections(tmp_path):
     _finalize_transcript_diagnostics(config)
 
     data = json.loads((tmp_path / POLYA_DIAGNOSTIC).read_text())
-    assert data["transcripts"]["n_polyA_3p"] == 1
-    assert data["unmapped_transcripts"] == {"n_seqs": 1, "n_with_polyA_tail": 1}
+    assert data["transcripts"]["trinity-denovo"]["n_polyA_3p"] == 1
+    assert data["unmapped_transcripts"] == {
+        "trinity-denovo": {"n_seqs": 1, "n_with_polyA_tail": 1},
+    }
+
+
+def test_finalize_transcript_diagnostics_keeps_every_track(tmp_path):
+    # Both Trinity tracks get their own entry; the genome-guided one used to
+    # overwrite the de novo one under the shared section key.
+    from eukan.assembly.minimap2 import _finalize_transcript_diagnostics
+
+    _finalize_setup(tmp_path)  # de novo: 1 poly-A clip
+    (tmp_path / "trinity-gg.fasta").write_text(">g1\n" + "ACGT" * 50 + "\n")
+    _write_bam(tmp_path / "trinity-gg.genome.bam", [("c1", 800)], [
+        dict(query_name=f"g{i}", query_sequence="C" * 10 + "A" * 20, flag=0,
+             reference_id=0, reference_start=5 + i * 40, cigartuples=[(0, 10), (4, 20)])
+        for i in range(2)
+    ])
+    (tmp_path / "trinity-denovo.unmapped_transcripts.fasta").write_text(">u1\nACGT\n")
+    (tmp_path / "trinity-gg.unmapped_transcripts.fasta").write_text(
+        ">u1\nACGT\n>u2\n" + "ACGT" * 4 + "A" * 16 + "\n"
+    )
+    config = AssemblyConfig(genome=tmp_path / "genome.fa", work_dir=tmp_path, num_cpu=1)
+    _finalize_transcript_diagnostics(config)
+
+    data = json.loads((tmp_path / POLYA_DIAGNOSTIC).read_text())
+    assert data["transcripts"]["trinity-denovo"]["n_polyA_3p"] == 1
+    assert data["transcripts"]["trinity-gg"]["n_polyA_3p"] == 2
+    assert data["unmapped_transcripts"] == {
+        "trinity-denovo": {"n_seqs": 1, "n_with_polyA_tail": 0},
+        "trinity-gg": {"n_seqs": 2, "n_with_polyA_tail": 1},
+    }
 
 
 def test_finalize_transcript_diagnostics_respects_diagnose_off(tmp_path):

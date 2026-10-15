@@ -280,9 +280,10 @@ def _finalize_transcript_diagnostics(config: AssemblyConfig) -> None:
 
     Path-agnostic: runs after mapping over the files already on disk, so it is
     safe on a resumed/reused run. The unmapped FASTA is reported unconditionally
-    (completeness); the poly-A characterization of the de novo transcript→genome
-    BAM and the unmapped set is gated by ``diagnose_softclips`` and written to
-    ``polyA_diagnostic.json``, separate from the SL verdict.
+    (completeness); the poly-A characterization of each Trinity track's
+    transcript→genome BAM and unmapped set is gated by ``diagnose_softclips`` and
+    written to ``polyA_diagnostic.json`` (sections ``transcripts`` and
+    ``unmapped_transcripts``, keyed by track), separate from the SL verdict.
     """
     from eukan.assembly.jaccard import _genome_stats
     from eukan.assembly.polya import (
@@ -293,6 +294,10 @@ def _finalize_transcript_diagnostics(config: AssemblyConfig) -> None:
     )
 
     wd = config.work_dir
+    # One entry per track, written after the loop: one write per track under the
+    # bare section name let the genome-guided track replace the de novo one.
+    transcripts: dict[str, dict] = {}
+    unmapped_transcripts: dict[str, dict] = {}
     for query_name, out_bam in _TRANSCRIPT_SETS:
         genome_bam = wd / out_bam
         if not genome_bam.exists():
@@ -323,14 +328,17 @@ def _finalize_transcript_diagnostics(config: AssemblyConfig) -> None:
         if not config.diagnose_softclips:
             continue
         tx_stats = characterize_polya_bam(genome_bam, "transcripts")
-        write_polya_section(wd, "transcripts", stats_to_dict(tx_stats))
+        transcripts[stem] = stats_to_dict(tx_stats)
         if unmapped.exists():
-            write_polya_section(
-                wd, "unmapped_transcripts",
-                {"n_seqs": n_unmapped, "n_with_polyA_tail": n_unmapped_polya},
-            )
+            unmapped_transcripts[stem] = {
+                "n_seqs": n_unmapped, "n_with_polyA_tail": n_unmapped_polya,
+            }
         log.info(
             "Poly-A in de novo transcript mapping (%s): %d poly-A 3' soft-clips of %d "
             "(%.3f%%).",
             stem, tx_stats.n_polya, tx_stats.n_clips_examined, tx_stats.polya_pct_of_clips,
         )
+    if transcripts:
+        write_polya_section(wd, "transcripts", transcripts)
+    if unmapped_transcripts:
+        write_polya_section(wd, "unmapped_transcripts", unmapped_transcripts)
