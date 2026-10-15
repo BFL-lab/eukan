@@ -234,20 +234,14 @@ def _mrna_spans_match(
     )
 
 
-def _concordant_features(
-    gff3_1: str | Path, gff3_2: str | Path
-) -> list[gffutils.Feature]:
-    """Worker-thread-safe core of :func:`find_concordant_models`.
+def _concordant_models(
+    db1: gffutils.FeatureDB, db2: gffutils.FeatureDB
+) -> gffutils.FeatureDB:
+    """Core of :func:`find_concordant_models` over already-parsed sources.
 
-    Returns the list of Feature objects for concordant genes (gene +
-    mRNA + exon + CDS) instead of a :class:`gffutils.FeatureDB`.  All
-    SQLite work happens within this function — the connections never
-    cross thread boundaries — so callers can fan this out across a
-    ``ThreadPoolExecutor`` and assemble the result on the main thread.
+    Returns a FeatureDB of *db1*'s concordant genes (gene + mRNA + exon +
+    CDS), so a caller comparing one source against several parses it once.
     """
-    db1 = create_gff_db(gff3_1)
-    db2 = create_gff_db(gff3_2)
-
     db2_index = IntervalIndex(db2.features_of_type("mRNA"))
     concordant_gene_ids: set[str] = set()
 
@@ -280,7 +274,7 @@ def _concordant_features(
         except gffutils.FeatureNotFoundError:
             continue
 
-    return features
+    return create_gff_db(features) if features else empty_db()
 
 
 def find_concordant_models(
@@ -295,8 +289,7 @@ def find_concordant_models(
 
     Returns a FeatureDB containing only the concordant models from gff3_1.
     """
-    features = _concordant_features(gff3_1, gff3_2)
-    return create_gff_db(features) if features else empty_db()
+    return _concordant_models(create_gff_db(gff3_1), create_gff_db(gff3_2))
 
 
 # ---------------------------------------------------------------------------
@@ -373,23 +366,13 @@ def extract_supported_models(
     if len(paths) == 2:
         training_set = find_concordant_models(paths[0], paths[1])
     elif len(paths) == 3:
-        # Three concordance passes are independent and each is O(N log N);
-        # run them concurrently.  Workers return Feature *lists* so the
-        # SQLite connections never escape their creating thread; the dbs
-        # passed to combine_nonredundant_models are built on this thread.
-        from eukan.infra.concurrency import parallel_map
-        pairs = [
-            (paths[0], paths[1]),
-            (paths[0], paths[2]),
-            (paths[2], paths[1]),
-        ]
-        feat1, feat2, feat3 = parallel_map(
-            lambda ab: _concordant_features(*ab), pairs,
+        # Parse each source once; the three pair scans share the DBs.
+        db0, db1, db2 = (create_gff_db(p) for p in paths)
+        training_set = combine_nonredundant_models(
+            _concordant_models(db0, db1),
+            _concordant_models(db0, db2),
+            _concordant_models(db2, db1),
         )
-        pair1 = create_gff_db(feat1) if feat1 else empty_db()
-        pair2 = create_gff_db(feat2) if feat2 else empty_db()
-        pair3 = create_gff_db(feat3) if feat3 else empty_db()
-        training_set = combine_nonredundant_models(pair1, pair2, pair3)
     else:
         raise ValueError(f"Expected 2 or 3 paths, got {len(paths)}")
 

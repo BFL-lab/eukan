@@ -1,5 +1,8 @@
 """Tests for eukan.gff.concordance — multi-source gene-model operations."""
 
+from collections import Counter
+from pathlib import Path
+
 import gffutils
 import pytest
 
@@ -296,18 +299,11 @@ class TestCombineNonredundant:
 
 
 # ---------------------------------------------------------------------------
-# Training-set extraction (3-path concurrent branch)
+# Training-set extraction
 # ---------------------------------------------------------------------------
 
 
 class TestExtractSupportedModels:
-    """Regression: the 3-path branch fans concordance passes across a
-    ``ThreadPoolExecutor``.  Returning ``gffutils.FeatureDB`` from worker
-    threads broke at the next main-thread query with
-    ``sqlite3.ProgrammingError: SQLite objects created in a thread can
-    only be used in that same thread``.  The fix returns Feature lists
-    from workers and builds dbs on the main thread.
-    """
 
     def _write_simple_pair(self, dirp, name, gene_id, start=100, end=400):
         path = dirp / name
@@ -318,26 +314,33 @@ class TestExtractSupportedModels:
         )
         return path
 
-    def test_three_paths_does_not_leak_db_across_threads(self, tmp_path):
-        """Calling extract_supported_models with 3 paths must produce a
-        usable FeatureDB on the main thread, with no SQLite cross-thread
-        error."""
+    def test_three_paths_parses_each_source_once(self, tmp_path, monkeypatch):
+        """The three concordance pairs share one parse per source file
+        (3 file parses, not one parse per side of every pair: 6)."""
+        from eukan.gff import concordance
+
+        parses: Counter[str] = Counter()
+        real_create = concordance.create_gff_db
+
+        def counting(source, **kwargs):
+            if isinstance(source, (str, Path)):
+                parses[Path(source).name] += 1
+            return real_create(source, **kwargs)
+
+        monkeypatch.setattr(concordance, "create_gff_db", counting)
         a = self._write_simple_pair(tmp_path, "a.gff3", "ga")
         b = self._write_simple_pair(tmp_path, "b.gff3", "ga")
         c = self._write_simple_pair(tmp_path, "c.gff3", "ga")
 
         result = extract_supported_models(a, b, c, output_dir=tmp_path)
 
-        # The query that previously raised ProgrammingError in the failing run.
-        genes = list(result.features_of_type("gene"))
-        assert len(genes) == 1
-        assert genes[0].id == "ga"
+        assert [parses[n] for n in ("a.gff3", "b.gff3", "c.gff3")] == [1, 1, 1]
+        assert [g.id for g in result.features_of_type("gene")] == ["ga"]
         assert (tmp_path / "training_set.gff3").exists()
 
-    def test_three_paths_partial_concordance_queryable_main_thread(self, tmp_path):
-        """When the per-worker Feature lists hold different genes, the
-        assembled db must still be queryable on the main thread without a
-        cross-thread error."""
+    def test_three_paths_near_identical_locus_kept_once(self, tmp_path):
+        """The pairs return different sources' genes for one locus within
+        the boundary tolerance; the training set keeps it once."""
         # (a,b) and (a,c) return a's ga; (c,b) returns c's gc, because
         # find_concordant_models compares structure, not IDs.
         a = self._write_simple_pair(tmp_path, "a.gff3", "ga", start=100, end=400)
@@ -352,8 +355,7 @@ class TestExtractSupportedModels:
 
         result = extract_supported_models(a, b, c_path, output_dir=tmp_path)
 
-        # Must not raise, must be queryable on the main thread, and gc is
-        # the same locus as ga: the first source's model is kept, once.
+        # gc is the same locus as ga: the first source's model is kept, once.
         genes = list(result.features_of_type("gene"))
         assert [g.id for g in genes] == ["ga"]
 
@@ -399,7 +401,7 @@ class TestExtractSupportedModels:
         assert [g.id for g in result.features_of_type("gene")] == ["orf1"]
 
     def test_two_paths_unchanged(self, tmp_path):
-        """The 2-path branch is sequential; verify it still works."""
+        """The 2-path branch: one concordance pass."""
         a = self._write_simple_pair(tmp_path, "a.gff3", "ga")
         b = self._write_simple_pair(tmp_path, "b.gff3", "ga")
 
