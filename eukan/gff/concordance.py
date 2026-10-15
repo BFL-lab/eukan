@@ -311,16 +311,28 @@ def combine_nonredundant_models(
 
     Collects all unique gene IDs across databases. For IDs that appear in
     multiple databases, the first database takes precedence.
+
+    A third database holds a different evidence source's genes: the 3-way
+    :func:`extract_supported_models` passes the (0,1), (0,2) and (2,1)
+    concordance pairs, so the first two hold source-0 genes and the third
+    source-2 genes, whose IDs differ for the same locus. Its genes are
+    added only where they overlap no gene already kept on the same chrom
+    and strand, so a locus concordant in all three sources is kept once.
     """
     if len(feature_dbs) not in (2, 3):
         raise ValueError(f"Expected 2 or 3 FeatureDBs, got {len(feature_dbs)}")
 
     seen_ids: set[str] = set()
     all_features: list[gffutils.Feature] = []
+    kept_genes: IntervalIndex[gffutils.Feature] | None = None
 
-    for db in feature_dbs:
+    for i, db in enumerate(feature_dbs):
+        if i == 2:
+            kept_genes = IntervalIndex(f for f in all_features if f.featuretype == "gene")
         for gene in db.features_of_type("gene"):
             if gene.id in seen_ids:
+                continue
+            if kept_genes is not None and kept_genes.has_overlap(gene):
                 continue
             seen_ids.add(gene.id)
             all_features.append(gene)

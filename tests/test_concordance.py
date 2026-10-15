@@ -335,16 +335,14 @@ class TestExtractSupportedModels:
         assert (tmp_path / "training_set.gff3").exists()
 
     def test_three_paths_partial_concordance_queryable_main_thread(self, tmp_path):
-        """When some pairs concord and others don't, the per-worker
-        Feature lists vary in length — but the assembled db must still be
-        queryable on the main thread without a cross-thread error."""
-        # ga concordant in (a,b) and (a,c); (b,c) finds gc only when c==b's gene.
-        # We arrange: a==b==c on ga; (a,c) concord ga; (c,b) finds nothing.
+        """When the per-worker Feature lists hold different genes, the
+        assembled db must still be queryable on the main thread without a
+        cross-thread error."""
+        # (a,b) and (a,c) return a's ga; (c,b) returns c's gc, because
+        # find_concordant_models compares structure, not IDs.
         a = self._write_simple_pair(tmp_path, "a.gff3", "ga", start=100, end=400)
         b = self._write_simple_pair(tmp_path, "b.gff3", "ga", start=105, end=395)
-        # c shares ga's locus with a, but different ID — concord (a,c) finds ga,
-        # (c,b) compares c's gc-named gene against b's ga, which won't match by ID
-        # but find_concordant_models doesn't compare IDs, only structure.
+        # c shares ga's locus with a, but under a different ID.
         c_path = tmp_path / "c.gff3"
         c_path.write_text(
             "chr1\tpred\tgene\t102\t398\t.\t+\t.\tID=gc\n"
@@ -354,10 +352,51 @@ class TestExtractSupportedModels:
 
         result = extract_supported_models(a, b, c_path, output_dir=tmp_path)
 
-        # Must not raise — and must be queryable on the main thread.
+        # Must not raise, must be queryable on the main thread, and gc is
+        # the same locus as ga: the first source's model is kept, once.
         genes = list(result.features_of_type("gene"))
-        assert {g.id for g in genes} <= {"ga", "gc"}
-        assert len(genes) >= 1
+        assert [g.id for g in genes] == ["ga"]
+
+    @staticmethod
+    def _write_two_cds(dirp, name, gene_id, offset=0):
+        """One 2-CDS gene at 100-900 (+offset) on chr1."""
+        s = 100 + offset
+        path = dirp / name
+        path.write_text(
+            f"chr1\tpred\tgene\t{s}\t{s + 800}\t.\t+\t.\tID={gene_id}\n"
+            f"chr1\tpred\tmRNA\t{s}\t{s + 800}\t.\t+\t.\tID=m_{gene_id};Parent={gene_id}\n"
+            f"chr1\tpred\tCDS\t{s}\t{s + 200}\t.\t+\t0\tID=c1_{gene_id};Parent=m_{gene_id}\n"
+            f"chr1\tpred\tCDS\t{s + 400}\t{s + 800}\t.\t+\t0\tID=c2_{gene_id};Parent=m_{gene_id}\n"
+        )
+        return path
+
+    def test_locus_concordant_in_all_three_sources_kept_once(self, tmp_path, caplog):
+        """One identical locus in all three sources, under each source's own
+        IDs: (genemark,prot) and (genemark,orfs) return gm1, (orfs,prot)
+        returns orf1. The training set must hold one gene, not gm1 + orf1."""
+        import logging
+        gm = self._write_two_cds(tmp_path, "genemark.gff3", "gm1")
+        prot = self._write_two_cds(tmp_path, "prot.gff3", "pr1")
+        orfs = self._write_two_cds(tmp_path, "orfs.gff3", "orf1")
+
+        with caplog.at_level(logging.WARNING, logger="eukan.gff.concordance"):
+            result = extract_supported_models(gm, prot, orfs, output_dir=tmp_path)
+
+        assert [g.id for g in result.features_of_type("gene")] == ["gm1"]
+        written = (tmp_path / "training_set.gff3").read_text()
+        assert written.count("\tgene\t") == 1
+        assert "Only 1 concordant" in caplog.text
+
+    def test_locus_supported_only_by_third_pair_is_kept(self, tmp_path):
+        """A locus where only the third and second sources agree (no
+        first-source model there) still enters the training set."""
+        gm = self._write_two_cds(tmp_path, "genemark.gff3", "gm1")
+        prot = self._write_two_cds(tmp_path, "prot.gff3", "pr1", offset=5000)
+        orfs = self._write_two_cds(tmp_path, "orfs.gff3", "orf1", offset=5000)
+
+        result = extract_supported_models(gm, prot, orfs, output_dir=tmp_path)
+
+        assert [g.id for g in result.features_of_type("gene")] == ["orf1"]
 
     def test_two_paths_unchanged(self, tmp_path):
         """The 2-path branch is sequential; verify it still works."""
