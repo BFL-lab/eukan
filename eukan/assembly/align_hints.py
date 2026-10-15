@@ -283,7 +283,7 @@ def run_softclip_diagnostic(bam: Path, genome: Path, wd: Path) -> None:
     if nc.call in ("EXTENSIVE", "MODERATE"):
         log.warning(
             "Non-canonical splice signal %s: canonical fraction %.2f%% "
-            "(top non-canonical %s). Consider --splice-permissive on the assemble step.",
+            "(top non-canonical %s). Consider --splice-permissive on the annotate step.",
             nc.call, nc.canonical_pct, nc.top_non_canonical_dinuc,
         )
     else:
