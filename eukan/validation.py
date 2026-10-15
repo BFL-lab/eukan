@@ -35,6 +35,11 @@ def sanitize_genome_fasta(genome: Path, work_dir: Path) -> Path:
     since tools like GeneMark use the full header as the sequence ID and
     spaces in GFF seqids break downstream parsing.
 
+    The copy is ``<genome stem>.sanitized.fasta`` in *work_dir*, rewritten on every
+    call: nothing ties an existing copy to the genome it was built from (an mtime
+    check would not either: wget, tar, ``cp -p`` and ``rsync -a`` keep a file's
+    original mtime), and the rewrite is one pass over the genome.
+
     Returns the path to the sanitized genome (or the original if already clean).
     """
     needs_cleaning = False
@@ -47,10 +52,7 @@ def sanitize_genome_fasta(genome: Path, work_dir: Path) -> Path:
     if not needs_cleaning:
         return genome
 
-    sanitized = work_dir / "genome.sanitized.fasta"
-    if sanitized.exists():
-        return sanitized
-
+    sanitized = work_dir / f"{genome.stem}.sanitized.fasta"
     log.info("Sanitizing genome FASTA headers (stripping descriptions)...")
     with open(genome) as fin, open(sanitized, "w") as fout:
         for line in fin:

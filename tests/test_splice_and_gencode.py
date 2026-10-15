@@ -372,3 +372,44 @@ class TestAnalyzeSpliceSites:
         with open(tmp_path / "splice_site_summary.json") as f:
             summary = json.load(f)
         assert summary == {}
+
+
+# ---------------------------------------------------------------------------
+# sanitize_genome_fasta
+# ---------------------------------------------------------------------------
+
+
+class TestSanitizeGenomeFasta:
+    def test_genomes_in_one_work_dir_do_not_share_the_copy(self, tmp_path):
+        """A second genome with descriptions (e.g. the masked one after the raw one)
+        gets its own sanitized copy, not the one built from the first genome."""
+        from eukan.validation import sanitize_genome_fasta
+
+        raw = tmp_path / "raw.fasta"
+        raw.write_text(">chr1 assembly v1\nACGTACGT\n")
+        masked = tmp_path / "raw.masked.fasta"
+        masked.write_text(">chr1 assembly v1\nacgtACGT\n")
+        work_dir = tmp_path / "annotate"
+        work_dir.mkdir()
+
+        first = sanitize_genome_fasta(raw, work_dir)
+        second = sanitize_genome_fasta(masked, work_dir)
+
+        assert first != second
+        assert first.read_text() == ">chr1\nACGTACGT\n"
+        assert second.read_text() == ">chr1\nacgtACGT\n"
+
+    def test_same_name_genome_with_older_mtime_is_resanitized(self, tmp_path):
+        """A genome replaced by a same-named file that kept an old mtime (wget, tar,
+        cp -p) is sanitized afresh, not served from the earlier copy."""
+        import os
+
+        from eukan.validation import sanitize_genome_fasta
+
+        genome = tmp_path / "genome.fasta"
+        genome.write_text(">chr1 v1\nAAAA\n")
+        sanitize_genome_fasta(genome, tmp_path)
+        genome.write_text(">chr1 v2\nCCCC\n")
+        os.utime(genome, (0, 0))
+
+        assert sanitize_genome_fasta(genome, tmp_path).read_text() == ">chr1\nCCCC\n"
