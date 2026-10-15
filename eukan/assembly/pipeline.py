@@ -33,7 +33,9 @@ log = get_logger(__name__)
 # (eukan/infra/steps.py::fingerprint_inputs). This is what makes a non-forced
 # resume self-heal when, say, the assembly is rebuilt: map_transcripts re-maps
 # the new transcripts, and the changed BAM cascades through strand_correct →
-# sl_detect → sl_cut → combinr, each re-running as its input flips.
+# sl_detect → sl_cut → combinr, each re-running as its input flips. A step with no
+# declared output resumes on this fingerprint alone, so its resolver also names the
+# files the step writes: one removed or rewritten since then re-runs it.
 
 
 def _resolved_transcript_queries(config: AssemblyConfig) -> list[Path]:
@@ -50,17 +52,45 @@ def _denovo_genome_bams(config: AssemblyConfig) -> list[Path]:
     return [config.work_dir / b for b in _DENOVO_BAMS]
 
 
+def _jaccard_inputs(config: AssemblyConfig) -> list[Path]:
+    # jaccard clips each Trinity FASTA into the .jaccard.fasta sibling it writes
+    # (run_assembly removes those while jaccard does not run).
+    from eukan.assembly.bam_utils import _TRANSCRIPT_SETS
+
+    wd = config.work_dir
+    return [
+        wd / name
+        for query, _ in _TRANSCRIPT_SETS
+        for name in (query, jaccard_output_name(query))
+    ]
+
+
 def _strand_correct_inputs(config: AssemblyConfig) -> list[Path]:
-    # strand_correct converts each Trinity transcript->genome BAM to models, so a
-    # changed BAM (re-mapping) re-runs it.
-    return _denovo_genome_bams(config)
+    # strand_correct converts each Trinity transcript->genome BAM to models (and,
+    # with --uniprot, corrects them against the protein DB), so a changed BAM
+    # (re-mapping) or DB re-runs it; it writes <stem>.gff3 and <stem>.stranded.gff3.
+    from eukan.assembly.tracks import mapped_transcript_stems
+
+    wd = config.work_dir
+    paths = _denovo_genome_bams(config)
+    for stem in mapped_transcript_stems():
+        paths += [wd / f"{stem}.gff3", wd / f"{stem}.stranded.gff3"]
+    if config.uniprot_db is not None:
+        paths.append(config.uniprot_db)
+    return paths
 
 
 def _sl_detect_inputs(config: AssemblyConfig) -> list[Path]:
-    # The read aligner BAM also feeds SL detection, but it is large and only
-    # changes when the aligner is re-run (which cascades via the run flags), so
-    # only the Trinity track BAMs — the map_transcripts result — are fingerprinted.
-    return _denovo_genome_bams(config)
+    # SL detection scans the read BAM and the Trinity track BAMs, takes the read-side
+    # consensus from the soft-clip summary, and writes sl_acceptors.gff3. The read BAM
+    # is large, but hashing it costs far less than the walk over it a re-run repeats.
+    wd = config.work_dir
+    return [
+        wd / config.aligner_bam,
+        *_denovo_genome_bams(config),
+        wd / Artifact.SOFTCLIP_DIAGNOSTIC.value,
+        wd / Artifact.SL_ACCEPTORS.value,
+    ]
 
 
 def _defuse_inputs(config: AssemblyConfig) -> list[Path]:
@@ -93,13 +123,14 @@ def _max_intron_split_inputs(config: AssemblyConfig) -> list[Path]:
 
 
 def _sl_cut_inputs(config: AssemblyConfig) -> list[Path]:
-    # sl_cut reads each track's max-intron-split models plus the SL acceptor sites.
+    # sl_cut reads each track's max-intron-split models plus the SL acceptor sites
+    # and writes each track's <stem>.cut.gff3.
     from eukan.assembly.tracks import mapped_transcript_stems
 
     wd = config.work_dir
-    paths: list[Path] = [
-        wd / f"{stem}.maxintron.gff3" for stem in mapped_transcript_stems()
-    ]
+    paths: list[Path] = []
+    for stem in mapped_transcript_stems():
+        paths += [wd / f"{stem}.maxintron.gff3", wd / f"{stem}.cut.gff3"]
     paths.append(wd / Artifact.SL_ACCEPTORS.value)
     return paths
 
@@ -142,6 +173,38 @@ def _combinr_scalars(config: AssemblyConfig) -> list[str]:
     return [
         f"max_intron_len={config.max_intron_len}",
         f"combinr_stringent_overlap={config.combinr_stringent_overlap}",
+    ]
+
+
+def _jaccard_scalars(config: AssemblyConfig) -> list[str]:
+    # The clip-detection knobs and the floor below which a clipped piece is dropped.
+    return [
+        f"jaccard_greediness={config.jaccard_greediness}",
+        f"jaccard_max_trough={config.jaccard_max_trough}",
+        f"jaccard_min_delta={config.jaccard_min_delta}",
+        f"jaccard_max_adaptive_trough={config.jaccard_max_adaptive_trough}",
+        f"min_sl_fragment={config.min_sl_fragment}",
+    ]
+
+
+def _strand_correct_scalars(config: AssemblyConfig) -> list[str]:
+    # A stranded library skips the correction; the rest tune the blastx and the vote.
+    return [
+        f"strand_specific={config.strand_specific}",
+        f"genetic_code={config.genetic_code}",
+        f"strand_blastx_evalue={config.strand_blastx_evalue}",
+        f"min_strand_consensus={config.min_strand_consensus}",
+    ]
+
+
+def _sl_detect_scalars(config: AssemblyConfig) -> list[str]:
+    return [
+        f"sl_sequence={config.sl_sequence}",
+        f"sl_adapter_filter={config.sl_adapter_filter}",
+        f"adapter_sequences={config.adapter_sequences}",
+        f"min_sl_clip_len={config.min_sl_clip_len}",
+        f"min_sl_insertion_len={config.min_sl_insertion_len}",
+        f"sl_cluster_window={config.sl_cluster_window}",
     ]
 
 
@@ -193,13 +256,14 @@ def _steps_for() -> list[StepSpec]:
             clears=("trinity-gg.fasta",), scalars=_max_intron_scalars,
         ),
         # No declared output: jaccard rewrites each Trinity FASTA into a
-        # ``.jaccard.fasta`` sibling, but on single-end input (or zero clips) it
-        # legitimately writes nothing, so stale-output validation must not fire.
-        # Having no declared output it always re-runs on resume, so a changed
-        # ``jaccard_greediness`` re-clips and cascades to map_transcripts (which
-        # fingerprints the rewritten ``.jaccard.fasta``) — a scalar here would be
-        # inert, since is_step_complete never reaches the fingerprint check.
-        StepSpec("jaccard", run_jaccard, None, "--run-jaccard"),
+        # ``.jaccard.fasta`` sibling, but on single-end input it legitimately writes
+        # nothing, so stale-output validation must not fire. It resumes on its input
+        # fingerprint instead: a changed knob re-clips and cascades to map_transcripts
+        # (which fingerprints the rewritten ``.jaccard.fasta``).
+        StepSpec(
+            "jaccard", run_jaccard, None, "--run-jaccard",
+            inputs=_jaccard_inputs, scalars=_jaccard_scalars,
+        ),
         # The mapper reuses any per-set BAM that passes quickcheck, so a re-run of the
         # completed step clears the genome-guided BAM too, not only the declared one.
         StepSpec(
@@ -211,10 +275,11 @@ def _steps_for() -> list[StepSpec]:
         # No declared output: strand_correct always converts each Trinity track BAM
         # to <track>.genome.gff3 (for the SL cut), but only writes the *.stranded.gff3
         # homology-corrected models when --uniprot is given on an unstranded library,
-        # so stale-output validation must not fire when it's a no-op.
+        # so stale-output validation must not fire when it's a no-op. It resumes on
+        # its input fingerprint instead.
         StepSpec(
             "strand_correct", run_strand_correction, None, "--run-strand-correct",
-            inputs=_strand_correct_inputs,
+            inputs=_strand_correct_inputs, scalars=_strand_correct_scalars,
         ),
         # Homology de-fusion: splits chimeric transcripts flagged by >=2 distinct
         # non-overlapping SwissProt hits. Always writes <track>.genome.defuse.gff3
@@ -237,11 +302,11 @@ def _steps_for() -> list[StepSpec]:
         ),
         # No declared output for sl_detect/sl_cut: with no SL signal sl_detect writes a
         # header-only sl_acceptors.gff3 (zero features), and sl_cut may legitimately
-        # write nothing for a track with no models (per-stem skip), so it always
-        # re-runs on resume — its scalar fingerprint is thus inert but kept for intent.
+        # write nothing for a track with no models (per-stem skip). They resume on
+        # their input fingerprints instead.
         StepSpec(
             "sl_detect", detect_sl_acceptors, None, "--run-sl-detect",
-            inputs=_sl_detect_inputs,
+            inputs=_sl_detect_inputs, scalars=_sl_detect_scalars,
         ),
         StepSpec(
             "sl_cut", run_sl_cut, None, "--run-sl-cut",

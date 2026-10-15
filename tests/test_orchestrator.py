@@ -514,12 +514,6 @@ class TestAssemblyStepScalars:
         spec = next(s for s in _steps_for() if s.name == name)
         return spec.scalars(cfg) if spec.scalars else None
 
-    def test_jaccard_has_no_scalar(self, tmp_path):
-        # jaccard has no declared output, so it always re-runs on resume and a
-        # scalar would never be consulted (is_step_complete short-circuits first);
-        # a changed greediness re-clips via the always-re-run + map_transcripts.
-        assert self._scalars(tmp_path, "jaccard") is None
-
     def test_combinr_tracks_max_intron_and_stringent_overlap(self, tmp_path):
         scalars = self._scalars(tmp_path, "combinr")
         assert "max_intron_len=5000" in scalars
@@ -570,6 +564,87 @@ class TestMaxIntronConsumersRerun:
             )
             run_simple_pipeline(ASSEMBLY, [replace(spec, fn=fake)], cfg)
         assert runs == [5000, 2000]
+
+
+class TestOutputlessAssemblyStepsResume:
+    """Through the driver, the assemble steps with no declared output (jaccard,
+    strand_correct, sl_detect, sl_cut) are skipped on an unchanged resume and re-run
+    when a knob they read, a file they read, or a file they write has changed."""
+
+    # step -> (a file it reads, a file it writes)
+    FILES: ClassVar[dict[str, tuple[str, str]]] = {
+        "jaccard": ("trinity-gg.fasta", "trinity-denovo.jaccard.fasta"),
+        "strand_correct": ("trinity-gg.genome.bam", "trinity-denovo.genome.stranded.gff3"),
+        "sl_detect": ("minimap2_Aligned.sortedByCoord.out.bam", "sl_acceptors.gff3"),
+        "sl_cut": ("trinity-gg.genome.maxintron.gff3", "trinity-denovo.genome.cut.gff3"),
+    }
+    # step -> every config knob the step function reads, with a changed value
+    KNOBS: ClassVar[dict[str, dict[str, object]]] = {
+        "jaccard": {
+            "jaccard_greediness": 2.0, "jaccard_max_trough": 0.1,
+            "jaccard_min_delta": 0.5, "jaccard_max_adaptive_trough": 0.4,
+            "min_sl_fragment": 30,
+        },
+        "strand_correct": {
+            "strand_specific": "RF", "genetic_code": "6",
+            "strand_blastx_evalue": 1e-3, "min_strand_consensus": 10,
+        },
+        "sl_detect": {
+            "sl_sequence": "GTTTCTGTACTTTATT", "sl_adapter_filter": False,
+            "adapter_sequences": ["ACGTACGTACGT"], "min_sl_clip_len": 12,
+            "min_sl_insertion_len": 12, "sl_cluster_window": 10,
+        },
+        "sl_cut": {"min_sl_fragment": 30},
+    }
+
+    def _driver(self, tmp_path, name):
+        spec = next(s for s in _steps_for() if s.name == name)
+        read, written = self.FILES[name]
+        (tmp_path / read).write_text("v1")
+        runs: list[int] = []
+
+        def fake(config):
+            runs.append(1)
+            (config.work_dir / written).write_text("out")
+
+        def run(**knobs):
+            cfg = AssemblyConfig(
+                genome=tmp_path / "g.fa", work_dir=tmp_path, num_cpu=2, **knobs,
+            )
+            run_simple_pipeline(ASSEMBLY, [replace(spec, fn=fake)], cfg)
+            return len(runs)
+
+        return run, tmp_path / read, tmp_path / written
+
+    @pytest.mark.parametrize("name", list(FILES))
+    def test_resume_follows_files_read_and_written(self, tmp_path, name):
+        run, read, written = self._driver(tmp_path, name)
+        assert run() == 1
+        assert run() == 1  # unchanged: skipped
+        read.write_text("v2")
+        assert run() == 2  # a file it reads changed
+        written.unlink()
+        assert run() == 3  # a file it writes was removed
+        assert run() == 3
+
+    @pytest.mark.parametrize(
+        ("name", "knob"), [(n, k) for n, knobs in KNOBS.items() for k in knobs],
+    )
+    def test_changed_knob_reruns(self, tmp_path, name, knob):
+        run, _, _ = self._driver(tmp_path, name)
+        assert run() == 1
+        assert run() == 1
+        assert run(**{knob: self.KNOBS[name][knob]}) == 2
+
+    def test_strand_correct_follows_uniprot_db(self, tmp_path):
+        run, _, _ = self._driver(tmp_path, "strand_correct")
+        db = tmp_path / "sprot.faa"
+        db.write_text(">a\nMK\n")
+        assert run() == 1
+        assert run(uniprot_db=db) == 2  # DB given
+        assert run(uniprot_db=db) == 2
+        db.write_text(">a\nMKV\n")
+        assert run(uniprot_db=db) == 3  # DB content changed
 
 
 class TestScalarFingerprintResume:
