@@ -76,7 +76,7 @@ _MAX_ADAPTIVE_TROUGH = 0.30
 
 # The Trinity FASTAs the map_transcripts step consumes (both de novo and
 # genome-guided); the jaccard step rewrites each into a ``.jaccard.fasta`` sibling
-# that ``star.map_transcripts`` prefers when present.
+# that ``minimap2.map_transcripts_minimap2`` prefers when present.
 _TRANSCRIPT_FASTAS = (
     "trinity-denovo.fasta",
     "trinity-gg.fasta",

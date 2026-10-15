@@ -45,7 +45,7 @@ class StepSpec:
     """Declarative description of one pipeline step.
 
     Attributes:
-        name: Bare step name (e.g. ``"star"``). Combined with the
+        name: Bare step name (e.g. ``"minimap2"``). Combined with the
             pipeline prefix to form the manifest key.
         fn: Step function. Called as ``fn(config)``. The function may
             return a Path (used as the step's output) or write to its
