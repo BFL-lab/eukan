@@ -23,7 +23,7 @@ from eukan.infra.manifest import (
     step_key,
 )
 from eukan.infra.pipeline import run_orchestrated_step
-from eukan.infra.steps import is_step_complete, step_dir
+from eukan.infra.steps import step_dir
 from eukan.settings import PipelineConfig
 from eukan.validation import sanitize_genome_fasta, validate_fasta
 
@@ -163,27 +163,14 @@ def run_annotation_pipeline(
     else:
         log.info("No transcript evidence found. Running protein-only annotation.")
 
-    # Load or create shared manifest (used by all pipelines in this work_dir)
+    # Load or create shared manifest (used by all pipelines in this work_dir).
+    # Each step decides on its own record whether it still has to run, so a
+    # resume with nothing left to do skips every step.
     manifest = get_or_create_manifest(config.manifest_dir, config)
-    forced = frozenset(force_steps or ())
-
-    if not forced:
-        # Nothing to do only if every step is already recorded AND the final
-        # consensus output is still intact (existence + non-empty + valid GFF).
-        # A missing/corrupt output makes is_step_complete return None, so we
-        # fall through to _execute_steps, which rebuilds it via the same
-        # per-step check. Any step not yet in the manifest is also pending.
-        expected = _expected_steps(config)
-        pending = [s for s in expected if s not in manifest.steps]
-        if not pending:
-            final = is_step_complete(manifest, step_key(ANNOTATION, "consensus_models"))
-            if isinstance(final, Path):
-                log.info("All steps complete. Use --run-* flags to re-run specific steps.")
-                return final
     save_manifest(config.manifest_dir, manifest)
 
     try:
-        result = _execute_steps(config, manifest, forced)
+        result = _execute_steps(config, manifest, frozenset(force_steps or ()))
         manifest.status = "completed"
         manifest.finished_at = manifest.steps[
             max(manifest.steps, key=lambda k: manifest.steps[k].finished_at or "")
@@ -244,27 +231,6 @@ def force_steps_from_run_flags(
             continue
         forced.append(step_key(ANNOTATION, name))
     return forced
-
-
-def _expected_steps(config: PipelineConfig) -> list[str]:
-    """Return the list of manifest step keys expected for this config.
-
-    SNAP/CodingQuarry follow :func:`_phase_snap_codingquarry`: with
-    transcripts only fungi run them; without, fungi and protists run both
-    and other kingdoms run SNAP alone.
-    """
-    prot_align_step = "prot_align_ssp" if config.spaln_ssp else "prot_align"
-    steps = ["genemark", prot_align_step, "augustus"]
-    if config.has_transcripts:
-        steps.insert(0, "orf_finder")
-        if config.is_fungus:
-            steps.extend(["snap", "codingquarry"])
-    elif config.is_fungus or config.is_protist:
-        steps.extend(["snap", "codingquarry"])
-    else:
-        steps.append("snap")
-    steps.append("consensus_models")
-    return [step_key(ANNOTATION, s) for s in steps]
 
 
 def _execute_steps(

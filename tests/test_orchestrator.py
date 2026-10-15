@@ -9,11 +9,7 @@ from typing import ClassVar
 import pytest
 
 from eukan.annotation import pipeline as annotation_pipeline
-from eukan.annotation.pipeline import (
-    _execute_steps,
-    _expected_steps,
-    force_steps_from_run_flags,
-)
+from eukan.annotation.pipeline import force_steps_from_run_flags
 from eukan.assembly.pipeline import (
     _steps_for,
 )
@@ -116,39 +112,6 @@ class TestForceStepsFromRunFlags:
             run_genemark=True, run_augustus=True, run_snap=True,
         )
         assert all(k.startswith("annotation/") for k in result)
-
-
-class TestExpectedSteps:
-    """``_expected_steps`` must list exactly the steps the phases run. A
-    listed step the phases skip stays pending forever, so the "All steps
-    complete" fast path never fires."""
-
-    @pytest.mark.parametrize("kingdom", ["fungus", "protist", "animal", "plant"])
-    @pytest.mark.parametrize("has_transcripts", [True, False], ids=["transcripts", "protein_only"])
-    def test_matches_the_steps_the_phases_run(
-        self, tmp_path, monkeypatch, has_transcripts, kingdom,
-    ):
-        evidence = {
-            field: tmp_path / field
-            for field in ("transcripts_fasta", "transcripts_gff", "rnaseq_hints")
-        } if has_transcripts else {}
-        config = PipelineConfig(
-            genome=tmp_path / "genome.fa", proteins=[tmp_path / "proteins.faa"],
-            work_dir=tmp_path, kingdom=kingdom, **evidence,
-        )
-        ran: list[str] = []
-
-        def fake_run_step(config, manifest, name, fn, *args, **kwargs):
-            ran.append(f"annotation/{name}")
-            return tmp_path / f"{name}.gff3"
-
-        monkeypatch.setattr("eukan.annotation.pipeline._run_step", fake_run_step)
-        monkeypatch.setattr("eukan.annotation.pipeline._log_prediction_count", lambda *_: None)
-
-        _execute_steps(config, None)
-
-        assert config.has_transcripts is has_transcripts
-        assert sorted(ran) == sorted(_expected_steps(config))
 
 
 class TestAssemblyForceStepsFromRunFlags:
@@ -912,6 +875,73 @@ class TestRerunFromScratch:
             config, force_steps=[step_key(ANNOTATION, "genemark")],
         )
         assert ran == ["fresh", "fresh"]
+
+
+class _FakeAnnotation:
+    """Stub the annotation step functions of a protein-only animal run (GeneMark,
+    protein alignment, AUGUSTUS, SNAP, consensus): each records its step name in
+    ``ran`` and writes a GFF3 into its step dir — ``content[name]`` if set — or
+    raises if its name is in ``fail``."""
+
+    STEPS: ClassVar[dict[str, str]] = {
+        "run_genemark": "genemark", "align_proteins": "prot_align",
+        "run_augustus": "augustus", "run_snap": "snap",
+        "build_consensus_models": "consensus_models",
+    }
+
+    def __init__(self, monkeypatch, tmp_path):
+        self.ran: list[str] = []
+        self.content: dict[str, str] = {}
+        self.fail: set[str] = set()
+        genome = tmp_path / "genome.fa"
+        genome.write_text(">chr1\nACGTACGTAC\n")
+        self.proteins = tmp_path / "proteins.faa"
+        self.proteins.write_text(">p\nMK\n")
+        self.config = PipelineConfig(
+            genome=genome, proteins=[self.proteins], work_dir=tmp_path, kingdom="animal",
+        )
+        for attr, name in self.STEPS.items():
+            monkeypatch.setattr(annotation_pipeline, attr, self._step(name))
+
+    def _step(self, name):
+        def fn(config, *args, **kwargs):
+            self.ran.append(name)
+            if name in self.fail:
+                raise RuntimeError(f"{name} failed")
+            out = config.work_dir / name / f"{name}.gff3"
+            out.write_text(self.content.get(name, _GFF3))
+            return out
+
+        return fn
+
+    def run(self, *forced: str) -> list[str]:
+        """Run the pipeline, forcing the named steps; return the steps that ran."""
+        self.ran.clear()
+        annotation_pipeline.run_annotation_pipeline(
+            self.config, force_steps=[step_key(ANNOTATION, n) for n in forced],
+        )
+        return list(self.ran)
+
+
+class TestAnnotationResume:
+    """Each annotation step decides on its own record whether it re-runs."""
+
+    def test_nothing_left_runs_no_step(self, tmp_path, monkeypatch):
+        fake = _FakeAnnotation(monkeypatch, tmp_path)
+        assert fake.run() == ["genemark", "prot_align", "augustus", "snap", "consensus_models"]
+        assert fake.run() == []
+
+    def test_failed_step_reruns_on_resume(self, tmp_path, monkeypatch):
+        # A forced re-run that failed leaves the step's record failed while the
+        # consensus record from the earlier run is still complete; the resume must
+        # re-run the failed step rather than report every step complete.
+        fake = _FakeAnnotation(monkeypatch, tmp_path)
+        fake.run()
+        fake.fail.add("augustus")
+        with pytest.raises(RuntimeError):
+            fake.run("augustus")
+        fake.fail.clear()
+        assert fake.run() == ["augustus"]
 
 
 class TestTrinityTrackRerun:
