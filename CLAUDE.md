@@ -77,7 +77,7 @@ eukan/
 │   ├── pipeline.py     # StepSpec + run_simple_pipeline() / run_orchestrated_step() driver
 │   ├── layout.py       # PIPELINE_SUBDIRS, step_work_dir(), sibling_step_dir() — per-step run dir layout
 │   ├── artifacts.py    # Artifact enum + find() — cross-pipeline artifact registry
-│   ├── logging.py      # get_logger(), setup_logging(), md5_file()
+│   ├── logging.py      # get_logger(), setup_logging()
 │   ├── genome.py       # ContigIndex, FASTA helpers
 │   ├── genetic_code.py # Genetic code table abstractions
 │   ├── health.py       # Tool/database probes for `eukan check`
