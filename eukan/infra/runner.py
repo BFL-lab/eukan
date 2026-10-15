@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import os
+import signal
 import subprocess
 import tempfile
 import threading
@@ -34,6 +36,18 @@ def _untrack(proc: subprocess.Popen) -> None:
         _RUNNING.discard(proc)
 
 
+def _signal_group(proc: subprocess.Popen, sig: int) -> None:
+    """Send *sig* to *proc*'s whole process group, not only to *proc*.
+
+    Every child starts in its own session (see :func:`_tracked_popen`), so its
+    process-group id is its PID and the group also holds the worker processes
+    the tool forks, which signalling the PID alone would leave running. A
+    group that is already gone, or that may not be signalled, is ignored.
+    """
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(proc.pid, sig)
+
+
 @contextmanager
 def _tracked_popen(
     cmd: list[str] | str,
@@ -45,8 +59,8 @@ def _tracked_popen(
 ) -> Iterator[subprocess.Popen]:
     """Spawn a Popen registered for SIGINT cleanup, with isolated session.
 
-    On ``KeyboardInterrupt`` the child is terminated (5s grace) then
-    SIGKILLed; in either case the process is unregistered before the
+    On ``KeyboardInterrupt`` the child's process group is terminated (5s
+    grace) then SIGKILLed; in either case the process is unregistered before the
     context exits. ``FileNotFoundError`` is translated to
     :class:`MissingToolError` when *missing_tool* is provided and the
     cwd actually exists (so a missing cwd surfaces as the original
@@ -64,21 +78,21 @@ def _tracked_popen(
     try:
         yield proc
     except KeyboardInterrupt:
-        proc.terminate()
+        _signal_group(proc, signal.SIGTERM)
         with contextlib.suppress(subprocess.TimeoutExpired):
             proc.communicate(timeout=5)
         if proc.returncode is None:
-            proc.kill()
+            _signal_group(proc, signal.SIGKILL)
         raise
     finally:
         _untrack(proc)
 
 
 def terminate_all_children(grace_period: float = 5.0) -> None:
-    """Terminate every tracked child process, then SIGKILL stragglers.
+    """Terminate every tracked child's process group, then SIGKILL stragglers.
 
     Called from the CLI's SIGINT handler so Ctrl-C doesn't orphan running
-    bioinformatics tools.
+    bioinformatics tools or the worker processes they fork.
     """
     with _REGISTRY_LOCK:
         procs = list(_RUNNING)
@@ -86,16 +100,14 @@ def terminate_all_children(grace_period: float = 5.0) -> None:
         return
     log.warning("Interrupted; terminating %d running child process(es)...", len(procs))
     for p in procs:
-        with contextlib.suppress(OSError):
-            p.terminate()
+        _signal_group(p, signal.SIGTERM)
     deadline = time.monotonic() + grace_period
     for p in procs:
         remaining = max(0.0, deadline - time.monotonic())
         try:
             p.wait(timeout=remaining)
         except subprocess.TimeoutExpired:
-            with contextlib.suppress(OSError):
-                p.kill()
+            _signal_group(p, signal.SIGKILL)
 
 
 def _tool_name(cmd: list[str]) -> str:
@@ -183,7 +195,7 @@ def run_cmd(
             try:
                 _, stderr = proc.communicate(timeout=timeout)
             except subprocess.TimeoutExpired as exc:
-                proc.kill()
+                _signal_group(proc, signal.SIGKILL)
                 with contextlib.suppress(subprocess.TimeoutExpired):
                     proc.communicate(timeout=5)
                 raise ExternalToolError(
@@ -247,7 +259,7 @@ def run_piped(
                 stdout, stderr = p2.communicate()
         except BaseException:
             # Tear down the producer if the consumer raises (or KeyboardInterrupt).
-            p1.kill()
+            _signal_group(p1, signal.SIGKILL)
             p1.wait()
             raise
         p1.wait()

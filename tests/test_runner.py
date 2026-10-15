@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
+import signal
 import subprocess
+import threading
+import time
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +22,17 @@ from eukan.infra.runner import (
     run_piped,
     terminate_all_children,
 )
+
+
+def _running(pid: int) -> bool:
+    """True while *pid* exists and is not a zombie (a killed grandchild stays a
+    zombie until its new parent reaps it, so ``os.kill(pid, 0)`` would still
+    succeed)."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except FileNotFoundError:
+        return False
+    return stat.rsplit(")", 1)[1].split()[0] not in ("Z", "X")
 
 
 class TestTerminateAllChildren:
@@ -57,6 +73,34 @@ class TestTerminateAllChildren:
             if proc.returncode is None:
                 proc.kill()
                 proc.wait()
+
+    @pytest.mark.skipif(not os.path.isdir("/proc/self"), reason="needs /proc")
+    def test_terminates_grandchildren(self, tmp_path):
+        """Ctrl-C reaches the workers a tool forks, not only the tool: the child
+        runs in its own session, so signalling its PID alone orphaned them."""
+        pidfile = tmp_path / "sleep.pid"
+
+        def tool():
+            with contextlib.suppress(ExternalToolError):  # bash dies of SIGTERM
+                run_cmd(["bash", "-c", "sleep 300 & echo $! > sleep.pid; wait"], cwd=tmp_path)
+
+        thread = threading.Thread(target=tool, daemon=True)
+        thread.start()
+        deadline = time.monotonic() + 5
+        while not (_RUNNING and pidfile.exists() and pidfile.read_text().strip()):
+            assert time.monotonic() < deadline, "bash never started its grandchild"
+            time.sleep(0.01)
+        grandchild = int(pidfile.read_text())
+        try:
+            terminate_all_children(grace_period=2.0)
+            deadline = time.monotonic() + 2
+            while _running(grandchild) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert not _running(grandchild)
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(grandchild, signal.SIGKILL)
+            thread.join(timeout=5)
 
 
 class TestRunCmd:
