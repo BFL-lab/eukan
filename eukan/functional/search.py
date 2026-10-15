@@ -119,7 +119,9 @@ def run_hmmscan_search(
 ) -> HitResults:
     """Run hmmscan (sequence vs HMM profiles) and return non-overlapping domain hits.
 
-    For each query, keeps hits whose domains don't overlap on the query sequence.
+    For each query, hits are taken best E-value first; each is placed by its
+    best-scoring domain and kept unless that domain overlaps, on the query
+    sequence, the domain of a hit already kept.
     """
     results: HitResults = {}
 
@@ -129,26 +131,23 @@ def run_hmmscan_search(
             continue
 
         query_hits: dict[str, HitInfo] = {}
-        prev_end = -1
+        kept_spans: list[tuple[int, int]] = []
 
         for hit in top_hits:
             if not hit.domains:
                 continue
-            # Use the best domain for range checking
-            best_domain = hit.domains[0]
-            dom_start = best_domain.alignment.target_from
-            dom_end = best_domain.alignment.target_to
-
-            # Only keep non-overlapping domains
-            if dom_start > prev_end:
-                hit_name = _decode(hit.name)
-                hit_desc = _decode(hit.description) if hit.description else ""
-                query_hits[hit_name] = {
-                    "description": hit_desc,
-                    "evalue": hit.evalue,
-                    "accession": _decode(hit.accession),
-                }
-                prev_end = dom_end
+            aln = hit.best_domain.alignment
+            start, end = aln.target_from, aln.target_to
+            if any(start <= k_end and k_start <= end for k_start, k_end in kept_spans):
+                continue
+            kept_spans.append((start, end))
+            hit_name = _decode(hit.name)
+            hit_desc = _decode(hit.description) if hit.description else ""
+            query_hits[hit_name] = {
+                "description": hit_desc,
+                "evalue": hit.evalue,
+                "accession": _decode(hit.accession),
+            }
 
         if query_hits:
             results[query_name] = query_hits

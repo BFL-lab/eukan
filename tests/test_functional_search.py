@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from eukan.functional.search import _add_func_info, _pfam_accession, annotate_gff3
+import pyhmmer
+import pytest
+
+from eukan.functional.search import (
+    _add_func_info,
+    _pfam_accession,
+    annotate_gff3,
+    run_hmmscan_search,
+)
 from eukan.gff import create_gff_db
 
 # ---------------------------------------------------------------------------
@@ -151,3 +159,41 @@ class TestAnnotateGff3OutputRouting:
 
         assert out == tmp_path / "final.mod.gff3"
         assert out.exists()
+
+
+# ---------------------------------------------------------------------------
+# run_hmmscan_search — non-overlapping domain hits (real pyhmmer run)
+# ---------------------------------------------------------------------------
+
+# The PyPI pyhmmer wheel ships its own test data, including these RRE family HMMs.
+RREFAM = Path(pyhmmer.__file__).parent / "tests" / "data" / "hmms" / "txt" / "RREFam.hmm"
+
+
+@pytest.fixture(scope="module")
+def rrefam() -> list[pyhmmer.plan7.HMM]:
+    if not RREFAM.exists():
+        pytest.skip("pyhmmer installed without its bundled test HMMs")
+    with pyhmmer.plan7.HMMFile(str(RREFAM)) as hf:
+        return list(hf)
+
+
+class TestHmmscanNonOverlap:
+    """A protein made of two RRE domains (the HMMs' consensus sequences)
+    joined by a linker. Thiopeptide_F_RRE has the best E-value in either
+    order, and both families also match the other domain's region weakly,
+    so a hit's first domain is not always its best one."""
+
+    @pytest.mark.parametrize("lasso_first", [True, False], ids=["lasso_first", "lasso_last"])
+    def test_both_domains_reported_in_either_order(self, rrefam, lasso_first):
+        by_name = {hmm.name: hmm for hmm in rrefam}
+        lasso = by_name["Stand_Alone_Lasso_RRE"].consensus.upper()
+        thiopeptide = by_name["Thiopeptide_F_RRE"].consensus.upper()
+        linker = "GGSGGS" * 4
+        domains = (lasso, thiopeptide) if lasso_first else (thiopeptide, lasso)
+        query = pyhmmer.easel.TextSequence(name="q", sequence=linker.join(domains)).digitize(
+            pyhmmer.easel.Alphabet.amino(),
+        )
+
+        res = run_hmmscan_search([query], rrefam, num_cpu=1, evalue_threshold=1e-3)
+
+        assert set(res["q"]) == {"Stand_Alone_Lasso_RRE", "Thiopeptide_F_RRE"}
