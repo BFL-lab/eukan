@@ -50,6 +50,19 @@ class TestFindStartsStops:
         stops_6 = df_code6[df_code6["codon"] == "stop"]
         assert 10 not in stops_6["pos"].values
 
+    def test_overlapping_start_codons_all_found(self):
+        """Code 11 starts overlap: ATT@3 and TTG@4 share bases in CCATTGCC.
+        A non-overlapping scan resumed after ATT and lost the TTG."""
+        df = find_starts_stops([("seq1", "+", "CCATTGCC")], genetic_code=11)
+        starts = df[df["codon"] == "start"]
+        assert sorted(starts["pos"]) == [3, 4]
+
+    def test_overlapping_stop_codons_all_found(self):
+        """Code 2 stops overlap: TAG@2 and AGA@3 share bases in CTAGAC."""
+        df = find_starts_stops([("seq1", "+", "CTAGAC")], genetic_code=2)
+        stops = df[df["codon"] == "stop"]
+        assert sorted(stops["pos"]) == [2, 3]
+
 
 # ---------------------------------------------------------------------------
 # fetch_longest_orf
@@ -114,3 +127,13 @@ class TestFetchLongestORF:
         # ORF is 99 nt / 1000 nt = 0.099, below default 0.50
         result = fetch_longest_orf(data, min_orf_len=10, orf_len_frac=0.50)
         assert len(result) == 0
+
+    def test_longest_orf_starts_at_overlapped_start_codon(self):
+        """Under code 11 the longest ORF starts at TTG@2 (frame 1), which
+        overlaps ATT@1 (frame 0). With that start lost, the scan fell back
+        to the in-frame ATG@20 and reported a shorter ORF."""
+        seq = "ATTG" + "AAA" * 5 + "ATG" + "AAA" * 35 + "TAA"
+        result = fetch_longest_orf(find_starts_stops([("t1", "+", seq)], genetic_code=11))
+        assert len(result) == 1
+        orf = result.iloc[0]
+        assert (orf["start"], orf["stop"], orf["frame"]) == (2, len(seq), 1)

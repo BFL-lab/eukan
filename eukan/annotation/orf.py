@@ -57,8 +57,11 @@ def find_starts_stops(
         DataFrame with columns: id, seqlen, pos, strand, codon, frame
     """
     code = CodonTable.unambiguous_dna_by_id[genetic_code]
-    start_pattern = "(" + "|".join(code.start_codons) + ")"
-    stop_pattern = "(" + "|".join(code.stop_codons) + ")"
+    # Zero-width lookahead so overlapping codons are all found: a plain
+    # re.finditer resumes after each match, and several codes' start (or
+    # stop) sets overlap, e.g. ATT/TTG in code 11 (ATTG), TAG/AGA in code 2.
+    start_pattern = "(?=(" + "|".join(code.start_codons) + "))"
+    stop_pattern = "(?=(" + "|".join(code.stop_codons) + "))"
 
     rows: list[tuple[str, int, int, str, str, int]] = []
 
