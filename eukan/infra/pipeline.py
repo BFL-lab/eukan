@@ -10,6 +10,7 @@ straight line (annotation's phases, functional's JSON-cache dance).
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -215,7 +216,10 @@ def run_orchestrated_step(
             any config/state needed by the step.
         step_dir: Directory holding the step's sentinel and outputs.
             Defaults to ``manifest_dir / <last segment of step_name>``.
-        force: If True, skip the cached-step check and re-run.
+        force: If True, skip the cached-step check and re-run from scratch:
+            ``output_file``, ``clear_files`` and the step dir are removed
+            first, whatever the step's record says. A completed step whose
+            inputs changed re-runs from scratch the same way.
         output_file: If provided, overrides the return value of *fn* as
             the step's output path. Useful for steps that write to a
             fixed filename and return ``None``.
@@ -239,34 +243,47 @@ def run_orchestrated_step(
             log.info("[%s] Already complete, skipping.", step_name)
             return cached if isinstance(cached, Path) else None
 
-    # Re-running a step that previously completed (forced, or its inputs changed):
-    # drop the declared output (and clear_files) first, so step functions that reuse
-    # an existing output as their own resume check (Trinity's per-mode FASTAs, the
-    # transcript mappers' BAM check) actually regenerate it instead of reusing a
-    # file built from inputs that have changed.
-    if prior is not None and prior.status == StepStatus.completed and output_file is not None:
-        if force:
-            reason = "forced"
-        elif (
+    # Re-running a step that previously completed (its inputs changed, or its output
+    # is missing or stale): drop the declared output (and clear_files) first, so step
+    # functions that reuse an existing output as their own resume check (Trinity's
+    # per-mode FASTAs, the transcript mappers' BAM check) actually regenerate it
+    # instead of reusing a file built from inputs that have changed. A forced step
+    # (whatever its record says) or one whose inputs changed re-runs from scratch, so
+    # its step dir goes too: a cache a step function keeps there (GeneMark's
+    # genemark.gtf, the AUGUSTUS training set) cannot short-circuit it. A step whose
+    # output went missing keeps the step dir: its caches still match its inputs.
+    sdir = step_dir if step_dir else manifest_dir / step_name.rsplit("/", 1)[-1]
+    reason = None
+    if force:
+        reason = "forced"
+    elif prior is not None and prior.status == StepStatus.completed:
+        if (
             (input_files or input_scalars)
             and prior.input_md5 is not None
             and fingerprint_inputs(input_files, input_scalars) != prior.input_md5
         ):
             reason = "inputs changed"
-        else:
+        elif output_file is not None:
             reason = "output missing or stale"
-        stale = [p for p in (output_file, *(clear_files or ())) if p.exists()]
+    if reason is not None:
+        stale = [
+            p for p in (output_file, *(clear_files or ())) if p is not None and p.exists()
+        ]
+        if reason != "output missing or stale" and sdir != manifest_dir and sdir.exists():
+            stale.append(sdir)
         if stale:
             log.warning(
                 "[%s] Re-running (%s); clearing stale output %s.",
                 step_name, reason, ", ".join(p.name for p in stale),
             )
             for p in stale:
-                p.unlink()
+                if p.is_dir():
+                    shutil.rmtree(p)
+                else:
+                    p.unlink()
         else:
             log.info("[%s] Re-running (%s).", step_name, reason)
 
-    sdir = step_dir if step_dir else manifest_dir / step_name.rsplit("/", 1)[-1]
     if is_step_interrupted(manifest_dir, step_name, step_dir=sdir):
         log.warning("[%s] Cleaning up interrupted previous run...", step_name)
         clean_interrupted_step(manifest_dir, step_name, step_dir=sdir)

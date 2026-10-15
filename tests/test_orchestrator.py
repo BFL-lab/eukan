@@ -8,6 +8,7 @@ from typing import ClassVar
 
 import pytest
 
+from eukan.annotation import pipeline as annotation_pipeline
 from eukan.annotation.pipeline import (
     _execute_steps,
     _expected_steps,
@@ -19,7 +20,14 @@ from eukan.assembly.pipeline import (
 from eukan.assembly.pipeline import (
     force_steps_from_run_flags as assembly_force_steps_from_run_flags,
 )
-from eukan.infra.manifest import ASSEMBLY, RunManifest, StepRecord, StepStatus, step_key
+from eukan.infra.manifest import (
+    ANNOTATION,
+    ASSEMBLY,
+    RunManifest,
+    StepRecord,
+    StepStatus,
+    step_key,
+)
 from eukan.infra.pipeline import StepSpec, run_orchestrated_step, run_simple_pipeline
 from eukan.infra.steps import fingerprint_inputs
 from eukan.settings import AssemblyConfig, PipelineConfig
@@ -775,6 +783,135 @@ class TestRerunClearsStaleOutput:
             except RuntimeError:
                 assert fail
         assert made == ["sibling.bam", "out.bam"]
+
+
+_GFF3 = "##gff-version 3\nchr1\tt\tgene\t1\t10\t.\t+\t.\tID=g1\n"
+
+
+class TestRerunFromScratch:
+    """A forced step (whatever its record says) or a completed one whose inputs
+    changed re-runs from scratch: its declared output, clear_files and step dir go
+    first, so a cache a step function keeps in its step dir (GeneMark's
+    genemark.gtf, the AUGUSTUS training set) cannot short-circuit it."""
+
+    @staticmethod
+    def _cached_step(sdir, ran):
+        """A step fn that, like GeneMark, reuses a cache in its step dir."""
+
+        def fn():
+            cache = sdir / "genemark.gtf"
+            ran.append("reused" if cache.exists() else "fresh")
+            cache.write_text("gtf")
+            (sdir / "genemark.gff3").write_text(_GFF3)
+            return sdir / "genemark.gff3"
+
+        return fn
+
+    def test_forced_rerun_clears_step_dir(self, tmp_path):
+        manifest = RunManifest()
+        sdir = tmp_path / "genemark"
+        ran: list[str] = []
+        fn = self._cached_step(sdir, ran)
+        for force in (False, True):
+            run_orchestrated_step(
+                tmp_path, manifest, "annotation/genemark", fn, step_dir=sdir, force=force,
+            )
+        assert ran == ["fresh", "fresh"]
+
+    def test_changed_inputs_rerun_clears_step_dir(self, tmp_path):
+        manifest = RunManifest()
+        sdir = tmp_path / "genemark"
+        hints = tmp_path / "hints.gff"
+        ran: list[str] = []
+        fn = self._cached_step(sdir, ran)
+        for content in ("v1", "v2"):
+            hints.write_text(content)
+            run_orchestrated_step(
+                tmp_path, manifest, "annotation/genemark", fn, step_dir=sdir,
+                input_files=[hints],
+            )
+        assert ran == ["fresh", "fresh"]
+
+    def test_missing_output_rerun_keeps_step_dir(self, tmp_path):
+        # The output was lost, not invalidated: the cache still matches the inputs.
+        manifest = RunManifest()
+        sdir = tmp_path / "genemark"
+        ran: list[str] = []
+        fn = self._cached_step(sdir, ran)
+        run_orchestrated_step(tmp_path, manifest, "annotation/genemark", fn, step_dir=sdir)
+        (sdir / "genemark.gff3").unlink()
+        run_orchestrated_step(tmp_path, manifest, "annotation/genemark", fn, step_dir=sdir)
+        assert ran == ["fresh", "reused"]
+
+    def test_forced_rerun_keeps_manifest_dir(self, tmp_path):
+        manifest = RunManifest()
+        keep = tmp_path / "keep.txt"
+        keep.write_text("x")
+        for force in (False, True):
+            run_orchestrated_step(
+                tmp_path, manifest, "repeats/x", lambda: None, step_dir=tmp_path, force=force,
+            )
+        assert keep.exists()
+
+    def test_forced_rerun_of_failed_step_clears_outputs(self, tmp_path):
+        manifest = RunManifest()
+        out, sibling = tmp_path / "out.bam", tmp_path / "sibling.bam"
+        made: list[str] = []
+
+        def fn(fail):
+            for p in (sibling, out):
+                if not p.exists():
+                    if fail and p == out:
+                        raise RuntimeError("killed")
+                    made.append(p.name)
+                    p.write_text("mapped")
+
+        with pytest.raises(RuntimeError):
+            run_orchestrated_step(
+                tmp_path, manifest, "assembly/x", fn, True, step_dir=tmp_path / "x",
+                output_file=out, clear_files=[sibling],
+            )
+        run_orchestrated_step(
+            tmp_path, manifest, "assembly/x", fn, False, step_dir=tmp_path / "x",
+            output_file=out, clear_files=[sibling], force=True,
+        )
+        assert made == ["sibling.bam", "sibling.bam", "out.bam"]
+
+    def test_forced_annotation_step_clears_its_cache(self, tmp_path, monkeypatch):
+        # --run-genemark: run_annotation_pipeline forces the step through
+        # run_orchestrated_step rather than dropping its manifest record, so the
+        # genemark.gtf GeneMark keeps in its step dir is cleared too.
+        genome = tmp_path / "genome.fa"
+        genome.write_text(">chr1\nACGTACGTAC\n")
+        config = PipelineConfig(
+            genome=genome, proteins=[tmp_path / "proteins.faa"], work_dir=tmp_path,
+            kingdom="animal",
+        )
+        ran: list[str] = []
+
+        def other_step(name):
+            def fn(config, *args, **kwargs):
+                out = config.work_dir / name / f"{name}.gff3"
+                out.write_text(_GFF3)
+                return out
+
+            return fn
+
+        monkeypatch.setattr(
+            annotation_pipeline, "run_genemark",
+            lambda config: self._cached_step(config.work_dir / "genemark", ran)(),
+        )
+        for attr, name in (
+            ("align_proteins", "prot_align"), ("run_augustus", "augustus"),
+            ("run_snap", "snap"), ("build_consensus_models", "consensus_models"),
+        ):
+            monkeypatch.setattr(annotation_pipeline, attr, other_step(name))
+
+        annotation_pipeline.run_annotation_pipeline(config)
+        annotation_pipeline.run_annotation_pipeline(
+            config, force_steps=[step_key(ANNOTATION, "genemark")],
+        )
+        assert ran == ["fresh", "fresh"]
 
 
 class TestTrinityTrackRerun:

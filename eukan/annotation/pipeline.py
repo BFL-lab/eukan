@@ -60,17 +60,21 @@ def _run_step(
     name: str,
     fn: Callable,
     *args,
+    forced: frozenset[str] = frozenset(),
     **kwargs,
 ) -> Path:
     """Run an annotation step via the shared pipeline helper.
 
-    All annotation steps produce a GFF3 output, so the result is always
-    a Path (never None).
+    The step re-runs from scratch when its manifest key is in *forced*. All
+    annotation steps produce a GFF3 output, so the result is always a Path
+    (never None).
     """
+    key = step_key(ANNOTATION, name)
     result = run_orchestrated_step(
-        config.manifest_dir, manifest, step_key(ANNOTATION, name),
+        config.manifest_dir, manifest, key,
         fn, config, *args,
         step_dir=config.work_dir / name,
+        force=key in forced,
         **kwargs,
     )
     assert result is not None, f"annotation step {name!r} returned no output"
@@ -86,12 +90,15 @@ def _run_concurrent_steps(
     config: PipelineConfig,
     manifest: RunManifest,
     tasks: list[tuple[str, Callable, tuple, dict]],
+    forced: frozenset[str],
 ) -> dict[str, Path]:
     """Run multiple independent steps concurrently."""
     results: dict[str, Path] = {}
     with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
         future_to_name = {
-            pool.submit(_run_step, config, manifest, name, fn, *args, **kwargs): name
+            pool.submit(
+                _run_step, config, manifest, name, fn, *args, forced=forced, **kwargs,
+            ): name
             for name, fn, args, kwargs in tasks
         }
         for future in as_completed(future_to_name):
@@ -118,9 +125,9 @@ def run_annotation_pipeline(
 
     Args:
         config: Pipeline configuration.
-        force_steps: Optional list of step names to force re-run, even if
-            previously completed.  When provided, step records are removed
-            from the manifest so they will be re-executed.
+        force_steps: Optional manifest keys of steps to re-run from scratch,
+            even if previously completed (see ``run_orchestrated_step``'s
+            ``force``).
 
     Returns:
         Path to the final GFF3 output.
@@ -158,13 +165,9 @@ def run_annotation_pipeline(
 
     # Load or create shared manifest (used by all pipelines in this work_dir)
     manifest = get_or_create_manifest(config.manifest_dir, config)
+    forced = frozenset(force_steps or ())
 
-    if force_steps:
-        # Explicit re-run: remove only the requested steps
-        for step in force_steps:
-            manifest.steps.pop(step, None)
-        save_manifest(config.manifest_dir, manifest)
-    else:
+    if not forced:
         # Nothing to do only if every step is already recorded AND the final
         # consensus output is still intact (existence + non-empty + valid GFF).
         # A missing/corrupt output makes is_step_complete return None, so we
@@ -177,10 +180,10 @@ def run_annotation_pipeline(
             if isinstance(final, Path):
                 log.info("All steps complete. Use --run-* flags to re-run specific steps.")
                 return final
-        save_manifest(config.manifest_dir, manifest)
+    save_manifest(config.manifest_dir, manifest)
 
     try:
-        result = _execute_steps(config, manifest)
+        result = _execute_steps(config, manifest, forced)
         manifest.status = "completed"
         manifest.finished_at = manifest.steps[
             max(manifest.steps, key=lambda k: manifest.steps[k].finished_at or "")
@@ -264,10 +267,15 @@ def _expected_steps(config: PipelineConfig) -> list[str]:
     return [step_key(ANNOTATION, s) for s in steps]
 
 
-def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
+def _execute_steps(
+    config: PipelineConfig,
+    manifest: RunManifest,
+    forced: frozenset[str] = frozenset(),
+) -> Path:
     """Execute annotation steps in dependency phases.
 
-    Each phase reads inputs from ``ev`` and returns the keys it produced.
+    Each phase reads inputs from ``ev`` and returns the keys it produced. A
+    step whose manifest key is in *forced* re-runs from scratch.
     Behavior matrix preserved verbatim from the previous nested form:
 
       - has_transcripts + is_fungus
@@ -283,15 +291,16 @@ def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
             GeneMark, spaln, AUGUSTUS, SNAP, consensus(spaln, augustus, snap, genemark)
     """
     ev: dict[str, Path] = {}
-    ev = _phase_orf_and_genemark(config, manifest, ev)
-    ev = _phase_protein_alignment(config, manifest, ev)
-    ev = _phase_augustus(config, manifest, ev)
-    ev = _phase_snap_codingquarry(config, manifest, ev)
-    return _phase_consensus(config, manifest, ev)
+    ev = _phase_orf_and_genemark(config, manifest, ev, forced)
+    ev = _phase_protein_alignment(config, manifest, ev, forced)
+    ev = _phase_augustus(config, manifest, ev, forced)
+    ev = _phase_snap_codingquarry(config, manifest, ev, forced)
+    return _phase_consensus(config, manifest, ev, forced)
 
 
 def _phase_orf_and_genemark(
     config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
+    forced: frozenset[str],
 ) -> dict[str, Path]:
     """Phase 1: ORF finding (transcripts only) + GeneMark, run concurrently."""
     if config.has_transcripts:
@@ -299,16 +308,20 @@ def _phase_orf_and_genemark(
         results = _run_concurrent_steps(config, manifest, [
             ("orf_finder", find_orfs, (config.transcripts_gff,), {}),
             ("genemark", run_genemark, (config.rnaseq_hints,), {}),
-        ])
+        ], forced)
         ev = {**ev, "transcriptORFs": results["orf_finder"], "genemark": results["genemark"]}
     else:
-        ev = {**ev, "genemark": _run_step(config, manifest, "genemark", run_genemark)}
+        ev = {
+            **ev,
+            "genemark": _run_step(config, manifest, "genemark", run_genemark, forced=forced),
+        }
     _log_prediction_count("GeneMark", ev["genemark"])
     return ev
 
 
 def _phase_protein_alignment(
     config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
+    forced: frozenset[str],
 ) -> dict[str, Path]:
     """Phase 2: spliced protein alignment via spaln (intron-hinted) or gth."""
     prot_step = "prot_align_ssp" if config.spaln_ssp else "prot_align"
@@ -318,7 +331,7 @@ def _phase_protein_alignment(
         spaln_extra = (intron_hints if intron_hints.exists() else None,)
     spaln_path = _run_step(
         config, manifest, prot_step, align_proteins,
-        ev["genemark"], config.proteins, *spaln_extra,
+        ev["genemark"], config.proteins, *spaln_extra, forced=forced,
     )
     _log_prediction_count("spaln", spaln_path)
     return {**ev, "spaln": spaln_path}
@@ -326,12 +339,13 @@ def _phase_protein_alignment(
 
 def _phase_augustus(
     config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
+    forced: frozenset[str],
 ) -> dict[str, Path]:
     """Phase 3: AUGUSTUS training and prediction."""
     aug_extra: tuple = (ev["transcriptORFs"],) if config.has_transcripts else ()
     aug_path = _run_step(
         config, manifest, "augustus", run_augustus,
-        ev["genemark"], ev["spaln"], *aug_extra,
+        ev["genemark"], ev["spaln"], *aug_extra, forced=forced,
     )
     _log_prediction_count("AUGUSTUS", aug_path)
     return {**ev, "augustus": aug_path}
@@ -339,6 +353,7 @@ def _phase_augustus(
 
 def _phase_snap_codingquarry(
     config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
+    forced: frozenset[str],
 ) -> dict[str, Path]:
     """Phase 4: SNAP, plus CodingQuarry for fungus/protist; skipped for has_t & non-fungus."""
     has_t = config.has_transcripts
@@ -348,7 +363,7 @@ def _phase_snap_codingquarry(
         results = _run_concurrent_steps(config, manifest, [
             ("snap", run_snap, (ev["augustus"], ev["spaln"], ev["transcriptORFs"]), {}),
             ("codingquarry", run_codingquarry, (config.transcripts_gff,), {}),
-        ])
+        ], forced)
         ev = {**ev, "snap": results["snap"], "codingquarry": results["codingquarry"]}
         _log_prediction_count("SNAP", ev["snap"])
         _log_prediction_count("CodingQuarry", ev["codingquarry"])
@@ -356,13 +371,13 @@ def _phase_snap_codingquarry(
         results = _run_concurrent_steps(config, manifest, [
             ("snap", run_snap, (ev["augustus"], ev["spaln"]), {}),
             ("codingquarry", run_codingquarry, (ev["augustus"],), {}),
-        ])
+        ], forced)
         ev = {**ev, "snap": results["snap"], "codingquarry": results["codingquarry"]}
         _log_prediction_count("SNAP", ev["snap"])
         _log_prediction_count("CodingQuarry", ev["codingquarry"])
     elif not has_t:
         snap_path = _run_step(
-            config, manifest, "snap", run_snap, ev["augustus"], ev["spaln"],
+            config, manifest, "snap", run_snap, ev["augustus"], ev["spaln"], forced=forced,
         )
         ev = {**ev, "snap": snap_path}
         _log_prediction_count("SNAP", snap_path)
@@ -386,6 +401,7 @@ def _consensus_scalars(config: PipelineConfig) -> list[str]:
 
 def _phase_consensus(
     config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
+    forced: frozenset[str],
 ) -> Path:
     """Phase 5: combinr consensus. Argument order varies with which evidence ran."""
     consensus_args: list[Path] = [ev["spaln"], ev["augustus"]]
@@ -406,5 +422,5 @@ def _phase_consensus(
     return _run_step(
         config, manifest, "consensus_models", build_consensus_models,
         *consensus_args, transcripts=transcripts,
-        input_scalars=_consensus_scalars(config),
+        input_scalars=_consensus_scalars(config), forced=forced,
     )
