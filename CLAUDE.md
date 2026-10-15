@@ -230,7 +230,7 @@ Authoritative reference for shared flag spellings and option-group layout. New s
 | `-f` | `--force` | **Reserved.** Use `force_option` (or `force_option(help_text=...)` for custom wording). |
 | `-c` | `--code` | NCBI genetic code. Use `code_option(default=N)` from `_framework.py`. |
 | `-o` | `--output-file` / `--output-dir` | Output destination — pick `-file` for a path, `-dir` for a directory. Never bare `--output`. |
-| `-d` | directory option | `--db-dir`, `--work-dir`, `--output-dir`. |
+| `-d` | directory option | `--work-dir` (status), `--output-dir` (prep-submission). Standing exception: `--database` in db-fetch (a database name, not a directory). check's `--db-dir` has no short flag. |
 | `-k` | `--kingdom` | annotate only. |
 | `-l` / `-r` / `-s` | `--left` / `--right` / `--single` | assemble paired/single reads. |
 | `-r` | `--reference` (compare), `--rnaseq-hints` (annotate) | Different commands, no real collision. |
