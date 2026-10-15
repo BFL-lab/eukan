@@ -80,7 +80,7 @@ The `dev` group adds `pytest`, `ruff`, and `mypy`.
 
 **Python** (managed by Poetry): click, gffutils, biopython, pandas, requests, pydantic-settings.
 
-**External tools** (via Docker image or conda): AUGUSTUS, SNAP, CodingQuarry, spaln, GenomeThreader, Trinity, STAR, samtools, BLAT, jellyfish, GMAP/GSNAP, fasta36, TRF.
+**External tools** (via Docker image or conda): AUGUSTUS, SNAP, CodingQuarry, spaln, GenomeThreader, Trinity, minimap2, samtools, diamond, jellyfish, TRF, RepeatModeler, RepeatMasker, rmblast, table2asn.
 
 **Manual install**:
 - GeneMark-ES/ET/EP+:  [license required](https://topaz.gatech.edu/GeneMark/license_download.cgi)
