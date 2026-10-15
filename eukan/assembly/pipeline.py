@@ -162,10 +162,16 @@ def _defuse_scalars(config: AssemblyConfig) -> list[str]:
 def _read_mapping_step() -> StepSpec:
     """The read-mapping StepSpec: minimap2 (splice:sr), with the non-canonical
     escalation handled inside :func:`minimap2.map_reads_minimap2`."""
+    # The soft-clip walk is skipped while its summary exists, which lets the
+    # non-canonical re-map inside one run reuse the verdict. A re-run of the completed
+    # step clears the summary so the walk rebuilds the verdict, and the poly-A "reads"
+    # section it writes, from the new BAM. polyA_diagnostic.json itself stays:
+    # map_transcripts writes its transcript sections there.
     return StepSpec(
         "minimap2", map_reads_minimap2,
         "minimap2_Aligned.sortedByCoord.out.bam", "-A / --run-minimap2",
         scalars=_max_intron_scalars,
+        clears=(Artifact.SOFTCLIP_DIAGNOSTIC.value,),
     )
 
 

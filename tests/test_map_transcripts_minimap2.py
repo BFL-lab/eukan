@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 
 from eukan.assembly import minimap2
+from eukan.assembly.pipeline import _steps_for
 from eukan.infra.artifacts import Artifact
+from eukan.infra.manifest import ASSEMBLY, step_key
+from eukan.infra.pipeline import run_simple_pipeline
 from eukan.settings import AssemblyConfig
 
 
@@ -220,6 +223,39 @@ class TestReadMappingEscalation:
         calls = self._patch(monkeypatch, verdict="EXTENSIVE")
         minimap2.map_reads_minimap2(_config_reads(tmp_path, non_canonical="off"))
         assert calls == [False]
+
+
+def test_rerun_of_read_mapping_rebuilds_softclip_verdict(tmp_path, monkeypatch):
+    """A re-run of the completed minimap2 step clears the soft-clip summary before
+    mapping, so the verdict is rebuilt from the new BAM; the non-canonical re-map
+    inside that run still reuses the verdict its first pass wrote."""
+    monkeypatch.setattr(
+        minimap2, "_map_reads_once",
+        lambda config, *, non_canonical: (config.work_dir / minimap2._BAM).write_text("bam"),
+    )
+    monkeypatch.setattr(minimap2, "_log_mapping_rate", lambda *a, **k: None)
+    summary_present: list[bool] = []
+
+    def fake_emit(config):
+        # run_softclip_diagnostic walks the BAM only when no summary exists
+        summary = config.work_dir / Artifact.SOFTCLIP_DIAGNOSTIC.value
+        summary_present.append(summary.exists())
+        if not summary.exists():
+            _write_verdict(config.work_dir, "EXTENSIVE")
+
+    monkeypatch.setattr(minimap2, "_emit_sj_and_hints", fake_emit)
+    cfg = _config_reads(tmp_path)
+    steps = [s for s in _steps_for() if s.name == "minimap2"]
+    run_simple_pipeline(ASSEMBLY, steps, cfg)
+    polya = tmp_path / Artifact.POLYA_DIAGNOSTIC.value
+    polya.write_text(json.dumps({"transcripts": {"trinity-denovo": {}}}))
+    summary_present.clear()
+
+    run_simple_pipeline(ASSEMBLY, steps, cfg, force_steps=[step_key(ASSEMBLY, "minimap2")])
+
+    assert summary_present == [False, True]  # cleared before mapping, reused by the re-map
+    # the transcript sections map_transcripts wrote are not the read mapping's to drop
+    assert "transcripts" in json.loads(polya.read_text())
 
 
 def test_read_mapping_splice_sr_flags(tmp_path, monkeypatch):
