@@ -42,17 +42,11 @@ import os
 from collections import Counter
 from pathlib import Path
 
-from Bio.Seq import Seq
-
-from eukan.assembly.bam_diagnostic import _dinucleotide, _reverse_complement
-from eukan.assembly.jaccard import (
-    _parse_transcript_models,
-    _Tx,
-    _write_transcript_models_gff3,
-)
+from eukan.assembly.bam_diagnostic import _dinucleotide
 from eukan.assembly.sl_cut import _DENOVO_BAMS, _GENOME_BAM_SUFFIX, bam_to_transcript_gff3
 from eukan.assembly.tracks import mapped_transcript_stems
-from eukan.infra.genome import ContigIndex
+from eukan.gff.transcripts import Transcript, read_transcripts, stitch, write_transcripts
+from eukan.infra.genome import ContigIndex, reverse_complement
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.settings import AssemblyConfig
@@ -144,7 +138,7 @@ def consensus_on_strand(raw: str | None, strand: str) -> str | None:
 def _rc_swap(pair: str) -> str:
     """The reverse-complement twin of a donor-acceptor pair (``GT-AG`` <-> ``CT-AC``)."""
     donor, acceptor = pair.split("-")
-    return f"{_reverse_complement(acceptor)}-{_reverse_complement(donor)}"
+    return f"{reverse_complement(acceptor)}-{reverse_complement(donor)}"
 
 
 def _pick_consensus(tally: Counter[str], min_consensus: int) -> tuple[str, str]:
@@ -158,14 +152,8 @@ def _pick_consensus(tally: Counter[str], min_consensus: int) -> tuple[str, str]:
     return dominant, _rc_swap(dominant)
 
 
-def _stitch(tx: _Tx, contigs: ContigIndex) -> str:
-    """Spliced transcript sequence in the transcript's labelled orientation."""
-    seq = "".join(str(contigs[tx.chrom][s - 1 : e].seq) for s, e in tx.exons)
-    return str(Seq(seq).reverse_complement()) if tx.strand == "-" else seq
-
-
 def _decide(
-    tx: _Tx, hit_coding: str | None, dominant: str, rc: str, contigs: ContigIndex
+    tx: Transcript, hit_coding: str | None, dominant: str, rc: str, contigs: ContigIndex
 ) -> tuple[str, str]:
     """Return ``(new_strand, decision)`` for one transcript.
 
@@ -281,7 +269,7 @@ def run_strand_correction(config: AssemblyConfig) -> None:
     if not sets:
         log.warning("No transcript models to strand-correct.")
         return
-    models_by_tag = {tag: _parse_transcript_models(inp) for tag, inp, _ in sets}
+    models_by_tag = {tag: read_transcripts(inp) for tag, inp, _ in sets}
 
     db = _resolve_diamond_db(config)
 
@@ -293,7 +281,7 @@ def run_strand_correction(config: AssemblyConfig) -> None:
         with open(query, "w") as fh:
             for tag, models in models_by_tag.items():
                 for tx in sorted(models, key=lambda t: (t.chrom, t.exons[0][0])):
-                    fh.write(f">{tag}:{tx.tid}\n{_stitch(tx, contigs)}\n")
+                    fh.write(f">{tag}:{tx.tid}\n{stitch(tx, contigs)}\n")
         run_cmd(
             ["diamond", "blastx",
              "--db", db,
@@ -361,7 +349,7 @@ def run_strand_correction(config: AssemblyConfig) -> None:
                         f"{tag}\t{tx.tid}\t{n_introns}\t{old}\t{new}\t{decision}"
                         f"\t{int(hit_coding is not None)}\n"
                     )
-                _write_transcript_models_gff3(models, out)
+                write_transcripts(models, out)
 
     log.info(
         "Strand correction: %d flipped, %d assigned, %d kept, %d mono-exon, "

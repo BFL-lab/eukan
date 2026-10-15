@@ -6,12 +6,12 @@ from pathlib import Path
 
 from eukan.assembly import combinr
 from eukan.assembly.combinr import (
-    _parse_combinr_gff3,
-    _Transcript,
     _write_transcript_alignments_and_hints,
     _write_transcript_fasta,
     run_combinr,
 )
+from eukan.gff.transcripts import Transcript
+from eukan.gff.transcripts import read_transcripts as _parse_combinr_gff3
 from eukan.infra.artifacts import Artifact
 from eukan.settings import AssemblyConfig
 
@@ -46,7 +46,7 @@ def test_parse_combinr_gff3_groups_and_sorts_exons(tmp_path):
 
 
 def test_write_transcript_alignments_and_hints(tmp_path):
-    txs = [_Transcript("m1", "chr1", "+", [(100, 200), (300, 400)])]
+    txs = [Transcript("m1", "chr1", "+", "combinr", [(100, 200), (300, 400)])]
     gff = tmp_path / "nr.gff3"
     hints = tmp_path / "hints.gff"
     _write_transcript_alignments_and_hints(txs, gff, hints)
@@ -63,8 +63,8 @@ def test_write_transcript_alignments_and_hints(tmp_path):
 
 def test_write_transcript_fasta_splices_and_revcomps(tmp_path):
     (tmp_path / "genome.fa").write_text(">chr1\nAAAACCCCGGGGTTTTACGT\n")
-    plus = _Transcript("p", "chr1", "+", [(1, 4), (9, 12)])   # AAAA + GGGG
-    minus = _Transcript("m", "chr1", "-", [(1, 4), (9, 12)])  # revcomp(AAAAGGGG)
+    plus = Transcript("p", "chr1", "+", "combinr", [(1, 4), (9, 12)])   # AAAA + GGGG
+    minus = Transcript("m", "chr1", "-", "combinr", [(1, 4), (9, 12)])  # revcomp(AAAAGGGG)
     out = tmp_path / "tx.fasta"
     _write_transcript_fasta([plus, minus], tmp_path / "genome.fa", out)
 

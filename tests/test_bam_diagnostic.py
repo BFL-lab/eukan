@@ -28,12 +28,12 @@ from eukan.assembly.bam_diagnostic import (
     _extract_clips,
     _hamming_distance,
     _is_low_complexity,
-    _reverse_complement,
     _walk_introns,
     compute_verdict,
     diagnose_bam,
 )
 from eukan.infra.genome import ContigIndex
+from eukan.infra.genome import reverse_complement as _reverse_complement
 
 
 def _write_fasta(path: Path, contigs: list[tuple[str, str]]) -> Path:

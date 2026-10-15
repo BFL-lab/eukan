@@ -11,7 +11,7 @@ from eukan.assembly.defuse import (
     run_defuse,
     split_fused,
 )
-from eukan.assembly.jaccard import _Tx
+from eukan.gff.transcripts import Transcript as _Tx
 from eukan.settings import AssemblyConfig
 
 

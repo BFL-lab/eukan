@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from eukan.assembly.polya import PolyAStats, tally_clip
+from eukan.infra.genome import reverse_complement
 
 if TYPE_CHECKING:
     import pysam
@@ -36,8 +37,6 @@ _CIGAR_SOFT_CLIP = 4
 _CIGAR_EQ = 7
 _CIGAR_X = 8
 _CIGAR_REF_CONSUMING = frozenset([_CIGAR_M, _CIGAR_D, _CIGAR_N, _CIGAR_EQ, _CIGAR_X])
-
-_RC_TABLE = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 
 # Per-locus key cap. Statistically the dominant key arrives among the
 # first few clips at any locus (≥94% prevalence at depth ≥ a few), so
@@ -58,10 +57,6 @@ _TS_MODERATE_MIN_READS = 1000
 _NC_CANONICAL_PCT_EXTENSIVE = 80.0  # canonical% below this -> EXTENSIVE
 _NC_CANONICAL_PCT_MODERATE = 95.0   # canonical% below this -> MODERATE, else ABSENT
 _NC_DINUC_REPORT_MIN_PCT = 1.0      # min % for a non-canonical dinuc to be named
-
-
-def _reverse_complement(seq: str) -> str:
-    return seq.translate(_RC_TABLE)[::-1]
 
 
 def _hamming_distance(a: str, b: str) -> int:
@@ -359,7 +354,7 @@ def _extract_clips(
         clip_seq = seq[:len0]
         anchor_pos = read.reference_start
         if read.is_reverse:
-            yield "3p", _reverse_complement(clip_seq), anchor_pos
+            yield "3p", reverse_complement(clip_seq), anchor_pos
         else:
             yield "5p", clip_seq, anchor_pos
 
@@ -368,7 +363,7 @@ def _extract_clips(
         clip_seq = seq[-len_last:]
         anchor_pos = ref_end - 1
         if read.is_reverse:
-            yield "5p", _reverse_complement(clip_seq), anchor_pos
+            yield "5p", reverse_complement(clip_seq), anchor_pos
         else:
             yield "3p", clip_seq, anchor_pos
 

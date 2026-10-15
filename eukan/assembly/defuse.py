@@ -8,9 +8,9 @@ that finds **>=2 distinct subjects on non-overlapping query ranges** is direct
 evidence of a chimera, and the gap between the hit regions tells us where to cut.
 
 This is :mod:`eukan.assembly.jaccard` with a *homology* clip signal instead of a
-*read-coverage* one: it reuses jaccard's exon-partitioning split
-(:func:`jaccard._partition_exons`) and writer, feeding it spliced cut offsets derived
-from the inter-hit gaps rather than read-pair troughs. Each split piece takes the
+*read-coverage* one: it reuses the shared exon split
+(:func:`eukan.gff.transcripts.split_at`) and writer, feeding it spliced cut offsets
+derived from the inter-hit gaps rather than read-pair troughs. Each split piece takes the
 coding strand implied by the hit inside it (:func:`strand_correction._coding_strand`),
 so an opposite-strand fusion is re-oriented correctly.
 
@@ -31,20 +31,14 @@ from typing import TextIO
 
 import pysam
 
-from eukan.assembly.jaccard import (
-    _parse_transcript_models,
-    _partition_exons,
-    _Tx,
-    _write_transcript_models_gff3,
-)
 from eukan.assembly.strand_correction import (
     _DIAMOND_BLOCK_SIZE,
     _DIAMOND_INDEX_CHUNKS,
     _coding_strand,
     _resolve_diamond_db,
-    _stitch,
 )
 from eukan.assembly.tracks import mapped_transcript_stems
+from eukan.gff.transcripts import Transcript, read_transcripts, split_at, stitch, write_transcripts
 from eukan.infra.genome import ContigIndex
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
@@ -142,38 +136,28 @@ def _piece_strand(label: str, chosen: list[_Hit], lo: int, hi: int) -> str:
     return _coding_strand(label, best.qframe) if best is not None else label
 
 
-def split_fused(tx: _Tx, chosen: list[_Hit], min_segment: int) -> list[_Tx] | None:
+def split_fused(
+    tx: Transcript, chosen: list[_Hit], min_segment: int
+) -> list[Transcript] | None:
     """Split *tx* between consecutive distinct-subject hit regions.
 
     Each gap midpoint ``(prev.qhi + next.qlo)//2`` is a spliced "cut after base P"
-    offset (the same space jaccard's read clips use). Reuses
-    :func:`jaccard._partition_exons` to cut the exon blocks; pieces shorter than
-    *min_segment* are dropped; each piece is relabelled ``.d1/.d2/...`` and oriented by
-    its own hit. ``None`` if no valid cut remains.
+    offset (the same space jaccard's read clips use), cut with
+    :func:`eukan.gff.transcripts.split_at`; pieces shorter than *min_segment* are
+    dropped; each piece is relabelled ``.d1/.d2/...`` and oriented by its own hit.
+    ``None`` if no valid cut remains.
     """
-    total_len = sum(e - s + 1 for s, e in tx.exons)
-    clips = sorted(
-        (chosen[k].qhi + chosen[k + 1].qlo) // 2 for k in range(len(chosen) - 1)
+    clips = [(chosen[k].qhi + chosen[k + 1].qlo) // 2 for k in range(len(chosen) - 1)]
+    out = split_at(
+        tx, clips, min_segment, suffix="d",
+        strand_of=lambda lo, hi: _piece_strand(tx.strand, chosen, lo, hi),
     )
-    clips = [c for c in clips if 0 < c < total_len]
-    if not clips:
-        return None
-    exons_5to3 = tx.exons if tx.strand != "-" else list(reversed(tx.exons))
-    cut_points = [0, *clips, total_len]
-    out: list[_Tx] = []
-    for i, blocks in enumerate(_partition_exons(exons_5to3, clips, tx.strand, total_len)):
-        if sum(e - s + 1 for s, e in blocks) < min_segment:
-            continue
-        strand = _piece_strand(tx.strand, chosen, cut_points[i] + 1, cut_points[i + 1])
-        out.append(
-            _Tx(f"{tx.tid}.d{len(out) + 1}", tx.chrom, strand, tx.source, sorted(blocks))
-        )
     # Only a genuine multi-piece split counts; a single survivor (the rest dropped as
     # sub-min_segment) would just trim the transcript, so leave it unchanged.
-    return out if len(out) >= 2 else None
+    return out if out and len(out) >= 2 else None
 
 
-def _seams(pieces: list[_Tx]) -> list[int]:
+def _seams(pieces: list[Transcript]) -> list[int]:
     """Genomic seam coordinates (gap midpoints) between consecutive split pieces."""
     ordered = sorted(pieces, key=lambda p: p.exons[0][0])
     return [
@@ -221,8 +205,8 @@ def _defuse_one_set(
 ) -> tuple[int, int]:
     """Split every fused transcript in one model set; write *out_gff*. Returns
     ``(n_models_in, n_fusions_split)``."""
-    models = _parse_transcript_models(in_gff)
-    out_models: list[_Tx] = []
+    models = read_transcripts(in_gff)
+    out_models: list[Transcript] = []
     n_split = 0
     for tx in models:
         chosen = distinct_nonoverlapping(
@@ -243,7 +227,7 @@ def _defuse_one_set(
             )
         else:
             out_models.append(tx)
-    _write_transcript_models_gff3(out_models, out_gff)
+    write_transcripts(out_models, out_gff)
     return len(models), n_split
 
 
@@ -269,14 +253,14 @@ def run_defuse(config: AssemblyConfig) -> None:
         log.warning("No transcript models to de-fuse.")
         return
 
-    models_by_tag = {tag: _parse_transcript_models(inp) for tag, inp, _ in sets}
+    models_by_tag = {tag: read_transcripts(inp) for tag, inp, _ in sets}
     db = _resolve_diamond_db(config)
 
     query = wd / _QUERY_FASTA
     with ContigIndex(config.genome) as contigs, open(query, "w") as fh:
         for tag, models in models_by_tag.items():
             for tx in sorted(models, key=lambda t: (t.chrom, t.exons[0][0])):
-                fh.write(f">{tag}:{tx.tid}\n{_stitch(tx, contigs)}\n")
+                fh.write(f">{tag}:{tx.tid}\n{stitch(tx, contigs)}\n")
 
     run_cmd(
         ["diamond", "blastx",

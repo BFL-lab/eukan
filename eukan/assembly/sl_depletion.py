@@ -1,9 +1,9 @@
 """Spliced-leader (SL) motif matching primitives.
 
 Trans-spliced organisms add a constant spliced leader to the 5' end of every
-mature mRNA. These pure helpers — reverse-complement, mismatch-variant
-enumeration, and merged-interval substring search — are the shared SL-matching
-core, consumed by the SL trans-splice acceptor detector
+mature mRNA. These pure helpers — mismatch-variant enumeration, merged-interval
+substring search and the adapter screen — are the shared SL-matching core,
+consumed by the SL trans-splice acceptor detector
 (:mod:`eukan.assembly.sl_acceptors`). The SL is searched on both strands because
 a contig's orientation is arbitrary.
 
@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from eukan.infra.genome import reverse_complement
+
 # Shortest SL motif we will match on. A very short motif (e.g. the 6 bp GTACTT
 # core) occurs by chance often enough to shred transcripts, so require a more
 # specific one before matching.
@@ -28,12 +30,6 @@ _MIN_MOTIF_LEN = 10
 # and the assembled contigs are both already error-corrected, so exact matching
 # is safe and sufficient; the knob is kept for tuning.
 _MAX_MISMATCHES = 0
-
-_DNA_COMP = str.maketrans("ACGTNacgtn", "TGCANtgcan")
-
-
-def _revcomp(seq: str) -> str:
-    return seq.translate(_DNA_COMP)[::-1]
 
 
 # Canonical sequencing-adapter seeds, from FastQC's Configuration/adapter_list.txt
@@ -79,7 +75,7 @@ def is_adapter(
         return False
     for adapter in adapters:
         ref = adapter.upper()
-        for oriented in (ref, _revcomp(ref)):
+        for oriented in (ref, reverse_complement(ref)):
             for i in range(len(oriented) - min_overlap + 1):
                 if oriented[i : i + min_overlap] in s:
                     return True

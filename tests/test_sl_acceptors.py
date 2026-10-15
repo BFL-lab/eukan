@@ -13,8 +13,9 @@ from eukan.assembly.sl_acceptors import (
     detect_sl_acceptors,
     load_sl_acceptors,
 )
-from eukan.assembly.sl_depletion import _revcomp, is_adapter
+from eukan.assembly.sl_depletion import is_adapter
 from eukan.infra.artifacts import Artifact
+from eukan.infra.genome import reverse_complement as _revcomp
 from eukan.settings import AssemblyConfig
 
 SL = "GTACTTTATT"            # 10 bp, meets _MIN_MOTIF_LEN

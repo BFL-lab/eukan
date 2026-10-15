@@ -5,6 +5,9 @@ most recently accessed contig.  ``SeqIO.index`` uses lazy disk offsets
 and re-reads each record on access, which is bad when callers walk many
 features per contig (the common case here).  Caching one contig at a
 time keeps RAM bounded but makes sequential same-contig access cheap.
+
+Also holds the plain-string reverse complement used on read clips, splice-site
+dinucleotides and motifs.
 """
 
 from __future__ import annotations
@@ -13,6 +16,13 @@ from pathlib import Path
 
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
+
+_COMPLEMENT = str.maketrans("ACGTNacgtn", "TGCANtgcan")
+
+
+def reverse_complement(seq: str) -> str:
+    """Reverse complement of *seq*; only ACGTN (either case) are complemented."""
+    return seq.translate(_COMPLEMENT)[::-1]
 
 
 class ContigIndex:

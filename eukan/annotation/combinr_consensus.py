@@ -29,6 +29,7 @@ from pathlib import Path
 
 from eukan.annotation.evidence import EVIDENCE_ROLES, _first_source_token
 from eukan.gff.rows import iter_gff3_rows, parse_attrs
+from eukan.gff.transcripts import Transcript
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.settings import PipelineConfig
@@ -52,8 +53,7 @@ def _chains_to_match(in_gff: Path, out_gff: Path, *, feature_type: str, match_ty
     entry. Target coordinates are cumulative over the sorted blocks (combinr only
     requires ``Target`` to be present, not meaningful). Returns the chain count.
     """
-    chains: dict[str, list] = {}  # key -> [chrom, source, strand, [(lend, rend)]]
-    order: list[str] = []
+    chains: dict[str, Transcript] = {}  # keyed by Parent (else ID), in file order
     for cols in iter_gff3_rows(in_gff):
         if cols[2] != feature_type:
             continue
@@ -61,26 +61,23 @@ def _chains_to_match(in_gff: Path, out_gff: Path, *, feature_type: str, match_ty
         key = attrs.get("Parent") or attrs.get("ID")
         if not key:
             continue
-        rec = chains.get(key)
-        if rec is None:
-            rec = [cols[0], cols[1], cols[6], []]
-            chains[key] = rec
-            order.append(key)
-        rec[3].append((int(cols[3]), int(cols[4])))
+        chain = chains.get(key)
+        if chain is None:
+            chain = chains[key] = Transcript(key, cols[0], cols[6], cols[1])
+        chain.exons.append((int(cols[3]), int(cols[4])))
 
     with open(out_gff, "w") as out:
-        for key in order:
-            chrom, source, strand, blocks = chains[key]
-            blocks.sort()
+        for key, chain in chains.items():
+            chain.exons.sort()
             tpos = 1
-            for lend, rend in blocks:
+            for lend, rend in chain.exons:
                 tend = tpos + (rend - lend)
                 out.write(
-                    f"{chrom}\t{source}\t{match_type}\t{lend}\t{rend}\t.\t{strand}\t."
-                    f"\tID={key};Target={key} {tpos} {tend}\n"
+                    f"{chain.chrom}\t{chain.source}\t{match_type}\t{lend}\t{rend}\t.\t"
+                    f"{chain.strand}\t.\tID={key};Target={key} {tpos} {tend}\n"
                 )
                 tpos = tend + 1
-    return len(order)
+    return len(chains)
 
 
 def _stage_combinr_inputs(

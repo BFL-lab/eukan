@@ -13,7 +13,6 @@ from eukan.assembly.jaccard import (
     Trough,
     _candidate_troughs,
     _group_and_pick_best,
-    _partition_exons,
     _require_hills,
     clip_gff3,
     coverage_array,
@@ -23,6 +22,7 @@ from eukan.assembly.jaccard import (
     run_jaccard,
     split_fasta_record,
 )
+from eukan.gff.transcripts import partition_exons as _partition_exons
 from eukan.settings import AssemblyConfig
 
 # A 120 bp non-palindromic genome (seeded) so reverse-complement is distinct —
@@ -336,9 +336,10 @@ def test_split_models_at_clips_counts_and_passthrough(tmp_path):
 def test_write_spliced_fasta_matches_iter_assembled(tmp_path):
     # _write_spliced_fasta must use the SAME orientation as iter_assembled_sequences
     # (ascending-genomic concat, RC on '-'), so clip coords line up across paths.
-    from eukan.assembly.jaccard import _parse_transcript_models, _write_transcript_models_gff3
     from eukan.gff import create_gff_db
     from eukan.gff.io import iter_assembled_sequences
+    from eukan.gff.transcripts import read_transcripts as _parse_transcript_models
+    from eukan.gff.transcripts import write_transcripts as _write_transcript_models_gff3
 
     (tmp_path / "genome.fa").write_text(f">chr1\n{GENOME}\n")
     gtf = tmp_path / "stringtie.gtf"

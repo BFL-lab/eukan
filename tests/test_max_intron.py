@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from eukan.assembly.jaccard import _parse_transcript_models, _Tx
 from eukan.assembly.max_intron import (
     _count_long_introns,
     _long_intron_cut_offsets,
@@ -11,6 +10,8 @@ from eukan.assembly.max_intron import (
 )
 from eukan.assembly.sl_acceptors import AcceptorSite
 from eukan.assembly.sl_cut import cut_models_at_sl
+from eukan.gff.transcripts import Transcript as _Tx
+from eukan.gff.transcripts import read_transcripts as _parse_transcript_models
 from eukan.settings import AssemblyConfig
 
 

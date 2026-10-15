@@ -9,7 +9,6 @@ from __future__ import annotations
 import pysam
 import pytest
 
-from eukan.assembly.jaccard import _parse_transcript_models
 from eukan.assembly.sl_acceptors import AcceptorSite
 from eukan.assembly.sl_cut import (
     _project_genomic_to_spliced,
@@ -17,6 +16,7 @@ from eukan.assembly.sl_cut import (
     cut_models_at_sl,
     run_sl_cut,
 )
+from eukan.gff.transcripts import read_transcripts as _parse_transcript_models
 from eukan.settings import AssemblyConfig
 
 

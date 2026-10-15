@@ -40,12 +40,12 @@ from eukan.assembly.sl_depletion import (
     _MAX_MISMATCHES,
     _MIN_MOTIF_LEN,
     _find_sites,
-    _revcomp,
     _variants,
     is_adapter,
 )
 from eukan.gff.rows import iter_gff3_rows, parse_attrs
 from eukan.infra.artifacts import Artifact
+from eukan.infra.genome import reverse_complement
 from eukan.infra.logging import get_logger
 from eukan.settings import AssemblyConfig
 
@@ -330,7 +330,7 @@ def detect_sl_acceptors(config: AssemblyConfig) -> None:
     # geometry; requiring the matching orientation per strand keeps a candidate whose
     # motif orientation contradicts its geometry from being recorded mis-stranded.
     fwd_patterns = _variants(core, _MAX_MISMATCHES)
-    rev_patterns = _variants(_revcomp(core), _MAX_MISMATCHES)
+    rev_patterns = _variants(reverse_complement(core), _MAX_MISMATCHES)
 
     raw: dict[tuple[str, str, int], tuple[int, set[str]]] = {}
 

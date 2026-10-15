@@ -12,7 +12,7 @@ Trinity track it reads the latest model variant (defuse > stranded > raw, via
 :func:`eukan.assembly.tracks.resolve_model_source`) and writes
 ``{stem}.maxintron.gff3`` — **always**, copying the model through unchanged when
 nothing needs cutting, so the file is a stable input the SL cut reads directly.
-Reuses the shared exon-split machinery (:mod:`eukan.assembly.jaccard`) and streams
+Reuses the shared exon split (:func:`eukan.gff.transcripts.split_at`) and streams
 one model at a time so a genome-wide model set stays bounded. ``max_intron_len <= 0``
 disables the split (a pure copy-through).
 """
@@ -21,13 +21,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from eukan.assembly.jaccard import (
-    _iter_transcript_models,
-    _split_transcript,
-    _Tx,
-    _write_tx,
-)
 from eukan.assembly.tracks import mapped_transcript_stems, resolve_model_source
+from eukan.gff.transcripts import Transcript, iter_transcripts, split_at, write_transcript
 from eukan.infra.logging import get_logger
 from eukan.settings import AssemblyConfig
 
@@ -40,8 +35,8 @@ def _long_intron_cut_offsets(
     """Spliced "cut after base P" offsets severing every intron > *max_intron_len*.
 
     *exons_5to3* are 1-based inclusive genomic blocks in 5'->3' order (ascending for
-    ``+``/``.``, descending for ``-``) — the order :func:`jaccard._split_transcript`
-    and :func:`jaccard._partition_exons` expect. Each gap between consecutive blocks
+    ``+``/``.``, descending for ``-``) — the order
+    :func:`eukan.gff.transcripts.split_at` expects. Each gap between consecutive blocks
     is an intron; when its genomic length exceeds the limit, cut at the cumulative
     spliced end of the 5'-side exon, which severs the model at that intron. Returns
     offsets in the same spliced space as SL clips so the two unite cleanly.
@@ -61,7 +56,7 @@ def _long_intron_cut_offsets(
     return cuts
 
 
-def _count_long_introns(tx: _Tx, max_intron_len: int) -> int:
+def _count_long_introns(tx: Transcript, max_intron_len: int) -> int:
     """Number of introns in *tx* longer than *max_intron_len* (genomic gaps)."""
     if max_intron_len <= 0:
         return 0
@@ -71,19 +66,20 @@ def _count_long_introns(tx: _Tx, max_intron_len: int) -> int:
     )
 
 
-def _cut_one(tx: _Tx, min_segment: int, *, max_intron_len: int) -> list[_Tx] | None:
+def _cut_one(
+    tx: Transcript, min_segment: int, *, max_intron_len: int
+) -> list[Transcript] | None:
     """Split *tx* at every over-long intron; ``None`` if nothing to cut.
 
     Strand-agnostic: a genomic gap is severed regardless of strand (a ``.``-strand
     transcript is treated as ``+``/ascending). The cut points are computed in the
-    same spliced space :func:`jaccard._split_transcript` uses, which also drops
+    same spliced space :func:`eukan.gff.transcripts.split_at` uses, which also drops
     sub-*min_segment* fragments and returns ``None`` when nothing valid remains.
     """
-    exons_5to3 = tx.exons if tx.strand != "-" else list(reversed(tx.exons))
-    clips = _long_intron_cut_offsets(exons_5to3, tx.strand, max_intron_len)
+    clips = _long_intron_cut_offsets(tx.exons_5to3(), tx.strand, max_intron_len)
     if not clips:
         return None
-    return _split_transcript(tx, sorted(clips), min_segment)
+    return split_at(tx, sorted(clips), min_segment)
 
 
 def cut_models_at_max_intron(
@@ -104,14 +100,14 @@ def cut_models_at_max_intron(
     n_long = 0
     with open(out_gff, "w") as fh:
         fh.write("##gff-version 3\n")
-        for tx in _iter_transcript_models(gff_or_gtf):
+        for tx in iter_transcripts(gff_or_gtf):
             long_here = _count_long_introns(tx, max_intron_len)
             result = _cut_one(tx, min_segment, max_intron_len=max_intron_len)
             if result is None:
-                _write_tx(fh, tx)
+                write_transcript(fh, tx)
             else:
                 for piece in result:
-                    _write_tx(fh, piece)
+                    write_transcript(fh, piece)
                 n_cut += 1
                 n_long += long_here
     return n_cut, n_long

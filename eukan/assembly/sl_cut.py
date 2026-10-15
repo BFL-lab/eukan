@@ -1,7 +1,7 @@
 """Genomic spliced-leader cut: split transcript models at trans-splice acceptors.
 
-Reuses the jaccard GFF3/GTF split logic (:mod:`eukan.assembly.jaccard`) — the cut
-is the same exon-segregating split, fed SL acceptor *genomic* coordinates
+Reuses the shared transcript split (:func:`eukan.gff.transcripts.split_at`) — the
+cut is the same exon-segregating split as jaccard's, fed SL acceptor *genomic* coordinates
 (:mod:`eukan.assembly.sl_acceptors`) instead of read-coverage troughs. For each
 transcript whose exons contain a same-strand acceptor, the model is cut so the
 mature mRNA begins at the acceptor. An SL site imposes its strand on an
@@ -30,14 +30,9 @@ from eukan.assembly.bam_diagnostic import (
     _CIGAR_N,
     _CIGAR_X,
 )
-from eukan.assembly.jaccard import (
-    _iter_transcript_models,
-    _split_transcript,
-    _Tx,
-    _write_tx,
-)
 from eukan.assembly.sl_acceptors import AcceptorSite, load_sl_acceptors
 from eukan.assembly.tracks import mapped_transcript_stems
+from eukan.gff.transcripts import Transcript, iter_transcripts, split_at, write_transcript
 from eukan.infra.artifacts import Artifact
 from eukan.infra.logging import get_logger
 from eukan.settings import AssemblyConfig
@@ -95,7 +90,8 @@ def bam_to_transcript_gff3(bam_path: Path, out_gff: Path, source: str) -> int:
             qname = read.query_name or "tx"
             seen[qname] += 1
             strand = "-" if read.is_reverse else "+"
-            _write_tx(fh, _Tx(f"{qname}.m{seen[qname]}", chrom, strand, source, exons))
+            write_transcript(fh, Transcript(f"{qname}.m{seen[qname]}", chrom, strand, source,
+                                            exons))
             n += 1
     return n
 
@@ -105,7 +101,7 @@ def _project_genomic_to_spliced(
 ) -> int | None:
     """1-based spliced offset of genomic *pos*, or ``None`` if intronic/outside.
 
-    Inverse of :func:`jaccard._partition_exons`'s span accumulation: walk exons in
+    Inverse of :func:`eukan.gff.transcripts.partition_exons`'s span accumulation: walk exons in
     5'→3' order (ascending genomic for ``+``, descending for ``-``) summing
     spliced length until *pos* lands inside an exon.
     """
@@ -120,8 +116,8 @@ def _project_genomic_to_spliced(
 
 
 def _cut_one(
-    tx: _Tx, sites: list[AcceptorSite], min_segment: int
-) -> list[_Tx] | None:
+    tx: Transcript, sites: list[AcceptorSite], min_segment: int
+) -> list[Transcript] | None:
     """Split *tx* at same-strand SL acceptors; ``None`` if nothing to cut.
 
     A ``.``-strand transcript is oriented by the acceptors when they agree on a
@@ -142,8 +138,11 @@ def _cut_one(
                 usable = sites
             # conflicting SL strands: no SL-imposed strand, so no cut
 
-    exons_5to3 = tx.exons if strand != "-" else list(reversed(tx.exons))
-    total_len = sum(e - s + 1 for s, e in tx.exons)
+    oriented = (
+        tx if tx.strand == strand else Transcript(tx.tid, tx.chrom, strand, tx.source, tx.exons)
+    )
+    exons_5to3 = oriented.exons_5to3()
+    total_len = tx.length
 
     clips: set[int] = set()
     for site in usable:
@@ -155,11 +154,7 @@ def _cut_one(
     valid = sorted(c for c in clips if 0 < c < total_len)
     if not valid:
         return None
-
-    oriented = (
-        tx if tx.strand == strand else _Tx(tx.tid, tx.chrom, strand, tx.source, tx.exons)
-    )
-    return _split_transcript(oriented, valid, min_segment)
+    return split_at(oriented, valid, min_segment)
 
 
 def cut_models_at_sl(
@@ -184,7 +179,7 @@ def cut_models_at_sl(
     n_conflict = 0
     with open(out_gff, "w") as fh:
         fh.write("##gff-version 3\n")
-        for tx in _iter_transcript_models(gff_or_gtf):
+        for tx in iter_transcripts(gff_or_gtf):
             span_lo, span_hi = tx.exons[0][0], tx.exons[-1][1]
             relevant = [s for s in by_chrom.get(tx.chrom, []) if span_lo <= s.pos <= span_hi]
             result = _cut_one(tx, relevant, min_segment)
@@ -198,10 +193,10 @@ def cut_models_at_sl(
                     and all(s.strand != tx.strand for s in relevant)
                 ):
                     n_conflict += 1
-                _write_tx(fh, tx)
+                write_transcript(fh, tx)
             else:
                 for piece in result:
-                    _write_tx(fh, piece)
+                    write_transcript(fh, piece)
                 n_cut += 1
     if n_conflict:
         log.warning(

@@ -8,7 +8,8 @@ from pathlib import Path
 import pysam
 
 from eukan.assembly import strand_correction as sc
-from eukan.assembly.jaccard import _parse_transcript_models, _Tx
+from eukan.gff.transcripts import Transcript as _Tx
+from eukan.gff.transcripts import read_transcripts as _parse_transcript_models
 from eukan.infra.genome import ContigIndex
 from eukan.settings import AssemblyConfig
 
