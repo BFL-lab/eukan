@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import ClassVar
+
+import pytest
 
 from eukan.annotation.pipeline import force_steps_from_run_flags
 from eukan.assembly.pipeline import (
@@ -398,8 +401,8 @@ class TestInputFingerprintResume:
 
 
 class TestAssemblyStepScalars:
-    """The enforcement steps fold ``max_intron_len`` into their resume fingerprint
-    so a changed ``-M`` re-runs them (but not the expensive mappers)."""
+    """Every step that consumes ``max_intron_len`` folds it into its resume
+    fingerprint, so a changed ``-M`` re-runs it."""
 
     @staticmethod
     def _scalars(tmp_path, name, max_intron=5000):
@@ -439,12 +442,33 @@ class TestAssemblyStepScalars:
         assert any(s.startswith("defuse=") for s in scalars)
         assert any(s.startswith("defuse_overlap_tolerance=") for s in scalars)
 
-    def test_mappers_do_not_track_max_intron(self, tmp_path):
-        # minimap2 bounds introns at map time via -G, not a resume scalar; tightening
-        # -M re-runs only the post-mapping steps (max_intron_split/combinr), not a
-        # multi-hour re-map. Trinity likewise emits FASTAs with no -M enforcement.
+    def test_mappers_and_trinity_track_max_intron(self, tmp_path):
+        # minimap2 maps reads and transcripts with -G and Trinity genome-guided takes
+        # -M as --genome_guided_max_intron, so all three track it.
         for name in ("minimap2", "trinity", "map_transcripts"):
-            assert self._scalars(tmp_path, name) is None
+            assert self._scalars(tmp_path, name) == ["max_intron_len=5000"]
+
+
+class TestMaxIntronConsumersRerun:
+    """Through the driver, a changed ``-M`` on resume re-runs the read mapping, the
+    Trinity assembly and the transcript mapping; an unchanged one reuses them."""
+
+    @pytest.mark.parametrize("name", ["minimap2", "trinity", "map_transcripts"])
+    def test_changed_max_intron_reruns(self, tmp_path, name):
+        spec = next(s for s in _steps_for() if s.name == name)
+        runs: list[int] = []
+
+        def fake(config):
+            runs.append(config.max_intron_len)
+            (config.work_dir / spec.output).write_text("out")
+
+        for max_intron in (5000, 5000, 2000):
+            cfg = AssemblyConfig(
+                genome=tmp_path / "g.fa", work_dir=tmp_path, num_cpu=2,
+                max_intron_len=max_intron,
+            )
+            run_simple_pipeline(ASSEMBLY, [replace(spec, fn=fake)], cfg)
+        assert runs == [5000, 2000]
 
 
 class TestScalarFingerprintResume:

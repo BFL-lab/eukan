@@ -218,9 +218,10 @@ Pipeline parameters:
                                   auto). [default: on]
   -c, --code INTEGER              NCBI genetic code table number. [default: 1]
   -m, --min-intron INTEGER        Minimum intron length. [default: 20]
-  -M, --max-intron INTEGER        Maximum intron length, hard-imposed: models are split at longer
-                                  introns and combinr/Trinity enforce it (0 disables the split).
-                                  [default: 5000]
+  -M, --max-intron INTEGER        Maximum intron length, hard-imposed: minimap2 maps with it (-G),
+                                  Trinity genome-guided uses it, models are split at longer introns
+                                  and combinr enforces it (0 disables the split). Changing it on a
+                                  resumed run re-runs them automatically. [default: 5000]
   --phred [33|64]                 Phred quality score. [default: 33]
   -j, --jaccard-clip / --no-jaccard-clip
                                   In-house jaccard clipping of fused Trinity transcripts (needs

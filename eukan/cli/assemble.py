@@ -52,12 +52,11 @@ from eukan.cli._framework import (
 @optgroup.option("--min-intron", "-m", type=int, default=20, show_default=True, help="Minimum intron length.")
 @optgroup.option(
     "--max-intron", "-M", type=int, default=5000, show_default=True,
-    help="Maximum intron length, hard-imposed: transcript models are split at any "
-    "longer intron (the max_intron_split step) and combinr enforces it, and Trinity "
-    "genome-guided uses it as --genome_guided_max_intron. Changing it on a resumed "
-    "run re-runs max_intron_split/combinr automatically; recovering longer introns "
-    "from the assembly or mapping also needs --run-trinity/--run-map-transcripts. "
-    "Set 0 to disable the model split.",
+    help="Maximum intron length, hard-imposed: minimap2 maps with it (-G), Trinity "
+    "genome-guided uses it as --genome_guided_max_intron, transcript models are split "
+    "at any longer intron (the max_intron_split step) and combinr enforces it. "
+    "Changing it on a resumed run re-runs the read and transcript mapping, the Trinity "
+    "assembly, the split and combinr automatically. Set 0 to disable the model split.",
 )
 @optgroup.option("--phred", type=click.Choice(["33", "64"]), default="33", show_default=True, help="Phred quality score.")
 @optgroup.option(

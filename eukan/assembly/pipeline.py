@@ -108,13 +108,19 @@ def _combinr_inputs(config: AssemblyConfig) -> list[Path]:
 
 
 # Scalar (non-file) inputs folded into a step's resume fingerprint, so changing the
-# value re-runs the step even when its input files are byte-identical. ``-M`` is
-# enforced post-mapping (StringTie reads a bounded BAM; max_intron_split splits
-# models; combinr passes --max-intron), so tightening it must re-run exactly those
-# steps — but NOT the read/transcript mappers (minimap2 also gets -M as -G, but a
-# scalar there would force a multi-hour re-map: those steps already re-impose a
-# tighter -M on the models, and recovering longer introns needs an explicit re-run
-# of the mapping/assembly steps, as -M's help says).
+# value re-runs the step even when its input files are byte-identical. Every step
+# that consumes ``-M`` carries it: minimap2 maps reads and transcripts with ``-G``,
+# Trinity genome-guided takes it as ``--genome_guided_max_intron``, max_intron_split
+# splits models at it, and combinr passes ``--max-intron``. A changed ``-M`` thus
+# re-runs the read mapping, the assembly and the transcript mapping (hours on a
+# large library) along with the model steps, so a looser limit actually recovers
+# longer introns instead of reusing BAMs and assemblies capped at the old one.
+
+
+def _max_intron_scalars(config: AssemblyConfig) -> list[str]:
+    # minimap2 (reads and transcripts) and Trinity genome-guided bound introns at -M.
+    # The trinity step re-runs both modes, though only genome-guided takes -M.
+    return [f"max_intron_len={config.max_intron_len}"]
 
 
 def _max_intron_split_scalars(config: AssemblyConfig) -> list[str]:
@@ -156,6 +162,7 @@ def _read_mapping_step() -> StepSpec:
     return StepSpec(
         "minimap2", map_reads_minimap2,
         "minimap2_Aligned.sortedByCoord.out.bam", "-A / --run-minimap2",
+        scalars=_max_intron_scalars,
     )
 
 
@@ -174,7 +181,7 @@ def _steps_for() -> list[StepSpec]:
         # finished mode), so a re-run of the completed step clears trinity-gg.fasta too.
         StepSpec(
             "trinity", run_trinity, "trinity-denovo.fasta", "-T / --run-trinity",
-            clears=("trinity-gg.fasta",),
+            clears=("trinity-gg.fasta",), scalars=_max_intron_scalars,
         ),
         # No declared output: jaccard rewrites each Trinity FASTA into a
         # ``.jaccard.fasta`` sibling, but on single-end input (or zero clips) it
@@ -189,7 +196,7 @@ def _steps_for() -> list[StepSpec]:
         StepSpec(
             "map_transcripts", map_transcripts_minimap2,
             "trinity-denovo.genome.bam", "--run-map-transcripts",
-            inputs=_resolved_transcript_queries,
+            inputs=_resolved_transcript_queries, scalars=_max_intron_scalars,
             clears=("trinity-gg.genome.bam",),
         ),
         # No declared output: strand_correct always converts each Trinity track BAM
@@ -210,11 +217,10 @@ def _steps_for() -> list[StepSpec]:
             inputs=_defuse_inputs, scalars=_defuse_scalars,
         ),
         # Max-intron split: strand-agnostic, SL-independent sanitization that breaks
-        # any model carrying an intron > -M into separate genes (minimap2 applies -M
-        # as -G only at mapping time, which a changed -M does not re-run). Always
-        # writes <track>.maxintron.gff3 (copy-through when nothing is cut), so — like
-        # defuse — it declares an output + scalars for precise resume: a changed -M
-        # re-runs it (and cascades on).
+        # any model carrying an intron > -M into separate genes (minimap2 also applies
+        # -M as -G at mapping time). Always writes <track>.maxintron.gff3 (copy-through
+        # when nothing is cut), so — like defuse — it declares an output + scalars for
+        # precise resume: a changed -M re-runs it (and cascades on).
         StepSpec(
             "max_intron_split", run_max_intron_split,
             "trinity-denovo.genome.maxintron.gff3", "--run-max-intron-split",
