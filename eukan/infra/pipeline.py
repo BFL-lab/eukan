@@ -54,7 +54,8 @@ class StepSpec:
             produce. Used for the manifest record's ``output_file`` and
             for stale-output validation. ``None`` if no canonical output.
         flag: Display string for the CLI re-run flag (e.g.
-            ``"-A / --run-minimap2"``). Shown in stale-output error messages.
+            ``"-A / --run-minimap2"``). Descriptive only: no code reads it,
+            since a stale output is rebuilt rather than reported.
             ``None`` if the step has no dedicated re-run flag.
         inputs: Optional ``config -> [Path, ...]`` resolver naming the
             files this step consumes from upstream steps. Their fingerprint

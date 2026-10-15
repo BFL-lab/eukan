@@ -597,7 +597,7 @@ All pipelines write to a shared `eukan-run.json` manifest in the working directo
 
 - **Resume**: Re-running a subcommand skips steps that already completed.
 - **Selective re-run**: Use `--run-*` flags to force specific steps to re-execute.
-- **Integrity checking**: On startup, completed steps are validated (output exists and is non-empty). If a discrepancy is found, the pipeline reports the issue and suggests the `--run-*` flag to fix it.
+- **Integrity checking**: Before reusing a completed step, the pipeline checks that its output still exists, is non-empty, matches its recorded checksum (text outputs and any file up to 256 MiB) and still parses as GFF where applicable, and that the inputs and settings the step tracks are unchanged. A step that fails any check is rebuilt automatically, with a warning in the log, and a step left interrupted is cleaned up and re-run.
 - **Progress monitoring**: `eukan status` reads the manifest and shows progress across all pipelines.
 
 ```bash
