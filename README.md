@@ -147,34 +147,43 @@ Run the genome annotation pipeline. When run in the same directory as `eukan ass
 Usage: eukan annotate [OPTIONS]
 
 Required input:
-  -g, --genome PATH               Genome FASTA (no lower-case; pipeline soft-masks repeats). [required]
+  -g, --genome PATH               Genome FASTA with no lower-case nucleotides (the pipeline
+                                  soft-masks repeats by converting to lower-case). [required]
   -p, --proteins PATH             One or more protein FASTA files. [required]
 
 Pipeline parameters:
   -k, --kingdom [fungus|protist|animal|plant]
-                                   Target organism kingdom.
-  -n, --numcpu INTEGER             Number of CPU threads. [default: all]
-  --existing-augustus TEXT          Use pre-trained AUGUSTUS species parameters.
-  -w, --weights INTEGER            Weights: protein, gene predictions, transcripts. [default: 2 1 3]
-  -c, --code INTEGER               NCBI genetic code table number. [default: 11]
+                                  Target organism kingdom (tunes predictor parameters).
+  -n, --numcpu INTEGER            Number of CPU threads. [default: all]
+  --existing-augustus TEXT        Use pre-trained AUGUSTUS species parameters.
+  -w, --weights INTEGER           Weights for evidence sources: protein, gene predictions,
+                                  transcripts. [default: 2, 1, 3]
+  --combinr-stringent-overlap FLOAT
+                                  combinr --stringent-overlap for the consensus --alt-splice isoform
+                                  grouping: min span overlap (% of the shorter isoform) for two
+                                  isoforms to attach to one gene (0 = any overlap). [default: 0]
+  -c, --code INTEGER              NCBI genetic code table number. [default: 11]
 
 Override options:
   -tf, --transcripts-fasta PATH   Override auto-discovered transcript FASTA.
   -tg, --transcripts-gff PATH     Override auto-discovered transcript GFF3.
   -r, --rnaseq-hints PATH         Override auto-discovered RNA-seq hints GFF.
-  --strand-specific                Transcripts are strand-oriented.
-  --splice-permissive              Allow rarer non-canonical splice sites in AUGUSTUS.
+  --strand-specific               Transcripts are strand-oriented.
+  --combinr-path FILE             Path to the combinr binary (default: 'combinr' on PATH).
+  --splice-permissive             Allow rarer non-canonical splice sites in AUGUSTUS: drops the
+                                  default >= 1% junction-share gate (keeps >= 10 junctions, >= 50
+                                  unique reads); allows AT-AC without assembly evidence.
 
 Experimental:
-  --spsp                           Build species-specific spaln parameters from transcripts
-                                   (alternative to fitild). See "Protein alignment modes" below.
+  --spsp                          Build species-specific spaln parameters from transcripts
+                                  (alternative to fitild). See "Protein alignment modes" below.
 
 Re-run steps:
-  --run-genemark                   Force re-run GeneMark gene prediction.
-  --run-prot-align                 Force re-run protein alignment (spaln/gth).
-  --run-augustus                    Force re-run AUGUSTUS training and prediction.
-  --run-snap                       Force re-run SNAP (and CodingQuarry) prediction.
-  --run-consensus                  Force re-run combinr consensus model building.
+  --run-genemark                  Force re-run GeneMark gene prediction.
+  --run-prot-align                Force re-run protein alignment (spaln/gth).
+  --run-augustus                  Force re-run AUGUSTUS training and prediction.
+  --run-snap                      Force re-run SNAP (and CodingQuarry) prediction.
+  --run-consensus                 Force re-run consensus model building.
 ```
 
 #### Notes on `annotate` input
@@ -282,14 +291,14 @@ Required input:
 
 Pipeline parameters:
   -n, --numcpu INTEGER            Number of CPU threads. [default: all]
-  --engine [rmblast|ncbi]         Search engine. [default: rmblast]
-  --lib PATH                      Pre-built repeat-family library FASTA. When set,
-                                  RepeatModeler is skipped.
+  --engine [rmblast|ncbi]         Search engine for BuildDatabase / RepeatMasker. [default: rmblast]
+  --lib PATH                      Pre-built repeat-family library FASTA. When set, RepeatModeler is
+                                  skipped.
 
 Re-run steps:
   --run-modeler                   Force re-run BuildDatabase + RepeatModeler.
   --run-masker                    Force re-run RepeatMasker.
-  -f, --force                     Force re-run all steps.
+  -f, --force                     Force re-run all steps (ignore cached outputs).
 ```
 
 Outputs (in the working directory):
@@ -315,19 +324,20 @@ Two homology sources are supported (selected with `--homology-db`); Pfam is sear
 Usage: eukan func-annot [OPTIONS]
 
 Pipeline parameters:
-  -n, --numcpu INTEGER           Number of CPUs. [default: all]
-  --homology-db [uniprot|kofam]  Homology DB to run alongside Pfam.
-                                 [default: uniprot]
-  -e, --evalue TEXT              E-value cutoff. [default: 1e-1]
+  -n, --numcpu INTEGER            Number of CPU threads. [default: all]
+  --homology-db [uniprot|kofam]   Homology source: 'uniprot' runs phmmer vs SwissProt; 'kofam' runs
+                                  hmmscan vs KOfam with per-KO bit-score thresholds. Pfam hmmscan
+                                  runs in both modes. [default: uniprot]
+  -e, --evalue TEXT               E-value cutoff. [default: 1e-1]
 
 Override options:
-  -p, --proteins PATH    Amino acid sequences FASTA.
-  --uniprot PATH         UniProt-SwissProt database FASTA.
-  --kofam PATH           KOfam pressed HMM database.
-  --ko-list PATH         KOfam ko_list TSV (per-KO thresholds + definitions).
-  --pfam PATH            Pfam HMM database.
-  --gff3 PATH            GFF3 file to annotate with functional info.
-  -f, --force            Re-run steps even if outputs exist.
+  -p, --proteins PATH             Amino acid sequences in FASTA format.
+  --uniprot PATH                  UniProt-SwissProt database FASTA.
+  --kofam PATH                    KOfam pressed HMM database.
+  --ko-list PATH                  KOfam ko_list TSV (per-KO thresholds + definitions).
+  --pfam PATH                     Pfam HMM database.
+  --gff3 PATH                     GFF3 file to annotate with functional info.
+  -f, --force                     Force re-run all steps (ignore cached outputs).
 ```
 
 Runs the chosen homology search plus hmmscan against Pfam (both via pyhmmer). Produces:
@@ -344,41 +354,40 @@ Validate and package an annotated genome for NCBI submission. Wraps NCBI's `tabl
 Usage: eukan prep-submission [OPTIONS]
 
 Required input:
-  -t, --template PATH         NCBI submission template (.sbt). [required]
+  -t, --template PATH             NCBI submission template (.sbt). [required]
 
 Source qualifiers:
-  --organism TEXT             Organism scientific name (e.g. 'Homo sapiens').
-                              Required unless --source-info is given.
-  --isolate TEXT              Isolate / strain identifier.
-  -j, --source-info TEXT      Raw -j string for table2asn (e.g.
-                              '[organism=Foo] [isolate=Bar] [country=Canada]').
-                              Overrides --organism / --isolate when set.
-  --locus-tag-prefix TEXT     NCBI-registered locus tag prefix (required for
-                              new-genome submissions).
+  --organism TEXT                 Organism scientific name (e.g. 'Homo sapiens'). Required unless
+                                  --source-info is given.
+  --isolate TEXT                  Isolate / strain identifier (optional).
+  --source-info TEXT              Raw -j string for table2asn (e.g. '[organism=Foo] [isolate=Bar]
+                                  [country=Canada]'). Overrides --organism / --isolate when set.
+  --locus-tag-prefix TEXT         NCBI-registered locus tag prefix (required for new-genome
+                                  submissions).
 
 Override options:
-  -g, --genome PATH           Override auto-discovered genome FASTA.
-  -i, --gff3 PATH             Override auto-discovered annotated GFF3.
+  -g, --genome PATH               Genome FASTA. Auto-discovered from eukan-run.json when omitted.
+  -i, --gff3 PATH                 Annotated GFF3. Defaults to final.mod.gff3 (or final.gff3) in the
+                                  working directory.
 
 Pipeline parameters:
-  --cleanup TEXT              table2asn -c cleanup flags. [default: befw]
-  --mode TEXT                 table2asn -M flatfile mode. [default: n]
-  -a, --assembly-type TEXT    table2asn -a assembly type / gap config.
-                              [default: r10k]
-  --extra-args TEXT           Extra table2asn arguments, shell-quoted
-                              (e.g. --extra-args '-split-dr -huge').
+  --cleanup TEXT                  table2asn -c cleanup flags. [default: befw]
+  --mode TEXT                     table2asn -M flatfile mode. [default: n]
+  -a, --assembly-type TEXT        table2asn -a assembly type / gap configuration. [default: r10k]
+  --extra-args TEXT               Extra table2asn arguments, shell-quoted (e.g. --extra-args
+                                  '-split-dr -huge').
   --cleanup-gff3 / --no-cleanup-gff3
-                              Pre-process the GFF3 (strip UniProt cruft, drop
-                              CDS-less mRNAs, cap inferences) before handing
-                              it to table2asn. [default: cleanup-gff3]
+                                  Pre-process the GFF3 (strip UniProt cruft, drop CDS-less mRNAs,
+                                  cap inferences) before handing it to table2asn. [default: on]
 
 Output options:
-  -o, --output-file PATH      Output .sqn path.
-                              [default: <output-dir>/<genome-stem>.sqn]
-  -d, --output-dir PATH       Output directory. [default: ./submission]
-  --print-command             Print the resolved table2asn command and exit.
-  --dry-run                   Print the command and create the output dir,
-                              but don't run table2asn.
+  -o, --output-file PATH          Output .sqn path. [default: <output-dir>/<genome-stem>.sqn]
+  -d, --output-dir PATH           Output directory for .sqn and validator reports.
+                                  [default: ./submission]
+  --print-command                 Print the resolved table2asn command and exit (no outputs
+                                  written).
+  --dry-run                       Print the command and create the output directory, but don't run
+                                  table2asn.
 ```
 
 The `.sbt` submission template must be created via [NCBI's web form](https://submit.ncbi.nlm.nih.gov/genbank/template/submission/) — it is the only mandatory file input. Outputs land in `./submission/`:
@@ -412,16 +421,15 @@ Extract protein or cDNA sequences from a GFF3 + genome.
 Usage: eukan gff3toseq [OPTIONS]
 
 Required input:
-  -g, --genome PATH                Genome FASTA. [required]
-  -i, --gff3 PATH                  GFF3 with gene models. [required]
+  -g, --genome PATH               Genome FASTA. [required]
+  -i, --gff3 PATH                 GFF3 with gene models. [required]
 
 Pipeline parameters:
-  --output-format [protein|cdna]   Output sequence type. [default: protein]
-  -c, --code INTEGER               NCBI genetic code table number. [default: 1]
+  --output-format [protein|cdna]  Output sequence type. [default: protein]
+  -c, --code INTEGER              NCBI genetic code table number. [default: 1]
 
 Output options:
-  -o, --output-file FILENAME       Write FASTA to this file ('-' for stdout).
-                                   [default: stdout]
+  -o, --output-file FILENAME      Write FASTA to this file ('-' for stdout). [default: stdout]
 ```
 
 ### `eukan db-fetch`
@@ -431,14 +439,14 @@ Download reference databases. Pfam is always fetched; the homology DB to pair it
 ```
 Usage: eukan db-fetch [OPTIONS]
 
-Options:
-  -o, --output-dir PATH          Directory to download into. [default: databases]
-  --homology-db [uniprot|kofam]  Homology DB to fetch alongside Pfam.
-                                 [default: uniprot]
-  -f, --force                    Re-download even if databases are up to date.
+Pipeline parameters:
+  -o, --output-dir PATH           Directory to download databases into. [default: databases]
+  --homology-db [uniprot|kofam]   Homology DB to fetch alongside Pfam: 'uniprot' downloads
+                                  SwissProt; 'kofam' downloads the KOfam HMM profiles + ko_list and
+                                  presses a eukaryote-only HMM database. [default: uniprot]
   -d, --database [uniprot|pfam|kofam|ko_list]
-                                 Specific database(s) to fetch. Overrides
-                                 --homology-db when given.
+                                  Specific database(s) to fetch. Overrides --homology-db when given.
+  -f, --force                     Re-download even if databases are up to date.
 ```
 
 Downloads and prepares:
@@ -456,19 +464,17 @@ Compare predicted gene models against a reference or previous annotation to asse
 Usage: eukan compare [OPTIONS]
 
 Required input:
-  -r, --reference PATH       Reference GFF3 file.
-  -p, --predicted PATH       Predicted GFF3 file. Repeat to compare multiple
-                             predictions against the same reference.
+  -r, --reference PATH            Reference GFF3 file. [required]
+  -p, --predicted PATH            Predicted GFF3 file. Repeat to compare multiple predictions
+                                  against the same reference. [required]
 
 Pipeline parameters:
-  -L, --label TEXT           Short label per --predicted (must appear once
-                             per --predicted, or be omitted to use file
-                             stems).
+  -L, --label TEXT                Short label per --predicted (must appear once per --predicted, or
+                                  be omitted to use file stems).
 
 Output options:
-  -o, --output-file PATH     Write per-feature details to a TSV file. In
-                             multi-prediction mode a leading 'prediction'
-                             column is prepended.
+  -o, --output-file PATH          Write per-feature details to a TSV file. In multi-prediction mode
+                                  a leading 'prediction' column is prepended.
 ```
 
 The classification system and metrics are further described in the paper referenced in [Citation](#citation). Gene-level classifications:
@@ -513,10 +519,13 @@ Verify Python dependencies, external tools, and databases.
 ```
 Usage: eukan check [OPTIONS]
 
-Options:
-  --for [annotate|assemble|mask-repeats|func-annot|db-fetch|prep-submission]
-      Only check tools needed by these subcommands. If omitted, check all.
-  --db-dir PATH   Database directory to check. [default: databases]
+Pipeline parameters:
+  --for [annotate|assemble|func-annot|db-fetch|mask-repeats|prep-submission]
+                                  Only check tools needed by these subcommands. If omitted, check
+                                  all.
+  --db-dir PATH                   Database directory to check. [default: databases]
+  --homology-db [uniprot|kofam]   When set, only check the chosen homology DB (plus Pfam). Without
+                                  it, every registered database is checked.
 ```
 
 Checks Python dependencies, probes each external tool with a version/help command, and verifies database integrity. Exits 0 if all checks pass, 1 if any fail.
