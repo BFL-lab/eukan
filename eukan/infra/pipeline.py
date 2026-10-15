@@ -11,7 +11,7 @@ straight line (annotation's phases, functional's JSON-cache dance).
 from __future__ import annotations
 
 import shutil
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -100,17 +100,26 @@ def force_steps_from_run_flags(
     steps: Sequence[StepSpec],
     *,
     force: bool = False,
+    downstream: Mapping[str, Sequence[str]] | None = None,
     **run_flags: bool,
 ) -> list[str]:
     """Translate ``--run-X`` / ``--force`` flags into manifest keys to force.
 
     For each step ``s``, looks up ``run_flags[f"run_{s.name}"]``. Steps
-    whose flag is set are forced individually. ``force=True`` (and no
-    individual flags) forces every step.
+    whose flag is set are forced, together with every step that consumes
+    their output: *downstream* maps a step name to the names of the steps
+    that read its output, followed transitively. ``force=True`` (and no
+    individual flags) forces every step. Keys come back in pipeline order.
     """
-    selected = [s.name for s in steps if run_flags.get(f"run_{s.name}", False)]
+    selected = {s.name for s in steps if run_flags.get(f"run_{s.name}", False)}
+    stack = list(selected)
+    while stack:
+        for dep in (downstream or {}).get(stack.pop(), ()):
+            if dep not in selected:
+                selected.add(dep)
+                stack.append(dep)
     if selected:
-        return [step_key(pipeline, n) for n in selected]
+        return [step_key(pipeline, s.name) for s in steps if s.name in selected]
     if force:
         return [step_key(pipeline, s.name) for s in steps]
     return []

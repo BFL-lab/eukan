@@ -165,6 +165,12 @@ class TestForceStepsFromRunFlags:
     def test_explicit_run_flag_forces_that_step(self):
         assert force_steps_from_run_flags(run_masker=True) == ["repeats/masker"]
 
+    def test_run_modeler_also_forces_masker(self):
+        # The masker reads the library the modeler rebuilds.
+        assert force_steps_from_run_flags(run_modeler=True) == [
+            "repeats/modeler", "repeats/masker",
+        ]
+
     def test_force_alone_returns_all_keys(self):
         assert force_steps_from_run_flags(force=True) == [
             "repeats/modeler", "repeats/masker",
@@ -173,3 +179,56 @@ class TestForceStepsFromRunFlags:
     def test_returned_keys_are_prefixed(self):
         result = force_steps_from_run_flags(run_modeler=True, run_masker=True)
         assert all(k.startswith("repeats/") for k in result)
+
+
+class TestRunRepeatsResume:
+    """Through run_repeats: ``--run-modeler`` re-runs the masker on the rebuilt
+    library, and the masker re-runs when its library or the genome changed."""
+
+    @staticmethod
+    def _stub(monkeypatch, ran):
+        from eukan.repeats import pipeline
+
+        def fake_modeler(config):
+            ran.append("modeler")
+            out = pipeline._modeler_output(config)
+            out.write_text(f">family{len(ran)}\nACGT\n")  # RepeatModeler samples at random
+            return out
+
+        def fake_masker(config, families):
+            ran.append("masker")
+            masked = config.work_dir / f"{config.name}.masked.fasta"
+            masked.write_text(">chr1\nacgt\n")
+            return masked, config.work_dir / "hints_repeatmask.gff"
+
+        monkeypatch.setattr(pipeline, "run_modeler", fake_modeler)
+        monkeypatch.setattr(pipeline, "run_masker", fake_masker)
+        return pipeline.run_repeats
+
+    def test_run_modeler_reruns_masker(self, tmp_path, monkeypatch):
+        ran: list[str] = []
+        run_repeats = self._stub(monkeypatch, ran)
+        genome = tmp_path / "genome.fa"
+        genome.write_text(">chr1\nACGT\n")
+        config = RepeatsConfig(genome=genome, work_dir=tmp_path)
+        run_repeats(config)
+        ran.clear()
+        run_repeats(config, force_steps=force_steps_from_run_flags(run_modeler=True))
+        assert ran == ["modeler", "masker"]
+
+    def test_changed_library_or_genome_reruns_masker(self, tmp_path, monkeypatch):
+        ran: list[str] = []
+        run_repeats = self._stub(monkeypatch, ran)
+        genome = tmp_path / "genome.fa"
+        genome.write_text(">chr1\nACGT\n")
+        lib = tmp_path / "families.fa"
+        lib.write_text(">a\nACGT\n")
+        config = RepeatsConfig(genome=genome, work_dir=tmp_path, lib=lib)
+        run_repeats(config)
+        run_repeats(config)
+        assert ran == ["masker"]  # unchanged: skipped
+        lib.write_text(">a\nACGTT\n")
+        run_repeats(config)
+        genome.write_text(">chr1\nACGTA\n")
+        run_repeats(config)
+        assert ran == ["masker"] * 3

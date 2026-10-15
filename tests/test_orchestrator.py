@@ -24,7 +24,14 @@ from eukan.infra.manifest import (
     StepStatus,
     step_key,
 )
-from eukan.infra.pipeline import StepSpec, run_orchestrated_step, run_simple_pipeline
+from eukan.infra.pipeline import (
+    StepSpec,
+    run_orchestrated_step,
+    run_simple_pipeline,
+)
+from eukan.infra.pipeline import (
+    force_steps_from_run_flags as generic_force_steps_from_run_flags,
+)
 from eukan.infra.steps import fingerprint_inputs
 from eukan.settings import AssemblyConfig, PipelineConfig
 
@@ -112,6 +119,26 @@ class TestForceStepsFromRunFlags:
             run_genemark=True, run_augustus=True, run_snap=True,
         )
         assert all(k.startswith("annotation/") for k in result)
+
+
+class TestGenericForceStepsFromRunFlags:
+    """The shared helper forces a flagged step and, through *downstream*, every
+    step that reads its output, transitively, in pipeline order."""
+
+    STEPS: ClassVar[list[StepSpec]] = [
+        StepSpec(name, lambda config: None) for name in ("a", "b", "c", "d")
+    ]
+
+    def test_downstream_is_followed_transitively(self):
+        downstream = {"b": ("c",), "c": ("d",)}
+        assert generic_force_steps_from_run_flags(
+            ASSEMBLY, self.STEPS, downstream=downstream, run_b=True,
+        ) == ["assembly/b", "assembly/c", "assembly/d"]
+
+    def test_without_downstream_only_flagged_steps(self):
+        assert generic_force_steps_from_run_flags(
+            ASSEMBLY, self.STEPS, run_d=True, run_a=True,
+        ) == ["assembly/a", "assembly/d"]
 
 
 class TestAssemblyForceStepsFromRunFlags:

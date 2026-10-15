@@ -44,16 +44,24 @@ _STEPS: list[StepSpec] = [
 ]
 
 
+# The masker softmasks with the families library the modeler builds, so a re-run of
+# the modeler re-runs the masker too.
+_DOWNSTREAM: dict[str, tuple[str, ...]] = {"modeler": ("masker",)}
+
+
 def force_steps_from_run_flags(
     *,
     run_modeler: bool = False,
     run_masker: bool = False,
     force: bool = False,
 ) -> list[str]:
-    """Translate ``--run-X`` / ``--force`` flags into manifest keys to force."""
+    """Translate ``--run-X`` / ``--force`` flags into manifest keys to force.
+
+    ``--run-modeler`` forces the masker as well (``_DOWNSTREAM``).
+    """
     return _force_steps_from_run_flags(
         REPEATS, _STEPS,
-        force=force,
+        force=force, downstream=_DOWNSTREAM,
         run_modeler=run_modeler, run_masker=run_masker,
     )
 
@@ -122,6 +130,7 @@ def run_repeats(
                     )
                 families = cached
 
+        # A changed library (a rebuilt one, or another --lib) or genome re-runs it.
         masker_key = step_key(REPEATS, "masker")
         run_orchestrated_step(
             config.manifest_dir, manifest, masker_key,
@@ -129,6 +138,7 @@ def run_repeats(
             step_dir=config.work_dir / "masker",
             force=masker_key in forced,
             output_file=masked_output,
+            input_files=[families, config.genome],
         )
 
     return masked_output

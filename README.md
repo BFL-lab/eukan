@@ -300,6 +300,8 @@ Re-run steps:
   -f, --force                     Force re-run all steps (ignore cached outputs).
 ```
 
+`--run-modeler` also re-runs RepeatMasker, which masks with the rebuilt library. Without step flags, RepeatMasker re-runs when its library (a rebuilt one, or another `--lib`) or the genome has changed since it last ran.
+
 Outputs (in the working directory):
 
 - `<stem>.masked.fasta` — soft-masked genome (lower-case in repeats).
