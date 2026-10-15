@@ -18,6 +18,7 @@ bounded.
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from collections import Counter
 from pathlib import Path
 
@@ -152,6 +153,10 @@ def _cut_one(
     return split_at(oriented, valid, min_segment)
 
 
+def _site_pos(site: AcceptorSite) -> int:
+    return site.pos
+
+
 def cut_models_at_sl(
     gff_or_gtf: str | Path,
     sites: list[AcceptorSite],
@@ -166,8 +171,10 @@ def cut_models_at_sl(
     unchanged. (Over-long introns are split upstream by
     :mod:`eukan.assembly.max_intron`.) Returns the number of transcripts cut.
     """
+    # Per contig, the sites in position order, so a transcript's in-span sites are
+    # one bisected slice.
     by_chrom: dict[str, list[AcceptorSite]] = {}
-    for site in sites:
+    for site in sorted(sites, key=_site_pos):
         by_chrom.setdefault(site.chrom, []).append(site)
 
     n_conflict = 0
@@ -175,7 +182,11 @@ def cut_models_at_sl(
     def cut(tx: Transcript) -> list[Transcript] | None:
         nonlocal n_conflict
         span_lo, span_hi = tx.exons[0][0], tx.exons[-1][1]
-        relevant = [s for s in by_chrom.get(tx.chrom, []) if span_lo <= s.pos <= span_hi]
+        on_chrom = by_chrom.get(tx.chrom, [])
+        relevant = on_chrom[
+            bisect_left(on_chrom, span_lo, key=_site_pos)
+            : bisect_right(on_chrom, span_hi, key=_site_pos)
+        ]
         result = _cut_one(tx, relevant, min_segment)
         # A multi-exon, stranded transcript whose only in-span SL acceptors sit on
         # the opposite strand: the splice-derived strand and the SL disagree. Trust
