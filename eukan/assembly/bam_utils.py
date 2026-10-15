@@ -4,8 +4,9 @@ Aligner-neutral utilities used by :mod:`eukan.assembly.minimap2`,
 :mod:`eukan.assembly.jaccard`, and :mod:`eukan.assembly.tracks`: the
 ``(query FASTA, output BAM)`` track table that is the single source of truth for
 the mapped-transcript stems, the jaccard-sibling query resolver, a
-quickcheck-based BAM resume guard, an unmapped-record extractor, and the
-coordinate-sort/filter recipe with its full-disk error translation. Living here
+quickcheck-based BAM resume guard, an unmapped-record extractor, a FASTA record
+counter, and the coordinate-sort/filter recipe with its full-disk error
+translation. Living here
 (rather than in an aligner module) keeps them importable without pulling in the
 aligner and avoids an import cycle with ``tracks``.
 """
@@ -108,6 +109,12 @@ def _write_unmapped_fasta(unsorted_bam: Path, out_fasta: Path) -> int:
     finally:
         bam.close()
     return n
+
+
+def count_fasta_records(fasta: Path) -> int:
+    """Number of records in *fasta* (lines starting with ``>``)."""
+    with open(fasta) as fh:
+        return sum(1 for line in fh if line.startswith(">"))
 
 
 def _coordinate_sort_and_filter(

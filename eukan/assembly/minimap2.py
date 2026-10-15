@@ -36,6 +36,13 @@ from eukan.assembly.bam_utils import (
     _coordinate_sort_and_filter,
     _resolve_query,
     _write_unmapped_fasta,
+    count_fasta_records,
+)
+from eukan.assembly.polya import (
+    characterize_polya_bam,
+    scan_fasta_polya,
+    stats_to_dict,
+    write_polya_section,
 )
 from eukan.infra.artifacts import Artifact
 from eukan.infra.logging import get_logger
@@ -285,14 +292,6 @@ def _finalize_transcript_diagnostics(config: AssemblyConfig) -> None:
     written to ``polyA_diagnostic.json`` (sections ``transcripts`` and
     ``unmapped_transcripts``, keyed by track), separate from the SL verdict.
     """
-    from eukan.assembly.jaccard import _genome_stats
-    from eukan.assembly.polya import (
-        characterize_polya_bam,
-        scan_fasta_polya,
-        stats_to_dict,
-        write_polya_section,
-    )
-
     wd = config.work_dir
     # One entry per track, written after the loop: one write per track under the
     # bare section name let the genome-guided track replace the de novo one.
@@ -312,7 +311,7 @@ def _finalize_transcript_diagnostics(config: AssemblyConfig) -> None:
         if unmapped.exists():
             n_unmapped, n_unmapped_polya = scan_fasta_polya(unmapped)
             query = _resolve_query(wd, query_name)
-            n_input = _genome_stats(query)[1] if query.exists() else 0
+            n_input = count_fasta_records(query) if query.exists() else 0
             pct = 100.0 * n_unmapped / n_input if n_input else 0.0
             log.info(
                 "Unmapped de novo transcripts (%s): %d of %d (%.2f%%)%s",

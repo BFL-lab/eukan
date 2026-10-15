@@ -339,15 +339,6 @@ def split_fasta_record(seq: str, clips: list[int], min_segment: int) -> list[str
 # ---------------------------------------------------------------------------
 
 
-def _genome_stats(fasta: Path) -> tuple[int, int]:
-    """Total sequence length and sequence count in *fasta* (one pass)."""
-    total = n = 0
-    for rec in SeqIO.parse(str(fasta), "fasta"):
-        total += len(rec.seq)
-        n += 1
-    return total, n
-
-
 def iter_fragment_spans(
     bam_path: Path, *, min_insert: int = _MIN_INSERT, max_insert: int = _MAX_INSERT
 ) -> Iterator[tuple[str, list[tuple[int, int]]]]:
