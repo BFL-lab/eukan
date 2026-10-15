@@ -141,7 +141,7 @@ poetry run eukan assemble -g genome.fasta -l left.fq -r right.fq -S RF
 
 ### `eukan annotate`
 
-Run the genome annotation pipeline. When run in the same directory as `eukan assemble`, transcript evidence (FASTA, GFF3, RNA-seq hints) and strand-specificity are discovered automatically. UTRs and alternative isoforms are folded in from the transcript evidence by the combinr consensus engine.
+Run the genome annotation pipeline. When run in the same directory as `eukan assemble`, transcript evidence (FASTA, GFF3, RNA-seq hints) is discovered automatically. UTRs and alternative isoforms are folded in from the transcript evidence by the combinr consensus engine.
 
 ```
 Usage: eukan annotate [OPTIONS]
@@ -155,7 +155,6 @@ Pipeline parameters:
   -k, --kingdom [fungus|protist|animal|plant]
                                   Target organism kingdom (tunes predictor parameters).
   -n, --numcpu INTEGER            Number of CPU threads. [default: all]
-  --existing-augustus TEXT        Use pre-trained AUGUSTUS species parameters.
   -w, --weights INTEGER           Weights for evidence sources: protein, gene predictions,
                                   transcripts. [default: 2, 1, 3]
   --combinr-stringent-overlap FLOAT
@@ -168,7 +167,6 @@ Override options:
   -tf, --transcripts-fasta PATH   Override auto-discovered transcript FASTA.
   -tg, --transcripts-gff PATH     Override auto-discovered transcript GFF3.
   -r, --rnaseq-hints PATH         Override auto-discovered RNA-seq hints GFF.
-  --strand-specific               Transcripts are strand-oriented.
   --combinr-path FILE             Path to the combinr binary (default: 'combinr' on PATH).
   --splice-permissive             Allow rarer non-canonical splice sites in AUGUSTUS: drops the
                                   default >= 1% junction-share gate (keeps >= 10 junctions, >= 50

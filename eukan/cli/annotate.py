@@ -37,10 +37,6 @@ from eukan.cli._framework import (
 )
 @numcpu_option
 @optgroup.option(
-    "--existing-augustus", type=str, default=None,
-    help="Use pre-trained AUGUSTUS species parameters.",
-)
-@optgroup.option(
     "--weights", "-w", type=int, multiple=True, default=(2, 1, 3),
     show_default=True,
     help="Weights for evidence sources: protein, gene predictions, transcripts.",
@@ -66,7 +62,6 @@ from eukan.cli._framework import (
     "--rnaseq-hints", "-r", type=click.Path(exists=True, path_type=Path),
     help="Override auto-discovered RNA-seq hints GFF.",
 )
-@optgroup.option("--strand-specific", is_flag=True, help="Transcripts are strand-oriented.")
 @optgroup.option(
     "--combinr-path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="Path to the combinr binary (default: 'combinr' on PATH).",
@@ -95,8 +90,6 @@ def annotate(
     transcripts_fasta: Path | None,
     transcripts_gff: Path | None,
     rnaseq_hints: Path | None,
-    existing_augustus: str | None,
-    strand_specific: bool,
     splice_permissive: bool,
     spsp: bool,
     numcpu: int,
@@ -115,9 +108,8 @@ def annotate(
 
     \b
     When run in the same directory as `eukan assemble`, transcript evidence
-    (FASTA, GFF3, RNA-seq hints) and strand-specificity are discovered
-    automatically. Use the override options to supply your own files or to
-    replace the auto-discovered values.
+    (FASTA, GFF3, RNA-seq hints) is discovered automatically. Use the override
+    options to supply your own files or to replace the auto-discovered values.
     """
     from eukan.annotation import run_annotation_pipeline
     from eukan.annotation.pipeline import force_steps_from_run_flags
@@ -136,7 +128,6 @@ def annotate(
         weights=list(weights),
         combinr_path=resolve_optional_path(combinr_path),
         combinr_stringent_overlap=combinr_stringent_overlap,
-        strand_specific=strand_specific,
         allow_noncanonical_splice=splice_permissive,
         spaln_ssp=spsp,
         kingdom=kingdom or None,

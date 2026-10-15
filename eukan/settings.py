@@ -176,7 +176,6 @@ class PipelineConfig(_StepRunSettings):
     transcripts_fasta: Path | None = None
     transcripts_gff: Path | None = None
     rnaseq_hints: Path | None = None
-    strand_specific: bool = False
 
     # Well-known assembly output filenames — sourced from the cross-pipeline
     # artifact registry so renaming an artifact only edits one file.

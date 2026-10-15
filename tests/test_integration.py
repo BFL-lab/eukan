@@ -92,6 +92,19 @@ def test_cli_short_help():
     assert result.returncode == 0
 
 
+def test_annotate_help_drops_unread_flags():
+    """--existing-augustus and --strand-specific reached no code, so they are gone."""
+    from click.testing import CliRunner
+
+    from eukan.cli import cli
+
+    result = CliRunner().invoke(cli, ["annotate", "--help"])
+    assert result.exit_code == 0
+    assert "--existing-augustus" not in result.output
+    assert "--strand-specific" not in result.output
+    assert "strand-specificity" not in result.output
+
+
 # ---------------------------------------------------------------------------
 # pyhmmer — verify the HMMER replacement works
 # ---------------------------------------------------------------------------

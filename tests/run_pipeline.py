@@ -342,7 +342,6 @@ def test_pipeline_cmd(
                 "-tf", str(nr_fasta),
                 "-tg", str(nr_gff3),
                 "-r", str(hints),
-                "--strand-specific",
             ]
         else:
             click.echo("  Assembly outputs not found, running without transcript evidence")
