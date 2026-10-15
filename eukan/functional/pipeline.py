@@ -1,11 +1,11 @@
 """Functional annotation pipeline: homology search → FASTA + GFF3 annotation.
 
-Doesn't fit ``run_simple_pipeline``: the search step writes two JSON
-caches that the FASTA/GFF3 annotation steps read back, so the steps
-aren't independent in the way the linear driver assumes. Each step is
-driven directly via ``run_orchestrated_step`` with a per-proteome+mode
-scoped manifest key (see :func:`_step_scope`) and explicit input
-fingerprints (see :func:`_func_step_fingerprints`).
+Doesn't fit ``run_simple_pipeline``: the FASTA/GFF3 annotation steps take
+the search step's hits as arguments (read back from its JSON cache when the
+search was skipped), so the steps aren't independent in the way the linear
+driver assumes. Each step is driven directly via ``run_orchestrated_step``
+with a per-proteome+mode scoped manifest key (see :func:`_step_scope`) and
+explicit input fingerprints (see :func:`_func_step_fingerprints`).
 
 The homology search has two modes controlled by ``config.homology_db``:
 
@@ -13,9 +13,10 @@ The homology search has two modes controlled by ``config.homology_db``:
 * ``"kofam"``   — hmmscan of the proteome vs the pressed KOfam HMM
   database, with per-KO score thresholds read from ``ko_list``.
 
-Pfam hmmscan runs in both modes. The cache filename used for homology
-results changes per mode (``phmmer.json`` vs ``kofam.json``) so that
-switching modes doesn't quietly reuse stale results.
+Pfam hmmscan runs in both modes. The search caches the homology and Pfam
+hits together in one file per proteome, whose name changes per mode
+(``phmmer.search.json`` vs ``kofam.search.json``) so that switching modes
+doesn't quietly reuse stale results.
 """
 
 from __future__ import annotations
@@ -46,11 +47,12 @@ from eukan.settings import FunctionalConfig
 log = get_logger(__name__)
 
 
-def _homology_cache_path(config: FunctionalConfig) -> Path:
-    """Return the JSON cache path for the active homology DB."""
+def _search_cache_path(config: FunctionalConfig) -> Path:
+    """Return the search step's JSON cache (homology and Pfam hits) for the active
+    homology DB, beside the proteome."""
     stem = config.proteins.stem
     suffix = "kofam" if config.homology_db == "kofam" else "phmmer"
-    return config.proteins.parent / f"{stem}.{suffix}.json"
+    return config.proteins.parent / f"{stem}.{suffix}.search.json"
 
 
 def _step_scope(config: FunctionalConfig) -> str:
@@ -114,16 +116,13 @@ def _run_pfam_hmmscan(
     return res
 
 
-def _search_and_cache(
-    config: FunctionalConfig,
-    homology_json: Path,
-    hmmscan_json: Path,
-) -> Path:
-    """Run the active homology search + Pfam hmmscan; write both caches.
+def _search_and_cache(config: FunctionalConfig, cache: Path) -> dict[str, HitResults]:
+    """Run the active homology search + Pfam hmmscan; cache and return their hits.
 
-    Stages run sequentially with the target database released between
-    them — keeping all profiles + SwissProt resident at once was
-    OOM-prone on container runtimes.
+    The hits go to *cache* as ``{"homology": ..., "pfam": ...}``. Stages run
+    sequentially with the target database released between them — keeping
+    all profiles + SwissProt resident at once was OOM-prone on container
+    runtimes.
     """
     evalue_f = float(config.evalue)
 
@@ -142,15 +141,13 @@ def _search_and_cache(
         config.proteins, config.pfam_db, config.num_cpu, evalue_f,
     )
 
-    homology_json.write_text(json.dumps(homology_res))
-    hmmscan_json.write_text(json.dumps(pfam_res))
-    return homology_json
+    results = {"homology": homology_res, "pfam": pfam_res}
+    cache.write_text(json.dumps(results))
+    return results
 
 
 def _func_step_fingerprints(
-    config: FunctionalConfig,
-    homology_json: Path,
-    hmmscan_json: Path,
+    config: FunctionalConfig, cache: Path,
 ) -> dict[str, tuple[list[Path], list[str]]]:
     """Declared ``(input_files, input_scalars)`` per step, keyed by bare name.
 
@@ -164,9 +161,10 @@ def _func_step_fingerprints(
     enter as path-string scalars, not content-hashed: they're multi-GB and
     re-hashing them every run would be prohibitive. ``num_cpu`` is deliberately
     excluded — thread count doesn't change results. The annotate steps depend
-    on both JSON caches, so a re-run of ``search`` (which rewrites them)
-    cascades into re-annotation; this also gives the otherwise-untracked
-    ``hmmscan.json`` an integrity-relevant fingerprint.
+    on the search cache, so a re-run of ``search`` (which rewrites it)
+    cascades into re-annotation. The cache's name enters the search
+    fingerprint, so a record from before the current cache layout (the
+    homology and Pfam hits in two files) re-runs the search.
     """
     if config.homology_db == "kofam":
         db_scalars = [
@@ -180,17 +178,18 @@ def _func_step_fingerprints(
         f"evalue={config.evalue}",
         f"pfam_db={config.pfam_db}",
         *db_scalars,
+        f"cache={cache.name}",
     ]
     steps: dict[str, tuple[list[Path], list[str]]] = {
         "search": ([config.proteins], search_scalars),
         "annotate_fasta": (
-            [config.proteins, homology_json, hmmscan_json],
+            [config.proteins, cache],
             [f"homology_db={config.homology_db}"],
         ),
     }
     if config.gff3_path:
         steps["annotate_gff3"] = (
-            [config.gff3_path, homology_json, hmmscan_json],
+            [config.gff3_path, cache],
             [f"homology_db={config.homology_db}"],
         )
     return steps
@@ -207,8 +206,7 @@ def run_functional_annotation(
     manifest = get_or_create_manifest(manifest_dir, config)
     save_manifest(manifest_dir, manifest)
 
-    homology_json = _homology_cache_path(config)
-    hmmscan_json = config.proteins.parent / f"{config.proteins.stem}.hmmscan.json"
+    cache = _search_cache_path(config)
 
     # Namespace step keys per proteome+mode so several proteomes can be
     # annotated in one work_dir with independent manifest records (see
@@ -221,7 +219,7 @@ def run_functional_annotation(
     def _key(name: str) -> str:
         return step_key(FUNCTIONAL, f"{name}.{scope}")
 
-    fingerprints = _func_step_fingerprints(config, homology_json, hmmscan_json)
+    fingerprints = _func_step_fingerprints(config, cache)
 
     # Identical input already fully annotated -> a friendly no-op. A different
     # proteins/GFF3 file (name or content) flips at least one fingerprint, so
@@ -241,18 +239,19 @@ def run_functional_annotation(
         return
 
     search_files, search_scalars = fingerprints["search"]
+    computed: list[dict[str, HitResults]] = []
     run_orchestrated_step(
         manifest_dir, manifest, _key("search"),
-        _search_and_cache,
-        config, homology_json, hmmscan_json,
+        lambda: computed.append(_search_and_cache(config, cache)),
         step_dir=work_dir / "search",
         force=force,
+        output_file=cache,
         input_files=search_files,
         input_scalars=search_scalars,
     )
-
-    homology_res = json.loads(homology_json.read_text())
-    hmmscan_res = json.loads(hmmscan_json.read_text())
+    # A skipped search left its hits in the cache.
+    results = computed[0] if computed else json.loads(cache.read_text())
+    homology_res, hmmscan_res = results["homology"], results["pfam"]
 
     fasta_files, fasta_scalars = fingerprints["annotate_fasta"]
     run_orchestrated_step(
