@@ -66,6 +66,12 @@ class StepSpec:
             fingerprint, so a change in a config value the step's behaviour
             depends on re-runs it on resume even when its input files are
             byte-identical. ``None`` if the step depends on no such values.
+        clears: Other files under ``work_dir`` the step writes beside ``output``,
+            deleted with it when a completed step re-runs (forced, or its inputs
+            changed). For a step function that skips a sub-output which already
+            exists, so an interrupted run resumes without redoing it: without
+            this a re-run would regenerate only ``output`` and silently keep the
+            other sub-outputs from the previous run.
     """
 
     name: str
@@ -74,6 +80,7 @@ class StepSpec:
     flag: str | None = None
     inputs: Callable[[Any], list[Path]] | None = None
     scalars: Callable[[Any], list[str]] | None = None
+    clears: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +164,7 @@ def run_simple_pipeline(
             step_dir=config.work_dir / spec.name,
             force=key in forced,
             output_file=output_file,
+            clear_files=[config.work_dir / f for f in spec.clears],
             input_files=input_files,
             input_scalars=input_scalars,
         )
@@ -177,6 +185,7 @@ def run_orchestrated_step(
     step_dir: Path | None = None,
     force: bool = False,
     output_file: Path | None = None,
+    clear_files: list[Path] | None = None,
     input_files: list[Path] | None = None,
     input_scalars: list[str] | None = None,
     **kwargs: Any,
@@ -198,6 +207,8 @@ def run_orchestrated_step(
         output_file: If provided, overrides the return value of *fn* as
             the step's output path. Useful for steps that write to a
             fixed filename and return ``None``.
+        clear_files: Other outputs deleted along with ``output_file`` when a
+            completed step re-runs (see ``StepSpec.clears``).
         input_files: Declared inputs to fingerprint. A completed step whose
             inputs changed since it ran is treated as stale and re-run.
         input_scalars: Non-file inputs (config values) folded into the same
@@ -217,9 +228,10 @@ def run_orchestrated_step(
             return cached
 
     # Re-running a step that previously completed (forced, or its inputs changed):
-    # drop the declared output first, so step functions that reuse a "complete"
-    # output as their own resume check (the transcript mappers' BAM check) actually
-    # regenerate it instead of reusing a file built from inputs that have changed.
+    # drop the declared output (and clear_files) first, so step functions that reuse
+    # an existing output as their own resume check (Trinity's per-mode FASTAs, the
+    # transcript mappers' BAM check) actually regenerate it instead of reusing a
+    # file built from inputs that have changed.
     if prior is not None and prior.status == StepStatus.completed and output_file is not None:
         if force:
             reason = "forced"
@@ -231,12 +243,14 @@ def run_orchestrated_step(
             reason = "inputs changed"
         else:
             reason = "output missing or stale"
-        if output_file.exists():
+        stale = [p for p in (output_file, *(clear_files or ())) if p.exists()]
+        if stale:
             log.warning(
                 "[%s] Re-running (%s); clearing stale output %s.",
-                step_name, reason, output_file.name,
+                step_name, reason, ", ".join(p.name for p in stale),
             )
-            output_file.unlink()
+            for p in stale:
+                p.unlink()
         else:
             log.info("[%s] Re-running (%s).", step_name, reason)
 

@@ -170,7 +170,12 @@ def _steps_for() -> list[StepSpec]:
         # reads per locus, so its output is still a transcript FASTA mapped back to
         # the genome by map_transcripts. Declared output is trinity-denovo.fasta
         # (produced last), so its presence marks both modes done on resume.
-        StepSpec("trinity", run_trinity, "trinity-denovo.fasta", "-T / --run-trinity"),
+        # run_trinity skips a mode whose FASTA exists (an interrupted run keeps the
+        # finished mode), so a re-run of the completed step clears trinity-gg.fasta too.
+        StepSpec(
+            "trinity", run_trinity, "trinity-denovo.fasta", "-T / --run-trinity",
+            clears=("trinity-gg.fasta",),
+        ),
         # No declared output: jaccard rewrites each Trinity FASTA into a
         # ``.jaccard.fasta`` sibling, but on single-end input (or zero clips) it
         # legitimately writes nothing, so stale-output validation must not fire.
@@ -179,10 +184,13 @@ def _steps_for() -> list[StepSpec]:
         # fingerprints the rewritten ``.jaccard.fasta``) — a scalar here would be
         # inert, since is_step_complete never reaches the fingerprint check.
         StepSpec("jaccard", run_jaccard, None, "--run-jaccard"),
+        # The mapper reuses any per-set BAM that passes quickcheck, so a re-run of the
+        # completed step clears the genome-guided BAM too, not only the declared one.
         StepSpec(
             "map_transcripts", map_transcripts_minimap2,
             "trinity-denovo.genome.bam", "--run-map-transcripts",
             inputs=_resolved_transcript_queries,
+            clears=("trinity-gg.genome.bam",),
         ),
         # No declared output: strand_correct always converts each Trinity track BAM
         # to <track>.genome.gff3 (for the SL cut), but only writes the *.stranded.gff3

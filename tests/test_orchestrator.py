@@ -11,8 +11,8 @@ from eukan.assembly.pipeline import (
 from eukan.assembly.pipeline import (
     force_steps_from_run_flags as assembly_force_steps_from_run_flags,
 )
-from eukan.infra.manifest import RunManifest, StepRecord, StepStatus
-from eukan.infra.pipeline import run_orchestrated_step
+from eukan.infra.manifest import ASSEMBLY, RunManifest, StepRecord, StepStatus, step_key
+from eukan.infra.pipeline import run_orchestrated_step, run_simple_pipeline
 from eukan.infra.steps import fingerprint_inputs
 from eukan.settings import AssemblyConfig
 
@@ -530,3 +530,102 @@ class TestRerunClearsStaleOutput:
             step_dir=tmp_path / "x", output_file=out, input_files=[inp],
         )
         assert runs == [1, 1]  # stale BAM cleared, so the mapper re-ran
+
+    def test_rerun_clears_sibling_outputs(self, tmp_path):
+        # A step fn that skips each sub-output already present (Trinity's per-mode
+        # FASTAs, the per-set transcript BAMs) regenerates them all on a re-run.
+        manifest = RunManifest()
+        out, sibling = tmp_path / "out.bam", tmp_path / "sibling.bam"
+        made: list[str] = []
+
+        def fn():
+            for p in (sibling, out):
+                if not p.exists():
+                    made.append(p.name)
+                    p.write_text("mapped")
+
+        for force in (False, True):
+            run_orchestrated_step(
+                tmp_path, manifest, "assembly/x", fn, step_dir=tmp_path / "x",
+                output_file=out, clear_files=[sibling], force=force,
+            )
+        assert made == ["sibling.bam", "out.bam", "sibling.bam", "out.bam"]
+
+    def test_failed_step_resume_keeps_sibling_outputs(self, tmp_path):
+        # Only a re-run of a *completed* step clears: a step that failed part-way
+        # keeps the sub-output it finished, so the resume does not redo it.
+        manifest = RunManifest()
+        out, sibling = tmp_path / "out.bam", tmp_path / "sibling.bam"
+        made: list[str] = []
+
+        def fn(fail):
+            for p in (sibling, out):
+                if not p.exists():
+                    if fail and p == out:
+                        raise RuntimeError("killed")
+                    made.append(p.name)
+                    p.write_text("mapped")
+
+        for fail in (True, False):
+            try:
+                run_orchestrated_step(
+                    tmp_path, manifest, "assembly/x", fn, fail, step_dir=tmp_path / "x",
+                    output_file=out, clear_files=[sibling],
+                )
+            except RuntimeError:
+                assert fail
+        assert made == ["sibling.bam", "out.bam"]
+
+
+class TestTrinityTrackRerun:
+    """A re-run of the completed trinity / map_transcripts steps regenerates the
+    genome-guided output too, not only the declared de novo one: run_trinity skips
+    a mode whose FASTA exists and the mapper reuses a per-set BAM that passes
+    quickcheck, so the driver must clear both before re-running."""
+
+    @staticmethod
+    def _stub_tools(monkeypatch, wd, ran):
+        from eukan.assembly import minimap2, trinity
+
+        def fake_trinity(cmd, **kw):
+            prefix = cmd[cmd.index("--output") + 1]
+            ran.append(prefix)
+            name = "Trinity-GG.fasta" if prefix == "trinity-gg" else "Trinity.fasta"
+            (wd / f"{prefix}.{name}").write_text(">t\nACGT\n")
+
+        def fake_piped(cmd1, cmd2, **kw):
+            ran.append(cmd1[-1].rsplit("/", 1)[-1])  # the transcript FASTA mapped
+            (wd / cmd2[cmd2.index("-o") + 1]).write_text("bam")
+            return ""
+
+        monkeypatch.setattr(trinity, "run_cmd", fake_trinity)
+        monkeypatch.setattr(minimap2, "run_piped", fake_piped)
+        monkeypatch.setattr(minimap2, "run_cmd", lambda *a, **k: None)
+        monkeypatch.setattr(minimap2, "_write_unmapped_fasta", lambda u, o: o.write_text(">u\nA\n"))
+        monkeypatch.setattr(
+            minimap2, "_coordinate_sort_and_filter", lambda u, ob, w, n: (w / ob).write_text("bam"),
+        )
+        monkeypatch.setattr(minimap2, "_finalize_transcript_diagnostics", lambda c: None)
+        # A BAM from a completed run passes samtools quickcheck.
+        monkeypatch.setattr(minimap2, "_bam_is_complete", lambda b: b.exists() and b.stat().st_size > 0)
+
+    def test_forced_rerun_regenerates_both_tracks(self, tmp_path, monkeypatch):
+        ran: list[str] = []
+        self._stub_tools(monkeypatch, tmp_path, ran)
+        for name in ("genome.fa", "R1.fq", "R2.fq"):
+            (tmp_path / name).write_text("x\n")
+        cfg = AssemblyConfig(
+            genome=tmp_path / "genome.fa", work_dir=tmp_path, num_cpu=2,
+            left_reads=tmp_path / "R1.fq", right_reads=tmp_path / "R2.fq",
+        )
+        steps = [s for s in _steps_for() if s.name in ("trinity", "map_transcripts")]
+
+        run_simple_pipeline(ASSEMBLY, steps, cfg)
+        ran.clear()
+        # --run-trinity (which cascades to map_transcripts) on the completed run
+        run_simple_pipeline(
+            ASSEMBLY, steps, cfg, force_steps=[step_key(ASSEMBLY, s.name) for s in steps],
+        )
+        assert ran == [
+            "trinity-gg", "trinity-denovo", "trinity-denovo.fasta", "trinity-gg.fasta",
+        ]
