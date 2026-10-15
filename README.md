@@ -107,7 +107,7 @@ The typical workflow runs each subcommand from the same working directory. Each 
 ./eukan-docker assemble \
     -g genome.fasta \
     -l left_reads.fastq -r right_reads.fastq \
-    -S RF --kingdom protist
+    -S RF
 
 # 4. Annotate:  auto-discovers assembly outputs, repeat hints, and databases
 ./eukan-docker annotate -g genome.fasta -p proteins.fasta --kingdom protist
@@ -434,7 +434,7 @@ Output options:
 
 ### `eukan db-fetch`
 
-Download reference databases. Pfam is always fetched; the homology DB to pair it with is chosen by `--homology-db`.
+Download reference databases. Without `-d`, Pfam is always fetched; the homology DB to pair it with is chosen by `--homology-db`.
 
 ```
 Usage: eukan db-fetch [OPTIONS]
@@ -450,7 +450,7 @@ Pipeline parameters:
 ```
 
 Downloads and prepares:
-- `Pfam-A.hmm` — Pfam HMM profiles (decompressed and pressed for hmmscan). Always fetched.
+- `Pfam-A.hmm` — Pfam HMM profiles (decompressed and pressed for hmmscan). Always fetched without `-d`.
 - `uniprot_sprot.faa` — UniProt-SwissProt protein sequences (`--homology-db uniprot`, default).
 - `kofam_eukaryote.hmm` + `ko_list.tsv` — KOfam profiles and per-KO bit-score thresholds (`--homology-db kofam`). The fetcher downloads KofamKOALA's `profiles.tar.gz` and `ko_list.gz` from <https://www.genome.jp/ftp/db/kofam/>, filters profiles via the shipped `eukaryote.hal` list (~16k of ~27k KOs), concatenates them into a single HMM file, and presses it. `ko_list` is the per-KO metadata table used by `func-annot --homology-db kofam`; see the [`eukan func-annot`](#eukan-func-annot) section for the KofamKOALA citation.
 
