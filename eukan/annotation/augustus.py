@@ -13,7 +13,7 @@ import gffutils
 from Bio import SeqIO
 
 from eukan.annotation.training import build_training_set
-from eukan.exceptions import ToolEnvError
+from eukan.exceptions import ConfigurationError, ToolEnvError
 from eukan.gff import create_gff_db
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.artifacts import Artifact, find_or_warn
@@ -37,6 +37,11 @@ _MIN_FRACTION = 0.01  # 1% of total junctions
 
 # Splice site types that AUGUSTUS already allows by default — no need to add.
 _AUGUSTUS_BUILTIN_SPLICE = {"gtag", "gcag"}
+
+# Written into a species dir right after new_species.pl creates it. config.name
+# defaults to the genome stem, which can be the name of a stock AUGUSTUS species
+# (arabidopsis, human, fly, ...), so only a dir carrying this marker is replaced.
+_SPECIES_MARKER = ".created-by-eukan"
 
 
 def _splice_type_to_augustus(name: str) -> str | None:
@@ -170,9 +175,20 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
         log.info("[augustus] Species %s already trained, skipping to prediction.", config.name)
     else:
         if aug_species_dir.exists():
+            if not (aug_species_dir / _SPECIES_MARKER).exists():
+                raise ConfigurationError(
+                    f"AUGUSTUS species '{config.name}' already exists in "
+                    f"{aug_species_dir.parent} and was not created by eukan; "
+                    "refusing to replace it.",
+                    hint="The species name defaults to the genome file name. Train "
+                    "under another name by setting EUKAN_NAME=<name> (there is no "
+                    "command-line option for it) or by renaming the genome FASTA. "
+                    "Delete the directory only if an earlier eukan version created it.",
+                )
             shutil.rmtree(aug_species_dir)
 
         run_cmd(["new_species.pl", f"--species={config.name}"], cwd=sdir)
+        (aug_species_dir / _SPECIES_MARKER).touch()
 
         # Build training set and train
         build_training_set(config, evidence, sdir)

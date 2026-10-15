@@ -294,6 +294,82 @@ class TestGetSpliceSitesFlag:
 
 
 # ---------------------------------------------------------------------------
+# run_augustus: AUGUSTUS species directory ownership
+# ---------------------------------------------------------------------------
+
+
+class TestAugustusSpeciesDir:
+    """run_augustus replaces only a species dir that eukan created: the species name
+    defaults to the genome stem, which can be the name of a stock AUGUSTUS species."""
+
+    class _Stop(Exception):
+        """Raised by the stubbed training set to end run_augustus after species setup."""
+
+    def _setup(self, tmp_path, monkeypatch):
+        from eukan.annotation import augustus
+        from eukan.settings import PipelineConfig
+
+        config_path = tmp_path / "augustus_config"
+        (config_path / "extrinsic").mkdir(parents=True)
+        (config_path / "extrinsic" / "extrinsic.MPE.cfg").write_text("")
+        monkeypatch.setenv("AUGUSTUS_CONFIG_PATH", str(config_path))
+        species = config_path / "species" / "arabidopsis"
+        calls: list[str] = []
+
+        def fake_run_cmd(cmd, **kw):
+            calls.append(cmd[0])
+            if cmd[0] == "new_species.pl":
+                species.mkdir(parents=True)
+                (species / "arabidopsis_parameters.cfg").write_text("eukan\n")
+
+        def stop_training(*a, **k):
+            raise self._Stop
+
+        monkeypatch.setattr(augustus, "run_cmd", fake_run_cmd)
+        monkeypatch.setattr(augustus, "build_training_set", stop_training)
+
+        genome = tmp_path / "arabidopsis.fasta"  # the stem names a stock species
+        genome.write_text(">chr1\nACGT\n")
+        config = PipelineConfig(genome=genome, proteins=[genome], work_dir=tmp_path / "annotate")
+        evidence = (
+            config.work_dir / "genemark" / "genemark.gff3",
+            config.work_dir / "prot_align" / "prot.gff3",
+        )
+        return (lambda: augustus.run_augustus(config, *evidence)), species, calls
+
+    def test_stock_species_is_not_deleted(self, tmp_path, monkeypatch):
+        from eukan.exceptions import ConfigurationError
+
+        run, species, calls = self._setup(tmp_path, monkeypatch)
+        species.mkdir(parents=True)
+        (species / "arabidopsis_parameters.cfg").write_text("stock\n")
+
+        with pytest.raises(ConfigurationError, match="not created by eukan") as exc:
+            run()
+        assert "EUKAN_NAME" in (exc.value.hint or "")
+        assert (species / "arabidopsis_parameters.cfg").read_text() == "stock\n"
+        assert "new_species.pl" not in calls
+
+    def test_species_created_by_eukan_is_replaced(self, tmp_path, monkeypatch):
+        run, species, calls = self._setup(tmp_path, monkeypatch)
+        species.mkdir(parents=True)
+        (species / "arabidopsis_parameters.cfg").write_text("interrupted\n")
+        (species / ".created-by-eukan").touch()
+
+        with pytest.raises(self._Stop):
+            run()
+        assert calls == ["new_species.pl"]
+        assert (species / "arabidopsis_parameters.cfg").read_text() == "eukan\n"
+        assert (species / ".created-by-eukan").exists()
+
+    def test_new_species_is_marked(self, tmp_path, monkeypatch):
+        run, species, _ = self._setup(tmp_path, monkeypatch)
+        with pytest.raises(self._Stop):
+            run()
+        assert (species / ".created-by-eukan").exists()
+
+
+# ---------------------------------------------------------------------------
 # _analyze_splice_sites
 # ---------------------------------------------------------------------------
 
