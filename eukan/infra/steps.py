@@ -159,7 +159,9 @@ def pipeline_step(
             depends on also makes it stale on resume.
 
     On __enter__: marks step as running, writes sentinel, saves manifest.
-    On __exit__: marks step as completed/failed, removes sentinel, checksums output.
+    On __exit__: marks step as completed/failed, checksums output, removes
+    sentinel. An interrupted step (KeyboardInterrupt, SystemExit) is marked
+    failed but keeps its sentinel, so the next run cleans it up and re-runs it.
     """
     record = manifest.steps.get(step_name, StepRecord(name=step_name))
     record.status = StepStatus.running
@@ -172,6 +174,7 @@ def pipeline_step(
     (sdir / SENTINEL).write_text(f"started: {record.started_at}\n")
     save_manifest(work_dir, manifest)
 
+    interrupted = False
     log.info("[%s] Running...", step_name)
     try:
         yield record
@@ -189,16 +192,18 @@ def pipeline_step(
 
         log.info("[%s] Done (%.1fs)", step_name, record.duration_seconds or 0)
 
-    except Exception as e:
+    except BaseException as e:
+        interrupted = not isinstance(e, Exception)
         record.status = StepStatus.failed
         record.finished_at = _now()
-        record.error = str(e)
+        record.error = "interrupted" if interrupted else str(e)
         _compute_duration(record)
-        log.error("[%s] Failed: %s", step_name, e)
+        log.error("[%s] Failed: %s", step_name, record.error)
         raise
 
     finally:
-        (sdir / SENTINEL).unlink(missing_ok=True)
+        if not interrupted:
+            (sdir / SENTINEL).unlink(missing_ok=True)
         # Steps that write into the shared work_dir (assembly, repeats) never put
         # anything in their per-step dir, leaving a confusing empty dir behind once
         # the sentinel is gone. Remove it when empty; steps that do use it for

@@ -1,6 +1,8 @@
 """Tests for the run manifest data model and step lifecycle."""
 
 
+import pytest
+
 from eukan.infra.manifest import (
     RunManifest,
     StepRecord,
@@ -88,6 +90,21 @@ class TestPipelineStepContextManager:
         assert not (tmp_path / "genemark" / SENTINEL).exists()
         assert manifest.steps["genemark"].status == StepStatus.failed
         assert "tool crashed" in manifest.steps["genemark"].error
+
+    def test_interrupt_keeps_sentinel(self, tmp_path):
+        """Ctrl-C mid-step must not leave the step "running" with its sentinel
+        gone: the sentinel stays so the next run cleans up and re-runs it."""
+        manifest = RunManifest()
+
+        with pytest.raises(KeyboardInterrupt):
+            with pipeline_step(tmp_path, manifest, "genemark"):
+                (tmp_path / "genemark" / "partial.gtf").write_text("half")
+                raise KeyboardInterrupt
+
+        assert is_step_interrupted(tmp_path, "genemark")
+        record = load_manifest(tmp_path).steps["genemark"]
+        assert record.status == StepStatus.failed
+        assert record.error == "interrupted"
 
 
 class TestIsStepComplete:
