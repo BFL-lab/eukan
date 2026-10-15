@@ -944,6 +944,42 @@ class TestAnnotationResume:
         assert fake.run() == ["augustus"]
 
 
+class TestAnnotationInputFingerprints:
+    """Each annotation step fingerprints the files it reads, so one that changed
+    since the step completed re-runs it, and the re-run cascades on through the
+    steps whose inputs it rewrites."""
+
+    def test_rerun_genemark_reruns_its_consumers(self, tmp_path, monkeypatch):
+        fake = _FakeAnnotation(monkeypatch, tmp_path)
+        fake.run()
+        fake.content["genemark"] = _GFF3.replace("ID=g1", "ID=g2")
+        # SNAP reads the AUGUSTUS and alignment outputs, which came out unchanged;
+        # the consensus reads the GeneMark models as its transcript stand-in.
+        assert fake.run("genemark") == [
+            "genemark", "prot_align", "augustus", "consensus_models",
+        ]
+        assert fake.run() == []
+
+    def test_unchanged_genemark_output_reruns_nothing_else(self, tmp_path, monkeypatch):
+        fake = _FakeAnnotation(monkeypatch, tmp_path)
+        fake.run()
+        assert fake.run("genemark") == ["genemark"]
+
+    def test_edited_proteins_rerun_the_alignment(self, tmp_path, monkeypatch):
+        fake = _FakeAnnotation(monkeypatch, tmp_path)
+        fake.run()
+        fake.proteins.write_text(">p\nMKV\n")
+        assert fake.run() == ["prot_align"]
+
+    def test_new_repeat_hints_rerun_augustus(self, tmp_path, monkeypatch):
+        from eukan.infra.artifacts import Artifact
+
+        fake = _FakeAnnotation(monkeypatch, tmp_path)
+        fake.run()
+        (tmp_path / Artifact.REPEATMASK_HINTS.value).write_text("hints\n")
+        assert fake.run() == ["augustus"]
+
+
 class TestTrinityTrackRerun:
     """A re-run of the completed trinity / map_transcripts steps regenerates the
     genome-guided output too, not only the declared de novo one: run_trinity skips

@@ -13,7 +13,7 @@ from eukan.annotation.genemark import run_genemark
 from eukan.annotation.orf import create_transcriptome_orf_db
 from eukan.annotation.snap import run_codingquarry, run_snap
 from eukan.gff.io import count_gff3_features, featuredb2gff3_file
-from eukan.infra.artifacts import masked_genome
+from eukan.infra.artifacts import Artifact, find, masked_genome
 from eukan.infra.logging import get_logger
 from eukan.infra.manifest import (
     ANNOTATION,
@@ -241,7 +241,11 @@ def _execute_steps(
     """Execute annotation steps in dependency phases.
 
     Each phase reads inputs from ``ev`` and returns the keys it produced. A
-    step whose manifest key is in *forced* re-runs from scratch.
+    step whose manifest key is in *forced* re-runs from scratch. Every step
+    declares the files it reads as its ``input_files``, so a step re-runs when
+    one changed since it completed — an upstream step's rewritten output, an
+    edited protein set, new RNA-seq hints — and that re-run cascades on through
+    the steps that read its output.
     Behavior matrix preserved verbatim from the previous nested form:
 
       - has_transcripts + is_fungus
@@ -269,17 +273,22 @@ def _phase_orf_and_genemark(
     forced: frozenset[str],
 ) -> dict[str, Path]:
     """Phase 1: ORF finding (transcripts only) + GeneMark, run concurrently."""
+    genome = config.genome
     if config.has_transcripts:
         assert config.transcripts_gff is not None and config.rnaseq_hints is not None
+        trans, hints = config.transcripts_gff, config.rnaseq_hints
         results = _run_concurrent_steps(config, manifest, [
-            ("orf_finder", find_orfs, (config.transcripts_gff,), {}),
-            ("genemark", run_genemark, (config.rnaseq_hints,), {}),
+            ("orf_finder", find_orfs, (trans,), {"input_files": [genome, trans]}),
+            ("genemark", run_genemark, (hints,), {"input_files": [genome, hints]}),
         ], forced)
         ev = {**ev, "transcriptORFs": results["orf_finder"], "genemark": results["genemark"]}
     else:
         ev = {
             **ev,
-            "genemark": _run_step(config, manifest, "genemark", run_genemark, forced=forced),
+            "genemark": _run_step(
+                config, manifest, "genemark", run_genemark,
+                input_files=[genome], forced=forced,
+            ),
         }
     _log_prediction_count("GeneMark", ev["genemark"])
     return ev
@@ -291,13 +300,19 @@ def _phase_protein_alignment(
 ) -> dict[str, Path]:
     """Phase 2: spliced protein alignment via spaln (intron-hinted) or gth."""
     prot_step = "prot_align_ssp" if config.spaln_ssp else "prot_align"
+    # The GeneMark models pick spaln or gth and, without intron hints, stand in for them.
+    inputs = [config.genome, *config.proteins, ev["genemark"]]
     spaln_extra: tuple = ()
     if config.has_transcripts:
         intron_hints = config.work_dir / "genemark" / "introns.gff"
         spaln_extra = (intron_hints if intron_hints.exists() else None,)
+        inputs.append(intron_hints)
+    if config.spaln_ssp and config.transcripts_fasta:
+        inputs.append(config.transcripts_fasta)  # --spsp trains spaln on the transcripts
     spaln_path = _run_step(
         config, manifest, prot_step, align_proteins,
-        ev["genemark"], config.proteins, *spaln_extra, forced=forced,
+        ev["genemark"], config.proteins, *spaln_extra,
+        input_files=inputs, forced=forced,
     )
     _log_prediction_count("spaln", spaln_path)
     return {**ev, "spaln": spaln_path}
@@ -308,10 +323,22 @@ def _phase_augustus(
     forced: frozenset[str],
 ) -> dict[str, Path]:
     """Phase 3: AUGUSTUS training and prediction."""
-    aug_extra: tuple = (ev["transcriptORFs"],) if config.has_transcripts else ()
+    evidence: tuple[Path, ...] = (ev["genemark"], ev["spaln"])
+    if config.has_transcripts:
+        evidence += (ev["transcriptORFs"],)
+    # Besides its evidence, AUGUSTUS reads the hint files: the protein hints beside
+    # the alignment, the RNA-seq hints, and the RepeatMasker hints and splice-site
+    # summary when another pipeline left them.
+    inputs = [config.genome, *evidence, ev["spaln"].parent / "hints_protein.gff"]
+    if config.rnaseq_hints:
+        inputs.append(config.rnaseq_hints)
+    for artifact in (Artifact.REPEATMASK_HINTS, Artifact.SPLICE_SUMMARY):
+        found = find(config.work_dir, artifact)
+        if found is not None:
+            inputs.append(found)
     aug_path = _run_step(
-        config, manifest, "augustus", run_augustus,
-        ev["genemark"], ev["spaln"], *aug_extra, forced=forced,
+        config, manifest, "augustus", run_augustus, *evidence,
+        input_files=inputs, forced=forced,
     )
     _log_prediction_count("AUGUSTUS", aug_path)
     return {**ev, "augustus": aug_path}
@@ -324,26 +351,33 @@ def _phase_snap_codingquarry(
     """Phase 4: SNAP, plus CodingQuarry for fungus/protist; skipped for has_t & non-fungus."""
     has_t = config.has_transcripts
 
+    genome = config.genome
     if has_t and config.is_fungus:
         assert config.transcripts_gff is not None
+        snap_ev: tuple[Path, ...] = (ev["augustus"], ev["spaln"], ev["transcriptORFs"])
+        cq_ev = config.transcripts_gff
         results = _run_concurrent_steps(config, manifest, [
-            ("snap", run_snap, (ev["augustus"], ev["spaln"], ev["transcriptORFs"]), {}),
-            ("codingquarry", run_codingquarry, (config.transcripts_gff,), {}),
+            ("snap", run_snap, snap_ev, {"input_files": [genome, *snap_ev]}),
+            ("codingquarry", run_codingquarry, (cq_ev,), {"input_files": [genome, cq_ev]}),
         ], forced)
         ev = {**ev, "snap": results["snap"], "codingquarry": results["codingquarry"]}
         _log_prediction_count("SNAP", ev["snap"])
         _log_prediction_count("CodingQuarry", ev["codingquarry"])
     elif not has_t and (config.is_fungus or config.is_protist):
+        snap_ev = (ev["augustus"], ev["spaln"])
+        cq_ev = ev["augustus"]
         results = _run_concurrent_steps(config, manifest, [
-            ("snap", run_snap, (ev["augustus"], ev["spaln"]), {}),
-            ("codingquarry", run_codingquarry, (ev["augustus"],), {}),
+            ("snap", run_snap, snap_ev, {"input_files": [genome, *snap_ev]}),
+            ("codingquarry", run_codingquarry, (cq_ev,), {"input_files": [genome, cq_ev]}),
         ], forced)
         ev = {**ev, "snap": results["snap"], "codingquarry": results["codingquarry"]}
         _log_prediction_count("SNAP", ev["snap"])
         _log_prediction_count("CodingQuarry", ev["codingquarry"])
     elif not has_t:
+        snap_ev = (ev["augustus"], ev["spaln"])
         snap_path = _run_step(
-            config, manifest, "snap", run_snap, ev["augustus"], ev["spaln"], forced=forced,
+            config, manifest, "snap", run_snap, *snap_ev,
+            input_files=[genome, *snap_ev], forced=forced,
         )
         ev = {**ev, "snap": snap_path}
         _log_prediction_count("SNAP", snap_path)
@@ -385,8 +419,14 @@ def _phase_consensus(
         # transcript_alignments input the consensus engine expects.
         transcripts = ev["genemark"]
 
+    # The consensus also patches in the transcript ORFs, whenever orf_finder left them.
+    inputs = [
+        config.genome, *consensus_args, config.work_dir / "orf_finder" / "transcript_orfs.gff3",
+    ]
+    if transcripts is not None:
+        inputs.append(transcripts)
     return _run_step(
         config, manifest, "consensus_models", build_consensus_models,
         *consensus_args, transcripts=transcripts,
-        input_scalars=_consensus_scalars(config), forced=forced,
+        input_files=inputs, input_scalars=_consensus_scalars(config), forced=forced,
     )
