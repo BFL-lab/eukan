@@ -41,6 +41,17 @@ class TestCheckTool:
         assert result.found
         assert not result.env_ok
 
+    def test_non_utf8_version_output_is_ok(self, tmp_path):
+        """A working tool whose version banner holds a non-UTF-8 byte (Debian's
+        samtools prints a Latin-1 0xab) is not reported broken."""
+        script = tmp_path / "fakesamtools.sh"
+        script.write_text("printf 'samtools 1.21\\nbuilt in \\253BUILDPATH\\273\\n'\n")
+        tool = Tool("fakesamtools", "sh", ("sh", str(script)), ("test",))
+        result = check_tool(tool)
+        assert result.found
+        assert result.version_ok
+        assert result.version_output == "samtools 1.21"
+
     def test_direct_sigill_detected(self):
         """A binary killed by SIGILL should be flagged as broken."""
         tool = Tool(

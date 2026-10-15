@@ -97,6 +97,9 @@ def check_tool(tool: Tool) -> CheckResult:
             tool.version_cmd,
             capture_output=True,
             text=True,
+            # Version banners can carry non-UTF-8 bytes (Debian's samtools
+            # prints a Latin-1 byte); a strict decode would report it broken.
+            errors="replace",
             timeout=10,
             stdin=subprocess.DEVNULL,
             env=subprocess_env(),
