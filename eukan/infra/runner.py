@@ -275,12 +275,15 @@ def run_piped(
     if p2.returncode != 0:
         stderr_text = stderr.decode(errors="replace")
         # Fold in the producer's fate so a crashed/OOM-killed producer feeding
-        # an empty stream isn't masked by the consumer's "no input" error.
-        if p1.returncode not in (0, None):
+        # an empty stream isn't masked by the consumer's "no input" error. Its
+        # exit line goes after its stderr, so the kept tail of the snippet still
+        # shows it. A producer killed by SIGPIPE only saw the consumer stop
+        # reading: its stderr would just push the consumer's error out.
+        if p1.returncode not in (0, None, -13, 141):
             stderr_text = (
-                f"{_tool_name(cmd1)} (producer) exited {p1.returncode}: "
-                f"{producer_err.strip()}\n{stderr_text}"
-            )
+                f"{producer_err.strip()}\n"
+                f"{_tool_name(cmd1)} (producer) exited {p1.returncode}\n{stderr_text}"
+            ).lstrip()
         raise ExternalToolError(
             f"{_tool_name(cmd2)} failed (exit {p2.returncode})",
             tool=_tool_name(cmd2),

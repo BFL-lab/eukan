@@ -217,6 +217,9 @@ class TestRunCmdResourceCleanup:
 
 
 class TestRunPiped:
+    # A chatty producer: 40 progress lines on stderr, well over the 500 chars kept.
+    _CHATTY = "for i in $(seq 40); do echo '[M::worker] mapped 500000' >&2; done"
+
     def test_missing_first_command_raises_missing_tool_error(self, tmp_path):
         with pytest.raises(MissingToolError) as exc_info:
             run_piped(["definitely-not-a-real-binary-xyz"], ["cat"], cwd=tmp_path)
@@ -245,6 +248,31 @@ class TestRunPiped:
                 cwd=tmp_path,
             )
         assert "exited 9" in exc_info.value.stderr_snippet
+
+    def test_consumer_error_not_buried_by_sigpipe_producer(self, tmp_path):
+        # The consumer stops reading and fails, so the producer dies of SIGPIPE.
+        # Its stderr says nothing about the failure and must not push the
+        # consumer's error out of the snippet.
+        with pytest.raises(ExternalToolError) as exc_info:
+            run_piped(
+                ["bash", "-c", f"{self._CHATTY}; yes ACGT"],
+                ["bash", "-c", "head -c 100000 >/dev/null; echo 'No space left on device' >&2; exit 1"],
+                cwd=tmp_path,
+            )
+        assert "No space left on device" in exc_info.value.stderr_snippet
+        assert "[M::worker]" not in exc_info.value.stderr_snippet
+
+    def test_failed_producer_exit_survives_its_chatty_stderr(self, tmp_path):
+        # A producer that really failed (not SIGPIPE) stays visible next to the
+        # consumer's error in the kept tail of the snippet.
+        with pytest.raises(ExternalToolError) as exc_info:
+            run_piped(
+                ["bash", "-c", f"{self._CHATTY}; exit 9"],
+                ["bash", "-c", "cat >/dev/null; echo 'truncated file' >&2; exit 1"],
+                cwd=tmp_path,
+            )
+        assert "exited 9" in exc_info.value.stderr_snippet
+        assert "truncated file" in exc_info.value.stderr_snippet
 
     def test_chatty_producer_stderr_does_not_deadlock(self, tmp_path):
         # >64 KB on the producer's stderr would deadlock an unread PIPE; the

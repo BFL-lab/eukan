@@ -11,6 +11,9 @@ from click.testing import CliRunner
 from eukan.cli._framework import CONTEXT_SETTINGS, EukanGroup, _format_disk_full
 from eukan.exceptions import ExternalToolError
 
+# What a mapper prints before its real error: well over the 500 stderr chars kept.
+_PROGRESS = "[M::worker_pipeline::12.345*3.21] mapped 500000 sequences\n" * 40
+
 
 @pytest.fixture
 def app_factory():
@@ -73,6 +76,15 @@ class TestFormatDiskFullUnit:
         )
         assert _format_disk_full(exc) is not None
 
+    def test_external_tool_enospc_after_progress_output_matches(self):
+        """The error line comes last, after the progress output; the snippet must
+        keep it for the detector to see it."""
+        exc = ExternalToolError(
+            "samtools failed (exit 1)", tool="samtools", returncode=1,
+            stderr_snippet=_PROGRESS + "samtools sort: No space left on device\n",
+        )
+        assert _format_disk_full(exc) is not None
+
     def test_external_tool_with_unrelated_stderr_does_not_match(self):
         exc = ExternalToolError(
             "STAR failed",
@@ -81,6 +93,23 @@ class TestFormatDiskFullUnit:
             stderr_snippet="segfault at 0xdeadbeef",
         )
         assert _format_disk_full(exc) is None
+
+
+class TestExternalToolErrorFormat:
+    def test_shows_message_and_stderr_tail(self):
+        """A wrapper's explanation (bam_utils' sort re-wrap) and the error at the end
+        of a chatty stderr both reach the user; a generic message is not repeated."""
+        exc = ExternalToolError(
+            "samtools sort failed writing the coordinate-sorted BAM",
+            tool="samtools", returncode=1,
+            stderr_snippet=_PROGRESS + 'samtools sort: failed writing to "o.bam": Illegal seek\n',
+        )
+        details = "\n".join(exc.format_for_cli()[1])
+        assert "samtools sort failed writing the coordinate-sorted BAM" in details
+        assert "Illegal seek" in details
+
+        generic = ExternalToolError("samtools failed (exit 1)", tool="samtools", returncode=1)
+        assert "samtools failed (exit 1)" not in generic.format_for_cli()[1]
 
 
 class TestCliBoundary:

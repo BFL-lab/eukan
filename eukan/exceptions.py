@@ -118,10 +118,13 @@ class ExternalToolError(EukanError):
     """An external tool exited non-zero.
 
     Attributes:
+        message: What failed. Shown by the CLI unless it only restates the
+            generic ``"<tool> failed (exit N)"`` title.
         tool: Binary name (e.g. ``"gmes_petap.pl"``).
         returncode: Process exit code.
         cmd: Full command as a list of strings.
-        stderr_snippet: First 500 characters of stderr output.
+        stderr_snippet: Last 500 characters of stderr output (tools print
+            progress first and their error last).
         step: Pipeline step name, if known.
     """
 
@@ -136,10 +139,11 @@ class ExternalToolError(EukanError):
         step: str = "",
         **kwargs,
     ) -> None:
+        self.message = message
         self.tool = tool
         self.returncode = returncode
         self.cmd = cmd or []
-        self.stderr_snippet = stderr_snippet[:500]
+        self.stderr_snippet = stderr_snippet[-500:]
         self.step = step
         super().__init__(message, **kwargs)
 
@@ -150,11 +154,14 @@ class ExternalToolError(EukanError):
         return msg
 
     def format_for_cli(self) -> tuple[str, list[str]]:
-        title = f"Error: {self.tool} failed (exit {self.returncode})"
+        generic = f"{self.tool} failed (exit {self.returncode})"
+        title = f"Error: {generic}"
         details: list[str] = []
+        if self.message != generic:
+            details.append(self.message)
         if self.step:
             details.append(f"Step: {self.step}")
         if self.stderr_snippet:
-            details.append(f"stderr: {self.stderr_snippet[:300]}")
+            details.append(f"stderr: {self.stderr_snippet[-300:]}")
         details.append("Run with -v for full command and stderr output.")
         return title, details
