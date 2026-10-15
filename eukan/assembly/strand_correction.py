@@ -43,8 +43,14 @@ from collections import Counter
 from pathlib import Path
 
 from eukan.assembly.bam_reads import dinucleotide
-from eukan.assembly.sl_cut import _DENOVO_BAMS, _GENOME_BAM_SUFFIX, bam_to_transcript_gff3
-from eukan.assembly.tracks import mapped_transcript_stems
+from eukan.assembly.sl_cut import bam_to_transcript_gff3
+from eukan.assembly.tracks import (
+    GENOME_BAM_SUFFIX,
+    RAW_GFF3,
+    STRANDED_GFF3,
+    TRANSCRIPT_SETS,
+    mapped_transcript_stems,
+)
 from eukan.gff.transcripts import Transcript, read_transcripts, stitch, write_transcripts
 from eukan.infra.genome import ContigIndex, reverse_complement
 from eukan.infra.logging import get_logger
@@ -232,13 +238,13 @@ def run_strand_correction(config: AssemblyConfig) -> None:
 
     # 1. Always: each Trinity transcript->genome BAM -> gene>mRNA>exon GFF3 (the SL
     #    cut consumes these, replacing the conversion that used to live in run_sl_cut).
-    for bam_name in _DENOVO_BAMS:
+    for _, bam_name in TRANSCRIPT_SETS:
         bam = wd / bam_name
         if not bam.exists():
             continue
-        stem = bam_name[: -len(_GENOME_BAM_SUFFIX)]
-        n = bam_to_transcript_gff3(bam, wd / f"{stem}.genome.gff3", source=stem)
-        log.info("Converted %s -> %s.genome.gff3 (%d models).", bam.name, stem, n)
+        out = wd / f"{bam.stem}{RAW_GFF3}"  # <track>.genome.gff3
+        n = bam_to_transcript_gff3(bam, out, source=bam_name[: -len(GENOME_BAM_SUFFIX)])
+        log.info("Converted %s -> %s (%d models).", bam.name, out.name, n)
 
     # Clear any stranded models from a prior run before deciding whether to rewrite
     # them. When correction is now a no-op (stranded library, no --uniprot, or a
@@ -246,7 +252,7 @@ def run_strand_correction(config: AssemblyConfig) -> None:
     # shadow the fresh resolve_model_source() fallback in sl_cut and keep the
     # de-fused models out of combinr. The active path rewrites them below.
     for stem in mapped_transcript_stems():
-        (wd / f"{stem}.stranded.gff3").unlink(missing_ok=True)
+        (wd / f"{stem}{STRANDED_GFF3}").unlink(missing_ok=True)
 
     # 2. Gate: only for unstranded libraries with a protein DB supplied.
     if config.strand_specific is not None:
@@ -263,9 +269,9 @@ def run_strand_correction(config: AssemblyConfig) -> None:
     #    in step 1), correcting into a per-track ``<stem>.stranded.gff3``.
     sets: list[tuple[str, Path, Path]] = []
     for stem in mapped_transcript_stems():
-        raw = wd / f"{stem}.gff3"
+        raw = wd / f"{stem}{RAW_GFF3}"
         if raw.exists():
-            sets.append((stem, raw, wd / f"{stem}.stranded.gff3"))
+            sets.append((stem, raw, wd / f"{stem}{STRANDED_GFF3}"))
     if not sets:
         log.warning("No transcript models to strand-correct.")
         return

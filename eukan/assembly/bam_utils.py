@@ -1,14 +1,11 @@
-"""Shared BAM helpers and the mapped-transcript track definitions.
+"""Shared BAM helpers for the mapping steps.
 
-Aligner-neutral utilities used by :mod:`eukan.assembly.minimap2`,
-:mod:`eukan.assembly.jaccard`, and :mod:`eukan.assembly.tracks`: the
-``(query FASTA, output BAM)`` track table that is the single source of truth for
-the mapped-transcript stems, the jaccard-sibling query resolver, a
-quickcheck-based BAM resume guard, an unmapped-record extractor, a FASTA record
-counter, and the coordinate-sort/filter recipe with its full-disk error
-translation. Living here
-(rather than in an aligner module) keeps them importable without pulling in the
-aligner and avoids an import cycle with ``tracks``.
+Aligner-neutral utilities used by :mod:`eukan.assembly.minimap2` and
+:mod:`eukan.assembly.jaccard`: a quickcheck-based BAM resume guard, an
+unmapped-record extractor, a FASTA record counter, and the coordinate-sort/filter
+recipe with its full-disk error translation. Living here (rather than in an
+aligner module) keeps them importable without pulling in the aligner. The
+mapped-transcript track table lives in :mod:`eukan.assembly.tracks`.
 """
 
 from __future__ import annotations
@@ -18,6 +15,7 @@ from pathlib import Path
 
 import pysam
 
+from eukan.assembly.tracks import TRANSCRIPT_SETS, resolve_query
 from eukan.exceptions import ExternalToolError
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_piped
@@ -34,19 +32,10 @@ _SORT_DISK_HEADROOM = 2
 # message instead of letting the user chase a phantom seek bug.
 _DISK_FULL_MARKERS = ("illegal seek", "no space", "failed writing", "write failed")
 
-# ---------------------------------------------------------------------------
-# Transcript -> genome mapping tracks (consumed by minimap2.map_transcripts_*)
-# ---------------------------------------------------------------------------
-# Trinity transcripts are mapped to the genome SPLICED (minimap2 -x splice:hq).
-# Both Trinity modes emit transcript-coordinate FASTAs (genome-guided only
-# clusters reads per locus), so both are mapped here. These (query FASTA, output
-# BAM) pairs and the jaccard-sibling resolver are the single source of truth for
-# the mapped-transcript stems (see :mod:`eukan.assembly.tracks`).
-_TRANSCRIPT_SETS: tuple[tuple[str, str], ...] = (
-    ("trinity-denovo.fasta", "trinity-denovo.genome.bam"),
-    ("trinity-gg.fasta", "trinity-gg.genome.bam"),
-)
-_GENOME_BAM_SUFFIX = ".genome.bam"
+# The old spellings of tracks.TRANSCRIPT_SETS / tracks.resolve_query, still
+# imported from here by assembly/pipeline.py.
+_TRANSCRIPT_SETS = TRANSCRIPT_SETS
+_resolve_query = resolve_query
 
 
 def _is_gzipped(path: Path) -> bool:
@@ -56,17 +45,6 @@ def _is_gzipped(path: Path) -> bool:
             return f.read(2) == b"\x1f\x8b"
     except OSError:
         return False
-
-
-def _resolve_query(wd: Path, query_name: str) -> Path:
-    """The transcript FASTA to map: the jaccard-clipped sibling if it exists.
-
-    The jaccard step (``assembly/jaccard.py``) rewrites each de novo / genome-
-    guided FASTA into a ``<stem>.jaccard.fasta``; prefer it so fused contigs are
-    split before consolidation. Falls back to the original when clipping is off.
-    """
-    clipped = wd / query_name.replace(".fasta", ".jaccard.fasta")
-    return clipped if clipped.exists() and clipped.stat().st_size > 0 else wd / query_name
 
 
 def _bam_is_complete(path: Path) -> bool:

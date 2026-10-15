@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from eukan.assembly.tracks import CUT_GFF3, mapped_transcript_stems
 from eukan.gff.transcripts import Transcript, read_transcripts, stitch
 from eukan.infra.artifacts import Artifact
 from eukan.infra.genome import ContigIndex
@@ -35,10 +36,7 @@ log = get_logger(__name__)
 # Trinity track (de novo + genome-guided). Named generically (`.cut.gff3`) because
 # the file is a pass-through copy of the max-intron-split models when no SL signal
 # is present, so it is not always SL-cut.
-_CUT_MODELS = (
-    "trinity-denovo.genome.cut.gff3",
-    "trinity-gg.genome.cut.gff3",
-)
+_CUT_MODELS = tuple(f"{stem}{CUT_GFF3}" for stem in mapped_transcript_stems())
 # Source token written into nr_transcripts.gff3; the consensus weights.txt picks
 # this up as the TRANSCRIPT evidence source (eukan/annotation/evidence.py::_first_source_token).
 _SOURCE = "combinr-assembly"

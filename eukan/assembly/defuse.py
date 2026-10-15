@@ -37,7 +37,7 @@ from eukan.assembly.strand_correction import (
     _coding_strand,
     _resolve_diamond_db,
 )
-from eukan.assembly.tracks import mapped_transcript_stems
+from eukan.assembly.tracks import DEFUSE_GFF3, RAW_GFF3, STRANDED_GFF3, mapped_transcript_stems
 from eukan.gff.transcripts import Transcript, read_transcripts, split_at, stitch, write_transcripts
 from eukan.infra.genome import ContigIndex
 from eukan.infra.logging import get_logger
@@ -244,11 +244,11 @@ def run_defuse(config: AssemblyConfig) -> None:
     # else the raw genome GFF3 (do NOT read our own .defuse.gff3 output).
     sets: list[tuple[str, Path, Path]] = []
     for stem in mapped_transcript_stems():
-        src = wd / f"{stem}.stranded.gff3"
+        src = wd / f"{stem}{STRANDED_GFF3}"
         if not src.exists():
-            src = wd / f"{stem}.gff3"
+            src = wd / f"{stem}{RAW_GFF3}"
         if src.exists():
-            sets.append((stem, src, wd / f"{stem}.defuse.gff3"))
+            sets.append((stem, src, wd / f"{stem}{DEFUSE_GFF3}"))
     if not sets:
         log.warning("No transcript models to de-fuse.")
         return

@@ -25,7 +25,7 @@ import pysam
 
 from eukan.assembly.bam_reads import REF_CONSUMING
 from eukan.assembly.sl_acceptors import AcceptorSite, load_sl_acceptors
-from eukan.assembly.tracks import mapped_transcript_stems
+from eukan.assembly.tracks import CUT_GFF3, MAXINTRON_GFF3, TRANSCRIPT_SETS, mapped_transcript_stems
 from eukan.gff.transcripts import Transcript, iter_transcripts, split_at, write_transcript
 from eukan.infra.artifacts import Artifact
 from eukan.infra.logging import get_logger
@@ -36,8 +36,9 @@ log = get_logger(__name__)
 # Ref-consuming CIGAR ops that stay within one exon block (N splits exons).
 _EXON_REF = REF_CONSUMING - {pysam.CREF_SKIP}
 
-_DENOVO_BAMS = ("trinity-denovo.genome.bam", "trinity-gg.genome.bam")
-_GENOME_BAM_SUFFIX = ".genome.bam"
+# The track BAMs (tracks.TRANSCRIPT_SETS), still imported from here by
+# assembly/pipeline.py.
+_DENOVO_BAMS = tuple(bam for _, bam in TRANSCRIPT_SETS)
 
 
 def _alignment_exons(read: pysam.AlignedSegment) -> list[tuple[int, int]]:
@@ -218,10 +219,10 @@ def run_sl_cut(config: AssemblyConfig) -> None:
     min_segment = config.min_sl_fragment
 
     for stem in mapped_transcript_stems():
-        src = wd / f"{stem}.maxintron.gff3"
+        src = wd / f"{stem}{MAXINTRON_GFF3}"
         if not src.exists():
             continue
-        out = wd / f"{stem}.cut.gff3"
+        out = wd / f"{stem}{CUT_GFF3}"
         n_cut = cut_models_at_sl(src, sites, out, min_segment=min_segment)
         # Only narrate when an SL signal actually drove a cut; a pass-through
         # (no acceptors) would just repeat sl_detect's no-op line per track.

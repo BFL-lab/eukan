@@ -10,8 +10,8 @@ from __future__ import annotations
 import logging
 
 from eukan.assembly import pipeline
-from eukan.assembly.bam_utils import _resolve_query
 from eukan.assembly.tracks import resolve_model_source
+from eukan.assembly.tracks import resolve_query as _resolve_query
 from eukan.settings import AssemblyConfig
 
 _JACCARD = ("trinity-denovo.jaccard.fasta", "trinity-gg.jaccard.fasta")

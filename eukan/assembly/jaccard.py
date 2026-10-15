@@ -48,6 +48,7 @@ import pysam
 from Bio import SeqIO
 
 from eukan.assembly.minimap2 import map_reads_to_transcripts
+from eukan.assembly.tracks import TRANSCRIPT_SETS, jaccard_output_name
 from eukan.gff import create_gff_db
 from eukan.gff.io import iter_assembled_sequences
 from eukan.gff.transcripts import Transcript, read_transcripts, split_at, stitch, write_transcripts
@@ -74,25 +75,12 @@ _REPOSITION_HALF_WIN = _TROUGH_WIN // 2  # coverage-reposition search radius (10
 # single transcript that simply has a thin patch).
 _MAX_ADAPTIVE_TROUGH = 0.30
 
-# The Trinity FASTAs the map_transcripts step consumes (both de novo and
-# genome-guided); the jaccard step rewrites each into a ``.jaccard.fasta`` sibling
-# that ``minimap2.map_transcripts_minimap2`` prefers when present.
-_TRANSCRIPT_FASTAS = (
-    "trinity-denovo.fasta",
-    "trinity-gg.fasta",
-)
-
 # DORMANT (StringTie path): the genome-guided StringTie GTF and the clipped sibling
 # the jaccard step writes for it. Not produced by the active Trinity pipeline, so
 # the run_jaccard StringTie branch and resolve_stringtie_models below are no-ops
 # unless the kept-but-unwired stringtie module is re-activated.
 _STRINGTIE_GTF = "stringtie.gtf"
 STRINGTIE_JACCARD_GFF3 = "stringtie.jaccard.gff3"
-
-
-def jaccard_output_name(fasta_name: str) -> str:
-    """The ``.jaccard.fasta`` name the jaccard step writes for *fasta_name*."""
-    return fasta_name.replace(".fasta", ".jaccard.fasta")
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +441,9 @@ def run_jaccard(config: AssemblyConfig) -> None:
         )
         return
 
-    for name in _TRANSCRIPT_FASTAS:
+    # Each track's Trinity FASTA is rewritten into a ``.jaccard.fasta`` sibling,
+    # which map_transcripts prefers when present (tracks.resolve_query).
+    for name, _ in TRANSCRIPT_SETS:
         src = wd / name
         if not src.exists() or src.stat().st_size == 0:
             continue

@@ -38,6 +38,7 @@ from eukan.assembly.sl_depletion import (
     _variants,
     is_adapter,
 )
+from eukan.assembly.tracks import GENOME_BAM_SUFFIX, TRANSCRIPT_SETS
 from eukan.gff.rows import iter_gff3_rows, parse_attrs
 from eukan.infra.artifacts import Artifact
 from eukan.infra.genome import reverse_complement
@@ -50,10 +51,6 @@ log = get_logger(__name__)
 # insertions (only when neither an override nor the read verdict supplies one).
 _CONSENSUS_LEN = 16
 _MIN_DENOVO_SUPPORT = 3
-
-# Trinity transcript→genome BAMs scanned for Source B (clips + insertions).
-_DENOVO_BAMS = ("trinity-denovo.genome.bam", "trinity-gg.genome.bam")
-_GENOME_BAM_SUFFIX = ".genome.bam"
 
 
 @dataclass(frozen=True)
@@ -297,7 +294,8 @@ def detect_sl_acceptors(config: AssemblyConfig) -> None:
     """Detect, consolidate, and persist SL trans-splice acceptor sites."""
     wd = config.work_dir
     read_bam = wd / config.aligner_bam
-    denovo_bams = [wd / b for b in _DENOVO_BAMS if (wd / b).exists()]
+    # Source B: the Trinity transcript→genome BAMs (clips + insertions).
+    denovo_bams = [wd / b for _, b in TRANSCRIPT_SETS if (wd / b).exists()]
     out = wd / Artifact.SL_ACCEPTORS.value
     adapters = _effective_adapters(config)
 
@@ -353,7 +351,7 @@ def detect_sl_acceptors(config: AssemblyConfig) -> None:
 
     _scan(read_bam, "reads", scan_insertions=False)
     for bam_path in denovo_bams:
-        _scan(bam_path, bam_path.name[: -len(_GENOME_BAM_SUFFIX)], scan_insertions=True)
+        _scan(bam_path, bam_path.name[: -len(GENOME_BAM_SUFFIX)], scan_insertions=True)
 
     sites = _consolidate(raw, window=config.sl_cluster_window)
     _write_acceptors(sites, out)

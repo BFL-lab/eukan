@@ -30,11 +30,8 @@ import pysam
 
 from eukan.assembly.align_hints import generate_rnaseq_hints, sj_table_from_bam
 from eukan.assembly.bam_utils import (
-    _GENOME_BAM_SUFFIX,
-    _TRANSCRIPT_SETS,
     _bam_is_complete,
     _coordinate_sort_and_filter,
-    _resolve_query,
     _write_unmapped_fasta,
     count_fasta_records,
 )
@@ -44,6 +41,7 @@ from eukan.assembly.polya import (
     stats_to_dict,
     write_polya_section,
 )
+from eukan.assembly.tracks import GENOME_BAM_SUFFIX, TRANSCRIPT_SETS, resolve_query
 from eukan.infra.artifacts import Artifact
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_piped
@@ -245,7 +243,7 @@ def _map_one_transcript_set(
     cmd += [str(config.genome), str(query)]
     run_piped(cmd, ["samtools", "view", "-b", "-o", unsorted.name, "-"], cwd=wd)
 
-    stem = out_bam[: -len(_GENOME_BAM_SUFFIX)]
+    stem = out_bam[: -len(GENOME_BAM_SUFFIX)]
     _write_unmapped_fasta(unsorted, wd / f"{stem}.unmapped_transcripts.fasta")
     _coordinate_sort_and_filter(unsorted, out_bam, wd, config.num_cpu)
     run_cmd(["samtools", "index", out_bam], cwd=wd)
@@ -264,8 +262,8 @@ def map_transcripts_minimap2(config: AssemblyConfig) -> None:
     wd = config.work_dir
     sets = [
         (query, out_bam)
-        for query_name, out_bam in _TRANSCRIPT_SETS
-        if (query := _resolve_query(wd, query_name)).exists() and query.stat().st_size > 0
+        for query_name, out_bam in TRANSCRIPT_SETS
+        if (query := resolve_query(wd, query_name)).exists() and query.stat().st_size > 0
     ]
     if not sets:
         log.warning("No assembled transcripts found to map; skipping.")
@@ -297,11 +295,11 @@ def _finalize_transcript_diagnostics(config: AssemblyConfig) -> None:
     # bare section name let the genome-guided track replace the de novo one.
     transcripts: dict[str, dict] = {}
     unmapped_transcripts: dict[str, dict] = {}
-    for query_name, out_bam in _TRANSCRIPT_SETS:
+    for query_name, out_bam in TRANSCRIPT_SETS:
         genome_bam = wd / out_bam
         if not genome_bam.exists():
             continue
-        stem = out_bam[: -len(_GENOME_BAM_SUFFIX)]
+        stem = out_bam[: -len(GENOME_BAM_SUFFIX)]
         unmapped = wd / f"{stem}.unmapped_transcripts.fasta"
 
         # The unmapped FASTA is written only when the mapping actually runs; on a
@@ -310,7 +308,7 @@ def _finalize_transcript_diagnostics(config: AssemblyConfig) -> None:
         # claims "everything mapped" when the count is simply unavailable.
         if unmapped.exists():
             n_unmapped, n_unmapped_polya = scan_fasta_polya(unmapped)
-            query = _resolve_query(wd, query_name)
+            query = resolve_query(wd, query_name)
             n_input = count_fasta_records(query) if query.exists() else 0
             pct = 100.0 * n_unmapped / n_input if n_input else 0.0
             log.info(

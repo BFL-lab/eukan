@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from eukan.assembly.tracks import mapped_transcript_stems, resolve_model_source
+from eukan.assembly.tracks import MAXINTRON_GFF3, mapped_transcript_stems, resolve_model_source
 from eukan.gff.transcripts import Transcript, iter_transcripts, split_at, write_transcript
 from eukan.infra.logging import get_logger
 from eukan.settings import AssemblyConfig
@@ -129,7 +129,7 @@ def run_max_intron_split(config: AssemblyConfig) -> None:
         src = resolve_model_source(wd, stem)
         if src is None:
             continue
-        out = wd / f"{stem}.maxintron.gff3"
+        out = wd / f"{stem}{MAXINTRON_GFF3}"
         n_cut, n_long = cut_models_at_max_intron(
             src, out, min_segment=min_segment, max_intron_len=config.max_intron_len,
         )
