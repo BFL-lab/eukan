@@ -2,11 +2,11 @@
 
 A strand-agnostic sanitization pass — independent of spliced-leader detection —
 that splits any transcript model carrying an intron longer than
-``max_intron_len`` into separate genes. It exists because the de novo **segemehl**
-transcript→genome path has no native intron bound (STAR/STARlong cap introns at
-mapping time via ``--alignIntronMax``), so a segemehl-mapped contig can bridge two
-distant loci across one implausibly long gap. Splitting that gap keeps the loci
-separate before consensus.
+``max_intron_len`` into separate genes. minimap2 is given the same bound at mapping
+time (``-G``), but the mapping steps are not re-run when ``-M`` changes on resume;
+this step is, so it is where the current limit is hard-imposed on the models. A
+contig left with an implausibly long gap would bridge two distant loci; splitting
+that gap keeps the loci separate before consensus.
 
 Runs before the genomic SL cut (:mod:`eukan.assembly.sl_cut`): for each mapped
 Trinity track it reads the latest model variant (defuse > stranded > raw, via
@@ -123,10 +123,10 @@ def run_max_intron_split(config: AssemblyConfig) -> None:
 
     Reads the latest model variant per track (defuse > stranded > raw) and writes
     one ``{stem}.maxintron.gff3`` per track that produced models. This is the single
-    place the ``max_intron_len`` limit is hard-imposed on transcript models (the de
-    novo segemehl path has no native intron bound); the resume fingerprint folds in
-    ``max_intron_len`` (see :mod:`eukan.assembly.pipeline`), so tightening ``-M``
-    re-runs this step and cascades to the SL cut and combinr.
+    place the ``max_intron_len`` limit is hard-imposed on transcript models (minimap2's
+    mapping-time ``-G`` bound is not re-applied when ``-M`` changes on resume); the
+    resume fingerprint folds in ``max_intron_len`` (see :mod:`eukan.assembly.pipeline`),
+    so tightening ``-M`` re-runs this step and cascades to the SL cut and combinr.
     """
     wd = config.work_dir
     min_segment = config.min_sl_fragment

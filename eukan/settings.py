@@ -325,7 +325,7 @@ class AssemblyConfig(_StepRunSettings):
     (both de novo and genome-guided), splitting two adjacent loci fused into one
     contig. On by default; a no-op on single-end reads (read-pair bridging is the
     clip signal). This replaces Trinity's own ``--jaccard_clip`` (the standalone
-    step is faster — STAR, not bowtie2 — and tunable via the ``jaccard_*`` knobs)."""
+    step is faster — minimap2, not bowtie2 — and tunable via the ``jaccard_*`` knobs)."""
     jaccard_greediness: float = 1.5
     """Coverage-adaptive slack for jaccard fusion-trough detection. At low read-pair
     depth the pseudocount keeps a real fusion junction's jaccard above the fixed

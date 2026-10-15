@@ -111,8 +111,10 @@ def _combinr_inputs(config: AssemblyConfig) -> list[Path]:
 # value re-runs the step even when its input files are byte-identical. ``-M`` is
 # enforced post-mapping (StringTie reads a bounded BAM; max_intron_split splits
 # models; combinr passes --max-intron), so tightening it must re-run exactly those
-# steps — but NOT the read/transcript mappers (segemehl ignores --max-intron
-# natively, so a scalar there would force a multi-hour re-map for an identical BAM).
+# steps — but NOT the read/transcript mappers (minimap2 also gets -M as -G, but a
+# scalar there would force a multi-hour re-map: those steps already re-impose a
+# tighter -M on the models, and recovering longer introns needs an explicit re-run
+# of the mapping/assembly steps, as -M's help says).
 
 
 def _max_intron_split_scalars(config: AssemblyConfig) -> list[str]:
@@ -200,10 +202,11 @@ def _steps_for() -> list[StepSpec]:
             inputs=_defuse_inputs, scalars=_defuse_scalars,
         ),
         # Max-intron split: strand-agnostic, SL-independent sanitization that breaks
-        # any model carrying an intron > -M into separate genes (the de novo segemehl
-        # path has no native intron bound). Always writes <track>.maxintron.gff3
-        # (copy-through when nothing is cut), so — like defuse — it declares an output
-        # + scalars for precise resume: a changed -M re-runs it (and cascades on).
+        # any model carrying an intron > -M into separate genes (minimap2 applies -M
+        # as -G only at mapping time, which a changed -M does not re-run). Always
+        # writes <track>.maxintron.gff3 (copy-through when nothing is cut), so — like
+        # defuse — it declares an output + scalars for precise resume: a changed -M
+        # re-runs it (and cascades on).
         StepSpec(
             "max_intron_split", run_max_intron_split,
             "trinity-denovo.genome.maxintron.gff3", "--run-max-intron-split",

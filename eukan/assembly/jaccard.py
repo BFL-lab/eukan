@@ -11,8 +11,8 @@ consolidation step (combinr) never sees an un-clipped fused contig.
 
 Algorithm (faithful to Trinity, see ``trinityrnaseq/util/support_scripts/``):
 
-1. Map paired reads to the transcript FASTA, ungapped (STAR ``EndToEnd`` with
-   introns disabled). One transcript == one BAM reference.
+1. Map paired reads to the transcript FASTA, ungapped (minimap2 ``-x sr``, the
+   non-spliced short-read preset). One transcript == one BAM reference.
 2. Extract proper-pair fragment spans ``(lend, rend)`` (insert 100-500 bp).
 3. Per-position jaccard over a sliding window ``W`` (two adjacent W-wide
    windows): ``(n_both + 1) / (n_single + n_both + 1)`` where ``n_both`` counts
@@ -334,7 +334,7 @@ def split_fasta_record(seq: str, clips: list[int], min_segment: int) -> list[str
 
 
 # ---------------------------------------------------------------------------
-# Read mapping (STAR EndToEnd, ungapped) + fragment extraction
+# Read mapping (minimap2 -x sr, ungapped) + fragment extraction
 # ---------------------------------------------------------------------------
 
 

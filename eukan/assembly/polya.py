@@ -3,8 +3,8 @@
 Standalone, SL-independent statistics on where poly-A tails surface in the
 assembly pipeline. Tools that align transcripts **pairwise** (gmap/blat) recommend
 trimming poly-A tails first, where an untrimmed tail forces terminal mismatches/insertions
-and degrades the alignment. eukan instead maps with STAR/segemehl in ``Local``
-(soft-clip) mode, so a poly-A tail simply *soft-clips* rather than degrading the
+and degrades the alignment. eukan instead maps with minimap2, which soft-clips
+unaligned ends, so a poly-A tail simply *soft-clips* rather than degrading the
 body alignment. This module quantifies that, so the choice can be revisited from
 data rather than assumed.
 
@@ -115,8 +115,8 @@ def characterize_polya_bam(
     """Own-pass poly-A characterization of *bam_path* (for the transcript BAM).
 
     Uses :func:`bam_diagnostic._extract_clips` (mRNA-oriented clips) over primary
-    alignments. ``min_mapq`` defaults to 0 so multi-mapping transcripts (segemehl
-    ``-H 1`` can assign low MAPQ) are still characterized.
+    alignments. ``min_mapq`` defaults to 0 so multi-mapping transcripts (minimap2
+    can assign them low MAPQ) are still characterized.
     """
     import pysam
 

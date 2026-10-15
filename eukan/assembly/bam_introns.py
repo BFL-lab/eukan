@@ -10,8 +10,9 @@ short introns (real splice junctions) and per-piece coverage are preserved.
 It is a deliberately narrow tool: it does not touch the shared read BAM that SL
 acceptor detection and the non-canonical diagnostic read (they must see the true
 alignments). The caller (:func:`eukan.assembly.stringtie.run_stringtie`) bounds a
-StringTie-only copy. STAR's BAM is already bounded by ``--alignIntronMax``, so only
-the segemehl path needs this.
+StringTie-only copy, and only for a segemehl BAM. minimap2, now the only aligner,
+bounds introns at mapping time (``-G``) and StringTie is dormant, so the active
+pipeline never calls this.
 """
 
 from __future__ import annotations
