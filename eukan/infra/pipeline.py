@@ -134,7 +134,7 @@ def run_simple_pipeline(
             A non-empty list narrows the active step set to just those
             keys *and* forces re-execution.
         skip: Optional predicate; steps matching it are dropped from
-            execution unless they were explicitly forced.
+            execution, forced or not (a forced step it drops is logged).
 
     Returns:
         The output path of the last executed step (or ``None`` if no
@@ -143,13 +143,19 @@ def run_simple_pipeline(
     manifest = get_or_create_manifest(config.manifest_dir, config)
     forced = set(force_steps or ())
 
-    if forced:
-        active = [s for s in steps if step_key(pipeline, s.name) in forced]
-    else:
-        # A missing/corrupt output of a completed step is detected per-step by
-        # run_orchestrated_step -> is_step_complete (which returns None and the
-        # step rebuilds), so no up-front validation pass is needed here.
-        active = [s for s in steps if not (skip and skip(s))]
+    # A missing/corrupt output of a completed step is detected per-step by
+    # run_orchestrated_step -> is_step_complete (which returns None and the
+    # step rebuilds), so no up-front validation pass is needed here.
+    active: list[StepSpec] = []
+    for s in steps:
+        key = step_key(pipeline, s.name)
+        if forced and key not in forced:
+            continue
+        if skip and skip(s):
+            if key in forced:
+                log.warning("[%s] skipped: disabled by configuration", key)
+            continue
+        active.append(s)
 
     save_manifest(config.manifest_dir, manifest)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from typing import ClassVar
 
@@ -15,7 +16,7 @@ from eukan.assembly.pipeline import (
     force_steps_from_run_flags as assembly_force_steps_from_run_flags,
 )
 from eukan.infra.manifest import ASSEMBLY, RunManifest, StepRecord, StepStatus, step_key
-from eukan.infra.pipeline import run_orchestrated_step, run_simple_pipeline
+from eukan.infra.pipeline import StepSpec, run_orchestrated_step, run_simple_pipeline
 from eukan.infra.steps import fingerprint_inputs
 from eukan.settings import AssemblyConfig
 
@@ -653,3 +654,22 @@ class TestTrinityTrackRerun:
         assert ran == [
             "trinity-gg", "trinity-denovo", "trinity-denovo.fasta", "trinity-gg.fasta",
         ]
+
+
+class TestSkipAppliesToForcedSteps:
+    """A step the config disables stays skipped when it is forced: ``-f`` and the
+    ``--run-X`` cascades name jaccard and defuse whatever --no-jaccard-clip,
+    --defuse and --uniprot say, and a forced defuse without --uniprot crashed."""
+
+    def test_forced_step_matching_skip_does_not_run(self, tmp_path, caplog):
+        ran: list[str] = []
+        steps = [StepSpec(n, lambda config, n=n: ran.append(n)) for n in ("a", "b", "c")]
+        cfg = AssemblyConfig(genome=tmp_path / "g.fa", work_dir=tmp_path, num_cpu=2)
+        with caplog.at_level(logging.WARNING, logger="eukan.infra.pipeline"):
+            run_simple_pipeline(
+                ASSEMBLY, steps, cfg,
+                force_steps=[step_key(ASSEMBLY, n) for n in ("a", "b", "c")],
+                skip=lambda s: s.name == "b",
+            )
+        assert ran == ["a", "c"]
+        assert "[assembly/b] skipped: disabled by configuration" in caplog.text
