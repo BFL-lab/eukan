@@ -20,17 +20,29 @@ import csv
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+import pysam
+
+from eukan.assembly.bam_diagnostic import (
+    TransSplicingCall,
+    compute_verdict,
+    diagnose_bam,
+    to_summary_dict,
+)
+from eukan.assembly.bam_reads import dinucleotide, walk_introns
+from eukan.assembly.polya import (
+    PolyAStats,
+    characterize_polya_bam,
+    has_section,
+    stats_to_dict,
+    write_polya_section,
+)
 from eukan.assembly.sl_depletion import is_adapter
 from eukan.infra.artifacts import Artifact
+from eukan.infra.genome import ContigIndex
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.infra.utils import concat_files
-
-if TYPE_CHECKING:
-    from eukan.assembly.bam_diagnostic import TransSplicingCall
-    from eukan.assembly.polya import PolyAStats
 
 log = get_logger(__name__)
 
@@ -93,11 +105,6 @@ def sj_table_from_bam(
     ``chrom, intron_start, intron_end, strand, motif, annotated, n_unique,
     n_multi, max_overhang``.
     """
-    import pysam
-
-    from eukan.assembly.bam_diagnostic import _dinucleotide, _walk_introns
-    from eukan.infra.genome import ContigIndex
-
     # (chrom, start, end) 0-based half-open intron -> [n_unique, n_multi]
     counts: dict[tuple[str, int, int], list[int]] = defaultdict(lambda: [0, 0])
     with pysam.AlignmentFile(str(bam), "rb") as af:
@@ -108,7 +115,7 @@ def sj_table_from_bam(
                 continue
             nh = read.get_tag("NH") if read.has_tag("NH") else 1
             slot = 0 if nh == 1 else 1
-            for chrom, start, end in _walk_introns(read):
+            for chrom, start, end in walk_introns(read):
                 ilen = end - start
                 if ilen < min_intron or (0 < max_intron < ilen):
                     continue
@@ -119,7 +126,7 @@ def sj_table_from_bam(
         for chrom, start, end in sorted(counts):
             n_unique, n_multi = counts[(chrom, start, end)]
             motif, strand = _motif_and_strand(
-                _dinucleotide(contigs, chrom, start, end)
+                dinucleotide(contigs, chrom, start, end)
             )
             # STAR SJ.out.tab is 1-based inclusive: col2 = start+1, col3 = end.
             f.write(
@@ -142,8 +149,6 @@ def analyze_splice_sites(sj_file: Path, genome: Path, wd: Path) -> None:
       col5 = motif (0=non-canonical, 1=GT/AG, 2=CT/AC, 3=GC/AG, ...)
       col7 = unique reads, col8 = multi-mapping reads
     """
-    from eukan.infra.genome import ContigIndex
-
     # Tally: splice_type → {"count": int, "unique_reads": int}
     tallies: dict[str, dict[str, int]] = defaultdict(
         lambda: {"count": 0, "unique_reads": 0}
@@ -238,18 +243,6 @@ def run_softclip_diagnostic(bam: Path, genome: Path, wd: Path) -> None:
     (read pre-processing for trans-splicing; ``--splice-permissive`` for
     non-canonical splice landscapes).
     """
-    from eukan.assembly.bam_diagnostic import (
-        compute_verdict,
-        diagnose_bam,
-        to_summary_dict,
-    )
-    from eukan.assembly.polya import (
-        characterize_polya_bam,
-        has_section,
-        stats_to_dict,
-        write_polya_section,
-    )
-
     summary_path = wd / Artifact.SOFTCLIP_DIAGNOSTIC.value
     if not bam.exists():
         return

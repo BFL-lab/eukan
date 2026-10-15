@@ -29,12 +29,7 @@ from pathlib import Path
 
 import pysam
 
-from eukan.assembly.bam_diagnostic import (
-    _CIGAR_M,
-    _CIGAR_REF_CONSUMING,
-    _CIGAR_SOFT_CLIP,
-    _iter_primary_alignments,
-)
+from eukan.assembly.bam_reads import QUERY_CONSUMING, REF_CONSUMING, iter_primary_alignments
 from eukan.assembly.sl_depletion import (
     _BUILTIN_ADAPTERS,
     _MAX_MISMATCHES,
@@ -50,10 +45,6 @@ from eukan.infra.logging import get_logger
 from eukan.settings import AssemblyConfig
 
 log = get_logger(__name__)
-
-# Insertion CIGAR op (bam_diagnostic only tracks soft-clips, so define it here).
-_CIGAR_INSERTION = 1
-_CIGAR_QUERY_CONSUMING = frozenset([_CIGAR_M, _CIGAR_INSERTION, _CIGAR_SOFT_CLIP, 7, 8])
 
 # Length of the anchored window used to derive an SL consensus from de novo
 # insertions (only when neither an override nor the read verdict supplies one).
@@ -114,10 +105,10 @@ def _iter_sl_ops(
     # orientation contradicts its end. (reference_end is 0-based exclusive, i.e. the
     # 1-based position of the last aligned base.)
     op0, len0 = cigar[0]
-    if op0 == _CIGAR_SOFT_CLIP and len0 >= min_clip_len:
+    if op0 == pysam.CSOFT_CLIP and len0 >= min_clip_len:
         yield ref_start + 1, "+", seq[:len0]
     op_last, len_last = cigar[-1]
-    if op_last == _CIGAR_SOFT_CLIP and len_last >= min_clip_len:
+    if op_last == pysam.CSOFT_CLIP and len_last >= min_clip_len:
         yield ref_end, "-", seq[-len_last:]
 
     if not scan_insertions:
@@ -126,7 +117,7 @@ def _iter_sl_ops(
     rpos = ref_start  # 0-based reference cursor
     last = len(cigar) - 1
     for idx, (op, length) in enumerate(cigar):
-        if op == _CIGAR_INSERTION:
+        if op == pysam.CINS:
             if 0 < idx < last and length >= min_ins_len:
                 ins = seq[qpos : qpos + length]
                 # The mature mRNA continues just past the leader: downstream is
@@ -137,9 +128,9 @@ def _iter_sl_ops(
                     yield rpos, "-", ins
             qpos += length
             continue
-        if op in _CIGAR_QUERY_CONSUMING:
+        if op in QUERY_CONSUMING:
             qpos += length
-        if op in _CIGAR_REF_CONSUMING:
+        if op in REF_CONSUMING:
             rpos += length
 
 
@@ -191,7 +182,7 @@ def _dominant_denovo_motif(
     counts: Counter[str] = Counter()
     for bam_path in bams:
         with pysam.AlignmentFile(str(bam_path), "rb") as bam:
-            for read in _iter_primary_alignments(bam, min_mapq=0):
+            for read in iter_primary_alignments(bam, min_mapq=0):
                 for _pos, _strand, bases in _iter_sl_ops(
                     read,
                     min_clip_len=_CONSENSUS_LEN,
@@ -338,7 +329,7 @@ def detect_sl_acceptors(config: AssemblyConfig) -> None:
         if not bam_path.exists():
             return
         with pysam.AlignmentFile(str(bam_path), "rb") as bam:
-            for read in _iter_primary_alignments(bam, min_mapq=0):
+            for read in iter_primary_alignments(bam, min_mapq=0):
                 chrom = read.reference_name
                 if chrom is None:
                     continue

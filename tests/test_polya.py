@@ -119,7 +119,7 @@ def test_characterize_polya_bam_forward_and_reverse(tmp_path):
         dict(query_name="t2", query_sequence="C" * 10 + "ACGT" * 5, flag=0,
              reference_id=0, reference_start=5, cigartuples=[(0, 10), (4, 20)]),
         # reverse read whose mRNA 3' tail is poly-A: stored RC -> LEADING 20S of T's;
-        # _extract_clips re-orients to a "3p" A-rich clip.
+        # extract_clips re-orients to a "3p" A-rich clip.
         dict(query_name="t3", query_sequence="T" * 20 + "G" * 10, flag=16,
              reference_id=0, reference_start=5, cigartuples=[(4, 20), (0, 10)]),
     ]

@@ -11,7 +11,7 @@ data rather than assumed.
 A poly-A tail sits at the mRNA 3' end, so it is an **A-rich ``3p`` soft-clip**; a
 5' poly-T (antisense poly-A) is a **T-rich ``5p`` clip**. The clip sequences fed in
 here are expected in mRNA 5'->3' orientation, exactly as
-:func:`eukan.assembly.bam_diagnostic._extract_clips` yields them.
+:func:`eukan.assembly.bam_reads.extract_clips` yields them.
 
 The output is a per-section ``polyA_diagnostic.json`` (read-BAM "reads"; per Trinity
 track, transcript-BAM "transcripts" and "unmapped_transcripts" tails) plus an INFO
@@ -24,6 +24,10 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pysam
+from Bio import SeqIO
+
+from eukan.assembly.bam_reads import extract_clips, iter_primary_alignments
 from eukan.infra.logging import get_logger
 
 log = get_logger(__name__)
@@ -41,7 +45,7 @@ def classify_clip(
 ) -> str | None:
     """``"polyA"`` for an A-rich 3' clip, ``"polyT"`` for a T-rich 5' clip, else ``None``.
 
-    *seq* must be in mRNA 5'->3' orientation (as ``_extract_clips`` yields): a poly-A
+    *seq* must be in mRNA 5'->3' orientation (as ``extract_clips`` yields): a poly-A
     tail is at the mRNA 3' end (``side == "3p"``) and reads as A's; a 5' poly-T
     (antisense poly-A) is at ``side == "5p"`` and reads as T's. Shorter than
     *min_len* or below *min_frac* homopolymer content → not a poly-tail.
@@ -114,22 +118,16 @@ def characterize_polya_bam(
 ) -> PolyAStats:
     """Own-pass poly-A characterization of *bam_path* (for the transcript BAM).
 
-    Uses :func:`bam_diagnostic._extract_clips` (mRNA-oriented clips) over primary
+    Uses :func:`bam_reads.extract_clips` (mRNA-oriented clips) over primary
     alignments. ``min_mapq`` defaults to 0 so multi-mapping transcripts (minimap2
     can assign them low MAPQ) are still characterized.
     """
-    import pysam
-
-    # Local import: bam_diagnostic imports this module at top level, so importing
-    # it back here only inside the function avoids a circular import.
-    from eukan.assembly.bam_diagnostic import _extract_clips, _iter_primary_alignments
-
     stats = PolyAStats(label=label)
     bam = pysam.AlignmentFile(str(bam_path), "rb")
     try:
-        for read in _iter_primary_alignments(bam, min_mapq=min_mapq):
+        for read in iter_primary_alignments(bam, min_mapq=min_mapq):
             contig = read.reference_name or ""
-            for side, seq, _anchor in _extract_clips(read, min_clip_len):
+            for side, seq, _anchor in extract_clips(read, min_clip_len):
                 tally_clip(stats, side, seq, contig)
     finally:
         bam.close()
@@ -148,8 +146,6 @@ def scan_fasta_polya(
     poly-T. A proxy (it does not measure tail length) — enough to flag whether
     failures to map are poly-A-laden.
     """
-    from Bio import SeqIO
-
     n = n_polya = 0
     for rec in SeqIO.parse(str(fasta_path), "fasta"):
         n += 1

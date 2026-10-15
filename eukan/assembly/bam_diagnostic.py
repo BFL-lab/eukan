@@ -21,22 +21,17 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+import pysam
+
+from eukan.assembly.bam_reads import (
+    dinucleotide,
+    extract_clips,
+    iter_primary_alignments,
+    walk_introns,
+)
 from eukan.assembly.polya import PolyAStats, tally_clip
-from eukan.infra.genome import reverse_complement
-
-if TYPE_CHECKING:
-    import pysam
-
-
-_CIGAR_M = 0
-_CIGAR_D = 2
-_CIGAR_N = 3
-_CIGAR_SOFT_CLIP = 4
-_CIGAR_EQ = 7
-_CIGAR_X = 8
-_CIGAR_REF_CONSUMING = frozenset([_CIGAR_M, _CIGAR_D, _CIGAR_N, _CIGAR_EQ, _CIGAR_X])
+from eukan.infra.genome import ContigIndex
 
 # Per-locus key cap. Statistically the dominant key arrives among the
 # first few clips at any locus (≥94% prevalence at depth ≥ a few), so
@@ -318,56 +313,6 @@ class Verdict:
     non_canonical_splice: NonCanonicalSpliceCall
 
 
-def _iter_primary_alignments(
-    bam: pysam.AlignmentFile, *, min_mapq: int,
-) -> Iterable[pysam.AlignedSegment]:
-    """Yield primary, mapped, MAPQ-passing reads with a usable cigar+seq."""
-    for read in bam:
-        if read.is_unmapped or read.is_secondary or read.is_supplementary:
-            continue
-        if read.mapping_quality < min_mapq:
-            continue
-        if read.cigartuples is None or read.query_sequence is None:
-            continue
-        yield read
-
-
-def _extract_clips(
-    read: pysam.AlignedSegment, min_clip_len: int,
-) -> Iterable[tuple[str, str, int]]:
-    """Yield ``(side, mRNA_orient_seq, anchor_pos)`` for each soft-clip end.
-
-    BAM stores sequences in reference orientation, so a leading clip on a
-    reverse-mapped read is the 3' end of the mRNA (and its sequence is
-    the reverse complement of the original sequencer read). We
-    normalize: the side label is in mRNA orientation, and the sequence is
-    flipped to match.
-    """
-    cigar = read.cigartuples
-    seq = read.query_sequence
-    ref_end = read.reference_end
-    if cigar is None or seq is None or ref_end is None:
-        return
-
-    op0, len0 = cigar[0]
-    if op0 == _CIGAR_SOFT_CLIP and len0 >= min_clip_len:
-        clip_seq = seq[:len0]
-        anchor_pos = read.reference_start
-        if read.is_reverse:
-            yield "3p", reverse_complement(clip_seq), anchor_pos
-        else:
-            yield "5p", clip_seq, anchor_pos
-
-    op_last, len_last = cigar[-1]
-    if op_last == _CIGAR_SOFT_CLIP and len_last >= min_clip_len:
-        clip_seq = seq[-len_last:]
-        anchor_pos = ref_end - 1
-        if read.is_reverse:
-            yield "5p", reverse_complement(clip_seq), anchor_pos
-        else:
-            yield "3p", clip_seq, anchor_pos
-
-
 def _cluster_key(side: str, seq: str, k: int) -> str:
     """Return the K-bp substring anchored at the alignment boundary."""
     seq = seq.upper()
@@ -376,22 +321,6 @@ def _cluster_key(side: str, seq: str, k: int) -> str:
     if side == "5p":
         return seq[-k:]
     return seq[:k]
-
-
-def _walk_introns(
-    read: pysam.AlignedSegment,
-) -> Iterable[tuple[str, int, int]]:
-    """Yield ``(chrom, intron_start, intron_end_exclusive)`` for each N op."""
-    chrom = read.reference_name
-    cigar = read.cigartuples
-    if chrom is None or cigar is None:
-        return
-    pos = read.reference_start
-    for op, length in cigar:
-        if op == _CIGAR_N:
-            yield chrom, pos, pos + length
-        if op in _CIGAR_REF_CONSUMING:
-            pos += length
 
 
 def _short_fits_long(short: str, long: str, side: str) -> bool:
@@ -473,29 +402,6 @@ def _share_bucket(share: int) -> str:
     return ">1000"
 
 
-def _dinucleotide(
-    contigs, chrom: str, intron_start: int, intron_end: int,
-) -> str | None:
-    """Look up the donor/acceptor dinucleotide pair on the genome + strand.
-
-    Returns ``"XX-YY"`` (e.g. ``"GT-AG"`` for + strand canonical,
-    ``"CT-AC"`` for - strand canonical, matching STAR's motif
-    convention), or ``None`` when the contig or coordinates fall outside
-    the genome index. The reverse-strand canonical pair is reported
-    distinctly so a downstream check can detect canonical sites without
-    needing the read's transcribed strand.
-    """
-    rec = contigs.get(chrom)
-    if rec is None or rec.seq is None:
-        return None
-    genome_seq = rec.seq
-    if intron_end > len(genome_seq) or intron_start < 0:
-        return None
-    donor = str(genome_seq[intron_start : intron_start + 2]).upper()
-    acceptor = str(genome_seq[intron_end - 2 : intron_end]).upper()
-    return f"{donor}-{acceptor}"
-
-
 def diagnose_bam(
     bam_path: Path,
     genome_path: Path,
@@ -536,10 +442,6 @@ def diagnose_bam(
     sequence. Lower values let the consensus extend further into noisier
     columns; higher values terminate sooner. Default 0.6.
     """
-    import pysam
-
-    from eukan.infra.genome import ContigIndex
-
     n_reads_scanned = 0
     n_reads_with_clip = 0
     clips_by_side: Counter[str] = Counter()
@@ -556,13 +458,13 @@ def diagnose_bam(
     with ContigIndex(genome_path) as contigs:
         bam = pysam.AlignmentFile(str(bam_path), "rb")
         try:
-            for read in _iter_primary_alignments(bam, min_mapq=min_mapq):
+            for read in iter_primary_alignments(bam, min_mapq=min_mapq):
                 n_reads_scanned += 1
                 had_clip = False
                 chrom_name = read.reference_name
                 if chrom_name is None:
                     continue
-                for side, seq, anchor_pos in _extract_clips(read, min_clip_len):
+                for side, seq, anchor_pos in extract_clips(read, min_clip_len):
                     had_clip = True
                     clips_by_side[side] += 1
                     tally_clip(polya, side, seq, chrom_name)
@@ -585,9 +487,9 @@ def diagnose_bam(
                 if had_clip:
                     n_reads_with_clip += 1
 
-                for chrom, intron_start, intron_end in _walk_introns(read):
+                for chrom, intron_start, intron_end in walk_introns(read):
                     n_introns += 1
-                    pair = _dinucleotide(contigs, chrom, intron_start, intron_end)
+                    pair = dinucleotide(contigs, chrom, intron_start, intron_end)
                     if pair is not None:
                         dinuc[pair] += 1
         finally:

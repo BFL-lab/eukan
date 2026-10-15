@@ -23,13 +23,7 @@ from pathlib import Path
 
 import pysam
 
-from eukan.assembly.bam_diagnostic import (
-    _CIGAR_D,
-    _CIGAR_EQ,
-    _CIGAR_M,
-    _CIGAR_N,
-    _CIGAR_X,
-)
+from eukan.assembly.bam_reads import REF_CONSUMING
 from eukan.assembly.sl_acceptors import AcceptorSite, load_sl_acceptors
 from eukan.assembly.tracks import mapped_transcript_stems
 from eukan.gff.transcripts import Transcript, iter_transcripts, split_at, write_transcript
@@ -40,7 +34,7 @@ from eukan.settings import AssemblyConfig
 log = get_logger(__name__)
 
 # Ref-consuming CIGAR ops that stay within one exon block (N splits exons).
-_EXON_REF = frozenset([_CIGAR_M, _CIGAR_D, _CIGAR_EQ, _CIGAR_X])
+_EXON_REF = REF_CONSUMING - {pysam.CREF_SKIP}
 
 _DENOVO_BAMS = ("trinity-denovo.genome.bam", "trinity-gg.genome.bam")
 _GENOME_BAM_SUFFIX = ".genome.bam"
@@ -55,7 +49,7 @@ def _alignment_exons(read: pysam.AlignedSegment) -> list[tuple[int, int]]:
     cur_start = read.reference_start  # 0-based
     pos = cur_start
     for op, length in cigar:
-        if op == _CIGAR_N:
+        if op == pysam.CREF_SKIP:
             blocks.append((cur_start + 1, pos))
             pos += length
             cur_start = pos

@@ -26,6 +26,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pysam
+
 from eukan.assembly.align_hints import generate_rnaseq_hints, sj_table_from_bam
 from eukan.assembly.bam_utils import (
     _GENOME_BAM_SUFFIX,
@@ -95,8 +97,6 @@ def _log_mapping_rate(bam: Path, wd: Path) -> None:
     rate is read from the BAM index statistics (``--secondary=no`` means one
     record per read, so mapped / (mapped + unmapped) is the read mapping rate).
     """
-    import pysam
-
     try:
         with pysam.AlignmentFile(str(bam), "rb") as af:
             mapped = af.mapped

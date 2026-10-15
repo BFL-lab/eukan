@@ -15,6 +15,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import pysam
+
 from eukan.exceptions import ExternalToolError
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_piped
@@ -91,8 +93,6 @@ def _write_unmapped_fasta(unsorted_bam: Path, out_fasta: Path) -> int:
     dependency) preserves the transcripts that failed to map for inspection.
     Returns the number written.
     """
-    import pysam
-
     n = 0
     bam = pysam.AlignmentFile(str(unsorted_bam), "rb")
     try:

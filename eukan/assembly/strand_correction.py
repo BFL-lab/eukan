@@ -42,7 +42,7 @@ import os
 from collections import Counter
 from pathlib import Path
 
-from eukan.assembly.bam_diagnostic import _dinucleotide
+from eukan.assembly.bam_reads import dinucleotide
 from eukan.assembly.sl_cut import _DENOVO_BAMS, _GENOME_BAM_SUFFIX, bam_to_transcript_gff3
 from eukan.assembly.tracks import mapped_transcript_stems
 from eukan.gff.transcripts import Transcript, read_transcripts, stitch, write_transcripts
@@ -114,7 +114,7 @@ def _coding_strand(label: str, qframe: int) -> str:
 def introns_of(exons: list[tuple[int, int]]) -> list[tuple[int, int]]:
     """0-based ``[start, end)`` introns from 1-based inclusive exon blocks.
 
-    Matches :func:`bam_diagnostic._dinucleotide`'s convention: the first intron
+    Matches :func:`bam_reads.dinucleotide`'s convention: the first intron
     base is 0-based ``exon_end``; the exclusive end is 0-based ``next_start - 1``.
     """
     ex = sorted(exons)
@@ -175,7 +175,7 @@ def _decide(
         return tx.strand, "mono-exon"
     plus = minus = 0
     for istart, iend in introns:
-        raw = _dinucleotide(contigs, tx.chrom, istart, iend)
+        raw = dinucleotide(contigs, tx.chrom, istart, iend)
         if raw in (dominant, _CANONICAL):
             plus += 1
         elif raw in (rc, _CANONICAL_RC):
@@ -316,7 +316,7 @@ def run_strand_correction(config: AssemblyConfig) -> None:
                     continue
                 for istart, iend in introns_of(tx.exons):
                     motif = consensus_on_strand(
-                        _dinucleotide(contigs, tx.chrom, istart, iend), cstrand
+                        dinucleotide(contigs, tx.chrom, istart, iend), cstrand
                     )
                     if motif:
                         tally[motif] += 1

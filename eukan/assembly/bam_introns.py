@@ -21,25 +21,14 @@ from pathlib import Path
 
 import pysam
 
-from eukan.assembly.bam_diagnostic import _CIGAR_N, _CIGAR_REF_CONSUMING
+from eukan.assembly.bam_reads import QUERY_CONSUMING, REF_CONSUMING
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 
 log = get_logger(__name__)
 
-# CIGAR ops, mirroring pysam/SAM op codes (see bam_diagnostic for the shared set).
-_CIGAR_INSERTION = 1
-_CIGAR_SOFT_CLIP = 4
-_CIGAR_HARD_CLIP = 5
-_CIGAR_M = 0
-_CIGAR_EQ = 7
-_CIGAR_X = 8
-# Query (read) consuming ops.
-_CIGAR_QUERY_CONSUMING = frozenset(
-    [_CIGAR_M, _CIGAR_INSERTION, _CIGAR_SOFT_CLIP, _CIGAR_EQ, _CIGAR_X]
-)
 # Ops that align a query base to the reference (a piece must contain ≥1 to be real).
-_CIGAR_ALIGNED = frozenset([_CIGAR_M, _CIGAR_EQ, _CIGAR_X])
+_CIGAR_ALIGNED = frozenset([pysam.CMATCH, pysam.CEQUAL, pysam.CDIFF])
 
 # Pairing/multiplicity flag bits cleared when emitting a split piece as an
 # independent single-end primary read (the reverse-strand bit 0x10 is kept).
@@ -67,19 +56,19 @@ def _split_read(
     # splitting them risks corrupting the SEQ accounting or duplicating extra loci.
     if read.is_secondary or read.is_supplementary:
         return None
-    if any(op == _CIGAR_HARD_CLIP for op, _ in cigar):
+    if any(op == pysam.CHARD_CLIP for op, _ in cigar):
         return None
-    if not any(op == _CIGAR_N and length > max_intron_len for op, length in cigar):
+    if not any(op == pysam.CREF_SKIP and length > max_intron_len for op, length in cigar):
         return None
 
-    total_query = sum(length for op, length in cigar if op in _CIGAR_QUERY_CONSUMING)
+    total_query = sum(length for op, length in cigar if op in QUERY_CONSUMING)
 
     segments: list[dict] = []
     cur: dict | None = None
     ref_pos = read.reference_start
     q_pos = 0
     for op, length in cigar:
-        if op == _CIGAR_N and length > max_intron_len:
+        if op == pysam.CREF_SKIP and length > max_intron_len:
             if cur is not None:
                 segments.append(cur)
                 cur = None
@@ -88,10 +77,10 @@ def _split_read(
         if cur is None:
             cur = {"ref_start": ref_pos, "ops": [], "q_before": q_pos, "q_in": 0}
         cur["ops"].append((op, length))
-        if op in _CIGAR_QUERY_CONSUMING:
+        if op in QUERY_CONSUMING:
             q_pos += length
             cur["q_in"] += length
-        if op in _CIGAR_REF_CONSUMING:
+        if op in REF_CONSUMING:
             ref_pos += length
     if cur is not None:
         segments.append(cur)
@@ -104,9 +93,9 @@ def _split_read(
         q_after = total_query - seg["q_before"] - seg["q_in"]
         ops = [*seg["ops"]]
         if seg["q_before"] > 0:
-            ops.insert(0, (_CIGAR_SOFT_CLIP, seg["q_before"]))
+            ops.insert(0, (pysam.CSOFT_CLIP, seg["q_before"]))
         if q_after > 0:
-            ops.append((_CIGAR_SOFT_CLIP, q_after))
+            ops.append((pysam.CSOFT_CLIP, q_after))
         pieces.append(_make_piece(read, header, new_flag, seg["ref_start"], ops, len(pieces)))
     return pieces or None
 

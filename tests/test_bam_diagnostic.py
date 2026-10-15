@@ -24,14 +24,14 @@ from eukan.assembly.bam_diagnostic import (
     SoftClipStats,
     _cluster_consensus,
     _cluster_key,
-    _dinucleotide,
-    _extract_clips,
     _hamming_distance,
     _is_low_complexity,
-    _walk_introns,
     compute_verdict,
     diagnose_bam,
 )
+from eukan.assembly.bam_reads import dinucleotide as _dinucleotide
+from eukan.assembly.bam_reads import extract_clips as _extract_clips
+from eukan.assembly.bam_reads import walk_introns as _walk_introns
 from eukan.infra.genome import ContigIndex
 from eukan.infra.genome import reverse_complement as _reverse_complement
 
