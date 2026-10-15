@@ -7,7 +7,7 @@ from pathlib import Path
 
 from eukan.assembly.combinr import run_combinr
 from eukan.assembly.defuse import run_defuse
-from eukan.assembly.jaccard import run_jaccard
+from eukan.assembly.jaccard import jaccard_output_name, run_jaccard
 from eukan.assembly.max_intron import run_max_intron_split
 from eukan.assembly.minimap2 import map_reads_minimap2, map_transcripts_minimap2
 from eukan.assembly.sl_acceptors import detect_sl_acceptors
@@ -15,12 +15,15 @@ from eukan.assembly.sl_cut import run_sl_cut
 from eukan.assembly.strand_correction import run_strand_correction
 from eukan.assembly.trinity import run_trinity
 from eukan.infra.artifacts import Artifact
+from eukan.infra.logging import get_logger
 from eukan.infra.manifest import ASSEMBLY, step_key
 from eukan.infra.pipeline import (
     StepSpec,
     run_simple_pipeline,
 )
 from eukan.settings import AssemblyConfig
+
+log = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Per-step input resolvers (for fingerprint-based resume invalidation)
@@ -331,9 +334,31 @@ def run_assembly(
     force_steps: list[str] | None = None,
 ) -> None:
     """Run the assembly pipeline with manifest tracking."""
+    from eukan.assembly.bam_utils import _TRANSCRIPT_SETS
+    from eukan.assembly.tracks import mapped_transcript_stems
+
+    jaccard_on = config.jaccard_clip
+    defuse_on = config.defuse and config.uniprot_db is not None
+
+    # map_transcripts maps <track>.jaccard.fasta and max_intron_split reads
+    # <track>.genome.defuse.gff3 whenever the file exists, so one left by an earlier
+    # run would shadow the fresh models while its step does not run. Remove those
+    # files first; the input fingerprints then re-run the steps that consumed them.
+    stale: list[tuple[str, str]] = []
+    if not (jaccard_on and config.left_reads and config.right_reads):
+        # skipped, or run_jaccard's no-op on single-end reads
+        stale += [(jaccard_output_name(query), "jaccard") for query, _ in _TRANSCRIPT_SETS]
+    if not defuse_on:
+        stale += [(f"{stem}.defuse.gff3", "defuse") for stem in mapped_transcript_stems()]
+    for name, step in stale:
+        path = config.work_dir / name
+        if path.exists():
+            log.info("Removing %s from an earlier run: %s does not run now.", name, step)
+            path.unlink()
+
     run_simple_pipeline(
         ASSEMBLY, _steps_for(), config,
         force_steps=force_steps,
-        skip=lambda s: (s.name == "jaccard" and not config.jaccard_clip)
-        or (s.name == "defuse" and not (config.defuse and config.uniprot_db is not None)),
+        skip=lambda s: (s.name == "jaccard" and not jaccard_on)
+        or (s.name == "defuse" and not defuse_on),
     )
