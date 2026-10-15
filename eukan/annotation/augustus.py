@@ -134,8 +134,9 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
     sdir = step_dir(config.work_dir, "augustus")
     log.info("Running AUGUSTUS training and prediction...")
 
-    # Gather hints
-    hint_files = [config.work_dir / "prot_align" / "hints_protein.gff"]
+    # Gather hints. The protein hints sit beside the protein evidence (evidence[1],
+    # prot.gff3 in the alignment step dir: prot_align, or prot_align_ssp with --spsp).
+    hint_files = [evidence[1].parent / "hints_protein.gff"]
     if config.rnaseq_hints:
         ext_cfg = "augustus.config"
         hint_files.append(config.rnaseq_hints)

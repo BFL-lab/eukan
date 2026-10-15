@@ -83,6 +83,49 @@ class TestSpliceTypeToAugustus:
 
 
 # ---------------------------------------------------------------------------
+# run_augustus: protein hints
+# ---------------------------------------------------------------------------
+
+
+def test_augustus_reads_protein_hints_of_the_ssp_alignment(tmp_path, monkeypatch):
+    """Under --spsp the alignment step is prot_align_ssp; AUGUSTUS takes the protein
+    hints from there, not from a stale default-mode prot_align/ next to it."""
+    from eukan.annotation import augustus
+    from eukan.settings import PipelineConfig
+
+    config_path = tmp_path / "augustus_config"
+    (config_path / "extrinsic").mkdir(parents=True)
+    (config_path / "extrinsic" / "extrinsic.MPE.cfg").write_text("")
+    monkeypatch.setenv("AUGUSTUS_CONFIG_PATH", str(config_path))
+    genome = tmp_path / "genome.fa"
+    genome.write_text(">chr1\nACGT\n")
+    wd = tmp_path / "annotate"
+    config = PipelineConfig(genome=genome, proteins=[genome], work_dir=wd, spaln_ssp=True)
+    # Species already trained in this work dir: run_augustus goes straight to the hints.
+    species = config_path / "species" / config.name
+    species.mkdir(parents=True)
+    (species / f"{config.name}_parameters.cfg").write_text("")
+    (wd / "augustus").mkdir(parents=True)
+    (wd / "augustus" / "genbank.gb.train").write_text("")
+    for step in ("prot_align", "prot_align_ssp"):
+        (wd / step).mkdir()
+        (wd / step / "hints_protein.gff").write_text(f"{step}\n")
+
+    class Gathered(Exception):
+        pass
+
+    def fake_concat(srcs, dest):
+        raise Gathered(list(srcs))
+
+    monkeypatch.setattr(augustus, "concat_files", fake_concat)
+    with pytest.raises(Gathered) as exc:
+        augustus.run_augustus(
+            config, wd / "genemark" / "genemark.gff3", wd / "prot_align_ssp" / "prot.gff3",
+        )
+    assert exc.value.args[0] == [wd / "prot_align_ssp" / "hints_protein.gff"]
+
+
+# ---------------------------------------------------------------------------
 # _get_splice_sites_flag
 # ---------------------------------------------------------------------------
 
