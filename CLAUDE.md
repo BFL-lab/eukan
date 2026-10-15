@@ -72,8 +72,8 @@ eukan/
 ├── infra/              # Runtime infrastructure (cross-pipeline)
 │   ├── runner.py       # run_cmd(), run_piped(), run_parallel() — subprocess execution
 │   ├── concurrency.py  # parallel_map() and friends
-│   ├── manifest.py     # RunManifest, pipeline_step() — run tracking and reproducibility
-│   ├── steps.py        # step_dir(), step_complete(), validate_or_raise() — step dir mgmt
+│   ├── manifest.py     # RunManifest, get_or_create_manifest()/load_manifest()/save_manifest() — run tracking and reproducibility
+│   ├── steps.py        # step_dir(), pipeline_step(), is_step_complete(), fingerprint_inputs(), clean_interrupted_step() — step dir mgmt + resume checks
 │   ├── pipeline.py     # StepSpec + run_simple_pipeline() / run_orchestrated_step() driver
 │   ├── layout.py       # PIPELINE_SUBDIRS, step_work_dir(), sibling_step_dir() — per-step run dir layout
 │   ├── artifacts.py    # Artifact enum + find() — cross-pipeline artifact registry
@@ -191,7 +191,7 @@ When adding a new cross-pipeline file, register it in both `Artifact` and `_PROD
 
 ### Run Manifest
 
-All pipelines share a single `eukan-run.json` per run dir. Step names are prefixed by pipeline (`annotation/genemark`, `assembly/star`, `functional/search`, `repeats/modeler`, `submission/table2asn`). The manifest tracks per-step status, timing, and output checksums for resume and integrity checking. Key functions: `get_or_create_manifest()`, `pipeline_step()`, `is_step_complete()` in `infra/manifest.py`. Each config has a `manifest_dir` field (defaults to `work_dir`) controlling where the manifest is written.
+All pipelines share a single `eukan-run.json` per run dir. Step names are prefixed by pipeline (`annotation/genemark`, `assembly/minimap2`, `functional/search`, `repeats/modeler`, `submission/table2asn`). The manifest tracks per-step status, timing, and output checksums for resume and integrity checking. Key functions: `get_or_create_manifest()` in `infra/manifest.py`; `pipeline_step()` and `is_step_complete()` in `infra/steps.py`. Each config has a `manifest_dir` field (defaults to `work_dir`) controlling where the manifest is written.
 
 ### Pipeline Driver
 
