@@ -47,7 +47,7 @@ docker build -t eukan -f docker/Dockerfile .
 
 ### CLI (`eukan/cli/`)
 
-Click-based CLI package with subcommands: `annotate`, `assemble`, `mask-repeats`, `func-annot`, `prep-submission`, `gff3toseq`, `db-fetch`, `check`, `status`, `compare`. One file per subcommand under `eukan/cli/`; shared infrastructure (option-group rendering, `numcpu_option`, `genome_option`, error formatting) lives in `eukan/cli/_framework.py`. Entry point defined in `pyproject.toml` as `eukan = "eukan.cli:cli"`. All subcommands use harmonized option groups ("Required input", "Pipeline parameters", "Re-run steps"). Step re-run flags follow the `--run-*` pattern (e.g., `--run-genemark`, `--run-star`).
+Click-based CLI package with subcommands: `annotate`, `assemble`, `mask-repeats`, `func-annot`, `prep-submission`, `gff3toseq`, `db-fetch`, `check`, `status`, `compare`. One file per subcommand under `eukan/cli/`; shared infrastructure (option-group rendering, `numcpu_option`, `genome_option`, error formatting) lives in `eukan/cli/_framework.py`. Entry point defined in `pyproject.toml` as `eukan = "eukan.cli:cli"`. All subcommands use harmonized option groups ("Required input", "Pipeline parameters", "Re-run steps"). Step re-run flags follow the `--run-*` pattern (e.g., `--run-genemark`, `--run-minimap2`).
 
 ### Package Structure
 
@@ -83,6 +83,7 @@ eukan/
 │   ├── health.py       # Tool/database probes for `eukan check`
 │   ├── tools_registry.py # Tool metadata loaded from data/tools.toml
 │   ├── conda_env.py    # Conda env var setup at CLI startup
+│   ├── utils.py        # Shared utility functions: md5_file(), symlink(), package_resource(), concat_files()
 │   └── environ.py      # Env var helpers
 │
 ├── gff/                # GFF3 format operations
@@ -91,6 +92,7 @@ eukan/
 │   ├── intervals.py    # Lower-level interval primitives
 │   ├── hierarchy.py    # gene>mRNA>CDS hierarchy fixers, prettify_gff3()
 │   ├── normalize.py    # GFF3 cleanup before downstream tools (e.g., table2asn)
+│   ├── _compat.py      # Workarounds for gffutils API quirks
 │   └── io.py           # featuredb2gff3_file(), count_gff3_features(), iter_assembled_sequences()
 │
 ├── annotation/         # Genome annotation pipeline
@@ -108,14 +110,14 @@ eukan/
 │
 ├── assembly/           # Transcriptome assembly pipeline
 │   ├── pipeline.py     # run_assembly() dispatch (StepSpec-driven); _DOWNSTREAM cascade
-│   ├── star.py         # STAR read mapping + STARlong spliced transcript→genome mapping (map_transcripts)
-│   ├── segemehl.py     # segemehl read/transcript mapping (fallback + non-canonical primary); _TRANSCRIPT_SETS
+│   ├── minimap2.py     # minimap2 read/transcript mapping — the single aligner for the assembly pipeline
+│   ├── bam_utils.py    # Shared BAM helpers and the mapped-transcript track definitions (_TRANSCRIPT_SETS)
 │   ├── align_hints.py  # RNA-seq intron/coverage hint emission from the read BAM
-│   ├── bam_diagnostic.py # Post-STAR soft-clip + intron BAM walk → trans-splicing / non-canonical-splice verdict
+│   ├── bam_diagnostic.py # Post-mapping soft-clip + intron BAM walk → trans-splicing / non-canonical-splice verdict
 │   ├── bam_introns.py  # Max-intron-bounded BAM filtering primitive
 │   ├── trinity.py      # Trinity genome-guided + de novo assembly (the active assembler, both modes)
 │   ├── tracks.py       # Single source of truth for the mapped Trinity track stems + per-track filenames
-│   ├── jaccard.py      # In-house jaccard fusion-clip (replaces Trinity --jaccard_clip; STAR-based, tunable)
+│   ├── jaccard.py      # In-house jaccard fusion-clip (replaces Trinity --jaccard_clip; minimap2-based, tunable)
 │   ├── strand_correction.py # Homology-calibrated per-transcript splice-strand flip (diamond blastx, opt-in --uniprot)
 │   ├── defuse.py       # Homology-grounded chimera splitting (opt-in --defuse + --uniprot)
 │   ├── max_intron.py   # Strand-agnostic max-intron split of transcript models (SL-independent; runs before sl_cut)
@@ -209,7 +211,7 @@ Both wrap step-dir setup, manifest updates, and force/skip logic so that step-le
 - Each pipeline package follows the same shape: `pipeline.py` (driver) + one file per tool
 - Per-step output isolation: every subcommand writes under its own `<cwd>/<step-subdir>/`. Don't write into `cwd` directly — use `step_work_dir(step)` from `infra/layout.py`
 - Cross-pipeline files go through `Artifact` + `find()` rather than hardcoded paths
-- CLI option groups are harmonized across subcommands: "Required input", "Pipeline parameters", "Re-run steps". Step re-run flags follow the `--run-*` pattern (e.g., `--run-genemark`, `--run-star`). See "CLI conventions" below for the full canonical layout.
+- CLI option groups are harmonized across subcommands: "Required input", "Pipeline parameters", "Re-run steps". Step re-run flags follow the `--run-*` pattern (e.g., `--run-genemark`, `--run-minimap2`). See "CLI conventions" below for the full canonical layout.
 - Prediction-count logging: every per-tool step that emits a GFF3 calls `_log_prediction_count("Tool", path)` (annotation pipeline) or `count_gff3_features()` so the user sees gene counts at each phase
 - 3-way concordance (`gff/concordance.extract_supported_models`) emits per-source counts at INFO and a WARNING when concordance falls below `WEAK_CONCORDANCE_THRESHOLD` (250 gene models) — used by both AUGUSTUS and SNAP training-set construction
 
