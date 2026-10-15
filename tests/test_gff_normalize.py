@@ -55,3 +55,78 @@ class TestNormalizeToGff3:
             if line.startswith("#") or not line.strip():
                 continue
             assert line.split("\t", 1)[0] == "chr1"
+
+
+_SPACED = (
+    "##gff-version 3\n"
+    "chr1 desc\tGeneMark.hmm3\tgene\t100\t200\t.\t+\t.\tID=g1\n"
+    "chr1 desc\tGeneMark.hmm3\tmRNA\t100\t200\t.\t+\t.\tID=g1.t1;Parent=g1\n"
+    "chr1 desc\tGeneMark.hmm3\tCDS\t100\t200\t.\t+\t0\tID=cds1;Parent=g1.t1\n"
+)
+
+
+class TestNormalizePasses:
+    """normalize_to_gff3 builds no DB it does not need."""
+
+    def test_featuredb_input_without_parse_transform_is_not_copied(self, tmp_path, monkeypatch):
+        from eukan.gff import create_gff_db, normalize
+
+        src = tmp_path / "in.gff"
+        _write_gff(src, _SPACED)
+        db = create_gff_db(src)
+        built = []
+        real_create = normalize.create_gff_db
+        monkeypatch.setattr(
+            normalize, "create_gff_db",
+            lambda *a, **k: built.append(a) or real_create(*a, **k),
+        )
+        out = tmp_path / "out.gff3"
+
+        normalize_to_gff3(db, out, fix_contig_names=True)
+
+        assert built == []
+        assert [ln.split("\t")[2] for ln in out.read_text().splitlines()] == [
+            "gene", "mRNA", "exon", "CDS",
+        ]
+
+    def test_post_transform_and_fix_contig_names_share_one_pass(self, tmp_path, monkeypatch):
+        from eukan.gff import normalize
+
+        passes = []
+        real_transform_db = normalize.transform_db
+
+        def counting(db, transform, **kwargs):
+            passes.append(transform)
+            return real_transform_db(db, transform, **kwargs)
+
+        monkeypatch.setattr(normalize, "transform_db", counting)
+        src = tmp_path / "in.gff"
+        _write_gff(src, _SPACED)
+        out = tmp_path / "out.gff3"
+
+        def set_source(f):
+            f.source = "genemark"
+            return f
+
+        normalize_to_gff3(src, out, post_transform=set_source, fix_contig_names=True)
+
+        assert len(passes) == 1
+        for line in out.read_text().splitlines():
+            cols = line.split("\t")
+            assert (cols[0], cols[1]) == ("chr1", "genemark")
+
+    def test_filtering_post_transform_with_fix_contig_names(self, tmp_path):
+        """A post_transform that drops features still composes with the seqid fix."""
+        src = tmp_path / "in.gff"
+        _write_gff(src, _SPACED)
+        out = tmp_path / "out.gff3"
+
+        normalize_to_gff3(
+            src, out,
+            post_transform=lambda f: None if f.featuretype == "CDS" else f,
+            fix_contig_names=True,
+        )
+
+        rows = [ln.split("\t") for ln in out.read_text().splitlines()]
+        assert [r[2] for r in rows] == ["gene", "mRNA", "exon"]
+        assert {r[0] for r in rows} == {"chr1"}

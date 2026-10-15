@@ -33,7 +33,8 @@ def normalize_to_gff3(
     """Run the standard parse → fill-in → post-transform → write pipeline.
 
     Args:
-        raw: Path to a GFF/GTF file or an existing FeatureDB.
+        raw: Path to a GFF/GTF file or an existing FeatureDB. A FeatureDB
+            passed without ``parse_transform`` is used, and updated, in place.
         out: Destination GFF3 path.
         parse_transform: Optional gffutils ``transform=`` callback applied
             on the initial parse — typically a tool-specific fixup
@@ -52,7 +53,10 @@ def normalize_to_gff3(
     Returns:
         ``out``, after writing the normalized GFF3.
     """
-    db = create_gff_db(raw, transform=parse_transform)
+    if isinstance(raw, gffutils.FeatureDB) and parse_transform is None:
+        db = raw  # a plain copy pass would rebuild an identical DB
+    else:
+        db = create_gff_db(raw, transform=parse_transform)
 
     if add_missing_features:
         db.update(
@@ -60,11 +64,20 @@ def normalize_to_gff3(
             merge_strategy="create_unique",
         )
 
+    if fix_contig_names:
+        first = post_transform
+
+        def post_and_fix(f: gffutils.Feature) -> gffutils.Feature | None:
+            # The seqid is read by no ID or Parent derivation, so stripping it
+            # in post_transform's pass equals a second full pass.
+            if first is not None:
+                f = first(f)
+            return _fix_contig_names(f) if f else f
+
+        post_transform = post_and_fix
+
     if post_transform is not None:
         db = transform_db(db, post_transform)
-
-    if fix_contig_names:
-        db = transform_db(db, _fix_contig_names)
 
     featuredb2gff3_file(db, out)
     return out
