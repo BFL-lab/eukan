@@ -244,12 +244,19 @@ def force_steps_from_run_flags(
 
 
 def _expected_steps(config: PipelineConfig) -> list[str]:
-    """Return the list of manifest step keys expected for this config."""
+    """Return the list of manifest step keys expected for this config.
+
+    SNAP/CodingQuarry follow :func:`_phase_snap_codingquarry`: with
+    transcripts only fungi run them; without, fungi and protists run both
+    and other kingdoms run SNAP alone.
+    """
     prot_align_step = "prot_align_ssp" if config.spaln_ssp else "prot_align"
     steps = ["genemark", prot_align_step, "augustus"]
     if config.has_transcripts:
         steps.insert(0, "orf_finder")
-    if config.is_fungus or config.is_protist:
+        if config.is_fungus:
+            steps.extend(["snap", "codingquarry"])
+    elif config.is_fungus or config.is_protist:
         steps.extend(["snap", "codingquarry"])
     else:
         steps.append("snap")

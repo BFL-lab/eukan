@@ -8,7 +8,11 @@ from typing import ClassVar
 
 import pytest
 
-from eukan.annotation.pipeline import force_steps_from_run_flags
+from eukan.annotation.pipeline import (
+    _execute_steps,
+    _expected_steps,
+    force_steps_from_run_flags,
+)
 from eukan.assembly.pipeline import (
     _steps_for,
 )
@@ -18,7 +22,7 @@ from eukan.assembly.pipeline import (
 from eukan.infra.manifest import ASSEMBLY, RunManifest, StepRecord, StepStatus, step_key
 from eukan.infra.pipeline import StepSpec, run_orchestrated_step, run_simple_pipeline
 from eukan.infra.steps import fingerprint_inputs
-from eukan.settings import AssemblyConfig
+from eukan.settings import AssemblyConfig, PipelineConfig
 
 
 class TestForceStepsFromRunFlags:
@@ -104,6 +108,39 @@ class TestForceStepsFromRunFlags:
             run_genemark=True, run_augustus=True, run_snap=True,
         )
         assert all(k.startswith("annotation/") for k in result)
+
+
+class TestExpectedSteps:
+    """``_expected_steps`` must list exactly the steps the phases run. A
+    listed step the phases skip stays pending forever, so the "All steps
+    complete" fast path never fires."""
+
+    @pytest.mark.parametrize("kingdom", ["fungus", "protist", "animal", "plant"])
+    @pytest.mark.parametrize("has_transcripts", [True, False], ids=["transcripts", "protein_only"])
+    def test_matches_the_steps_the_phases_run(
+        self, tmp_path, monkeypatch, has_transcripts, kingdom,
+    ):
+        evidence = {
+            field: tmp_path / field
+            for field in ("transcripts_fasta", "transcripts_gff", "rnaseq_hints")
+        } if has_transcripts else {}
+        config = PipelineConfig(
+            genome=tmp_path / "genome.fa", proteins=[tmp_path / "proteins.faa"],
+            work_dir=tmp_path, kingdom=kingdom, **evidence,
+        )
+        ran: list[str] = []
+
+        def fake_run_step(config, manifest, name, fn, *args, **kwargs):
+            ran.append(f"annotation/{name}")
+            return tmp_path / f"{name}.gff3"
+
+        monkeypatch.setattr("eukan.annotation.pipeline._run_step", fake_run_step)
+        monkeypatch.setattr("eukan.annotation.pipeline._log_prediction_count", lambda *_: None)
+
+        _execute_steps(config, None)
+
+        assert config.has_transcripts is has_transcripts
+        assert sorted(ran) == sorted(_expected_steps(config))
 
 
 class TestAssemblyForceStepsFromRunFlags:
