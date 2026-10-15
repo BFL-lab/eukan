@@ -97,10 +97,12 @@ def run_phmmer_search(
 
     for top_hits in pyhmmer.hmmer.phmmer(queries, targets, cpus=num_cpu, E=evalue_threshold):
         query_name = _decode(top_hits.query.name)
-        if not top_hits:
+        # Keep only the best hit (lowest e-value). E= gates hits in-scan
+        # against the targets seen so far; only the *reported* ones pass it
+        # against the whole database.
+        best = next(top_hits.reported, None)
+        if best is None:
             continue
-        # Keep only the best hit (lowest e-value)
-        best = top_hits[0]
         hit_name = _decode(best.name)
         hit_desc = _decode(best.description) if best.description else ""
         results[query_name] = {
@@ -133,7 +135,9 @@ def run_hmmscan_search(
         query_hits: dict[str, HitInfo] = {}
         kept_spans: list[tuple[int, int]] = []
 
-        for hit in top_hits:
+        # Only *reported* hits pass E= against the whole database (see
+        # run_phmmer_search).
+        for hit in top_hits.reported:
             if not hit.domains:
                 continue
             aln = hit.best_domain.alignment

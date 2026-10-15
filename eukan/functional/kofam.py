@@ -172,7 +172,9 @@ def run_kofam_search(
             if not top_hits:
                 continue
 
-            for hit in top_hits:
+            # E= gates hits in-scan against the profiles seen so far; only
+            # the *reported* ones pass it against the whole database.
+            for hit in top_hits.reported:
                 k_number = _decode(hit.name)
                 ko = ko_entries.get(k_number)
                 if ko is None:
