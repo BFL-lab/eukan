@@ -272,12 +272,12 @@ The pipeline runs minimap2 read mapping, genome-guided + de novo Trinity assembl
 
 #### Soft-clip + intron BAM diagnostic
 
-Immediately after STAR mapping, `eukan assemble` walks the sorted BAM once to produce `softclip_diagnostic_summary.json`. It surfaces two signals downstream gene prediction needs to know about:
+Immediately after minimap2 read mapping, `eukan assemble` walks the sorted BAM once to produce `softclip_diagnostic_summary.json`. It surfaces two signals downstream gene prediction needs to know about:
 
 - **Trans-splicing** — soft-clip ends are clustered by a K-bp substring anchored at the alignment boundary (K=12 by default), with Hamming-tolerant per-locus consolidation and cross-locus canonicalization. A *few* clusters supported by *many* genomic loci is the trans-splicing fingerprint (the splice-leader sequence sits on the 5' end of every trans-spliced transcript). The top non-low-complexity cluster's K-bp anchor key is reported alongside a per-column majority-vote *consensus motif* that extends past the anchor — for kinetoplastid datasets this typically recovers ~30–40 bp of the conserved SL. The verdict is categorical (`STRONG` / `MODERATE` / `ABSENT`) and a WARNING is logged when present so the user knows reads may need splice-leader trimming before annotation.
 - **Non-canonical splice usage** — the per-N-cigar-op donor/acceptor dinucleotide histogram is rolled up into a `canonical_pct` plus a top non-canonical pair. Verdict (`EXTENSIVE` / `MODERATE` / `ABSENT`) tracks the prevalence; `EXTENSIVE` is the signal that the genome warrants `--splice-permissive` on `eukan annotate`.
 
-The diagnostic is idempotent (skipped if its summary already exists in the work dir) and adds ~30s per 100M reads on top of STAR's runtime. Tune the consensus stringency with `consensus_min_majority_fraction` on `diagnose_bam()` when invoking the library directly; defaults are tuned for whole-genome RNA-seq.
+The diagnostic is idempotent (skipped if its summary already exists in the work dir) and adds ~30s per 100M reads on top of minimap2's runtime. Tune the consensus stringency with `consensus_min_majority_fraction` on `diagnose_bam()` when invoking the library directly; defaults are tuned for whole-genome RNA-seq.
 
 ### `eukan mask-repeats`
 
@@ -662,7 +662,7 @@ python tests/run_pipeline.py test-pipeline -d tests/data -w tests/pipeline-run
 ```
 
 The test pipeline runs:
-1. **Transcriptome assembly**: STAR read mapping, Trinity (genome-guided + de novo), combinr consolidation
+1. **Transcriptome assembly**: minimap2 read mapping, Trinity (genome-guided + de novo), combinr consolidation
 2. **Genome annotation**:  GeneMark, protein alignment (spaln/gth), AUGUSTUS, SNAP, combinr consensus
 
 If assembly fails, it falls back to protein-only annotation automatically.
