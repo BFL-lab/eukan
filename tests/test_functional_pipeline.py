@@ -23,6 +23,14 @@ import logging
 import pytest
 
 from eukan.functional import pipeline as fpipe
+from eukan.infra.manifest import (
+    MANIFEST_FILE,
+    RunManifest,
+    StepRecord,
+    StepStatus,
+    load_manifest,
+    save_manifest,
+)
 from eukan.settings import FunctionalConfig
 
 
@@ -269,3 +277,45 @@ class TestFuncStepFingerprints:
         assert any(s.startswith("kofam_db=") for s in scalars)
         assert any(s.startswith("ko_list=") for s in scalars)
         assert not any(s.startswith("uniprot_db=") for s in scalars)
+
+
+# --- manifest location --------------------------------------------------------
+
+
+class TestManifestLocation:
+    """The functional steps record into the run-dir manifest (``manifest_dir``),
+    shared with the other pipelines; their outputs stay under ``work_dir``."""
+
+    def test_records_into_shared_run_dir_manifest(self, tmp_path, monkeypatch):
+        counts = _install_counts(monkeypatch)
+        run_dir = tmp_path / "run"
+        work_dir = run_dir / "func-annot"
+        run_dir.mkdir()
+        # An earlier pipeline's record already in the run-dir manifest.
+        save_manifest(run_dir, RunManifest(steps={
+            "annotation/final": StepRecord(
+                name="annotation/final", status=StepStatus.completed,
+            ),
+        }))
+        prot = tmp_path / "speciesA.faa"
+        prot.write_text(">s1\nMACE\n")
+        gff3 = tmp_path / "genes.gff3"
+        gff3.write_text("##gff-version 3\nchr1\teukan\tgene\t1\t100\t.\t+\t.\tID=g1\n")
+        cfg = FunctionalConfig(
+            proteins=prot, work_dir=work_dir, manifest_dir=run_dir,
+            gff3_path=gff3, num_cpu=1,
+        )
+
+        fpipe.run_functional_annotation(cfg)
+
+        assert not (work_dir / MANIFEST_FILE).exists()
+        manifest = load_manifest(run_dir)
+        assert manifest is not None
+        assert "annotation/final" in manifest.steps  # added to, not replaced
+        assert {k.split(".")[0] for k in manifest.steps if k.startswith("functional/")} == {
+            "functional/search", "functional/annotate_fasta", "functional/annotate_gff3",
+        }
+        assert (work_dir / "genes.mod.gff3").exists()
+        # A resume reads the same manifest back: an identical re-run is a no-op.
+        fpipe.run_functional_annotation(cfg)
+        assert counts == {"search": 1, "annotate_fasta": 1, "annotate_gff3": 1}

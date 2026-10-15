@@ -201,8 +201,11 @@ def run_functional_annotation(
 ) -> None:
     """Run the full functional annotation pipeline."""
     work_dir = config.work_dir
-    manifest = get_or_create_manifest(work_dir, config)
-    save_manifest(work_dir, manifest)
+    # The manifest lives in manifest_dir (the run-dir root), shared with the other
+    # pipelines; step outputs and sentinels stay under work_dir.
+    manifest_dir = config.manifest_dir
+    manifest = get_or_create_manifest(manifest_dir, config)
+    save_manifest(manifest_dir, manifest)
 
     homology_json = _homology_cache_path(config)
     hmmscan_json = config.proteins.parent / f"{config.proteins.stem}.hmmscan.json"
@@ -239,7 +242,7 @@ def run_functional_annotation(
 
     search_files, search_scalars = fingerprints["search"]
     run_orchestrated_step(
-        work_dir, manifest, _key("search"),
+        manifest_dir, manifest, _key("search"),
         _search_and_cache,
         config, homology_json, hmmscan_json,
         step_dir=work_dir / "search",
@@ -253,7 +256,7 @@ def run_functional_annotation(
 
     fasta_files, fasta_scalars = fingerprints["annotate_fasta"]
     run_orchestrated_step(
-        work_dir, manifest, _key("annotate_fasta"),
+        manifest_dir, manifest, _key("annotate_fasta"),
         annotate_fasta, config.proteins, homology_res, hmmscan_res,
         config.homology_db,
         step_dir=work_dir / "annotate_fasta",
@@ -265,7 +268,7 @@ def run_functional_annotation(
     if config.gff3_path:
         gff3_files, gff3_scalars = fingerprints["annotate_gff3"]
         run_orchestrated_step(
-            work_dir, manifest, _key("annotate_gff3"),
+            manifest_dir, manifest, _key("annotate_gff3"),
             annotate_gff3, config.gff3_path, homology_res, hmmscan_res,
             work_dir, config.homology_db,
             step_dir=work_dir / "annotate_gff3",
