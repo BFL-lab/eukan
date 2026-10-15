@@ -667,7 +667,7 @@ The test pipeline runs:
 
 If assembly fails, it falls back to protein-only annotation automatically.
 
-Output lands in `tests/pipeline-run/` with one subdirectory per pipeline step (`assemble/`, `annotate/`, `func-annot/`, `submission/`). View run details with `eukan status -d tests/pipeline-run/annotate`. The end-of-run summary reports the gene/mRNA counts from `final.gff3` plus the percentage of mRNAs that received a UniProt or Pfam inference.
+Output lands in `tests/pipeline-run/` with one subdirectory per pipeline step (`assemble/`, `annotate/`, `func-annot/`, `submission/`). View run details with `eukan status -d tests/pipeline-run`. The end-of-run summary reports the gene/mRNA counts from `final.gff3` plus the percentage of mRNAs that received a UniProt or Pfam inference.
 
 #### 3. Clean up
 
