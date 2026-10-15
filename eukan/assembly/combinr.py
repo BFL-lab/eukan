@@ -24,6 +24,7 @@ from pathlib import Path
 
 from Bio.Seq import Seq
 
+from eukan.gff.rows import iter_gff3_rows, parse_attrs
 from eukan.infra.artifacts import Artifact
 from eukan.infra.genome import ContigIndex
 from eukan.infra.logging import get_logger
@@ -69,16 +70,6 @@ def _combinr_bin(config: AssemblyConfig) -> str:
     return str(config.combinr_path) if config.combinr_path else "combinr"
 
 
-def _parse_attrs(col9: str) -> dict[str, str]:
-    attrs: dict[str, str] = {}
-    for part in col9.split(";"):
-        part = part.strip()
-        if "=" in part:
-            key, val = part.split("=", 1)
-            attrs[key.strip()] = val.strip()
-    return attrs
-
-
 def _run_combinr_assemble(config: AssemblyConfig, inputs: list[Path], out_gff: Path) -> None:
     """Run ``combinr assemble`` over *inputs* (GFF3/GTF/BAM), GFF3 stdout to *out_gff*."""
     cmd = [_combinr_bin(config), "assemble"]
@@ -98,23 +89,17 @@ def _parse_combinr_gff3(path: Path) -> list[_Transcript]:
     """Parse combinr's gene/mRNA/exon GFF3 into transcript records (exon-sorted)."""
     by_id: dict[str, _Transcript] = {}
     order: list[str] = []
-    with open(path) as fh:
-        for line in fh:
-            if line.startswith("#") or not line.strip():
-                continue
-            cols = line.rstrip("\n").split("\t")
-            if len(cols) < 9:
-                continue
-            attrs = _parse_attrs(cols[8])
-            if cols[2] == "mRNA":
-                tid = attrs.get("ID", "")
-                if tid:
-                    by_id[tid] = _Transcript(tid, cols[0], cols[6])
-                    order.append(tid)
-            elif cols[2] == "exon":
-                tx = by_id.get(attrs.get("Parent", ""))
-                if tx is not None:
-                    tx.exons.append((int(cols[3]), int(cols[4])))
+    for cols in iter_gff3_rows(path):
+        attrs = parse_attrs(cols[8])
+        if cols[2] == "mRNA":
+            tid = attrs.get("ID", "")
+            if tid:
+                by_id[tid] = _Transcript(tid, cols[0], cols[6])
+                order.append(tid)
+        elif cols[2] == "exon":
+            tx = by_id.get(attrs.get("Parent", ""))
+            if tx is not None:
+                tx.exons.append((int(cols[3]), int(cols[4])))
     result = []
     for tid in order:
         tx = by_id[tid]

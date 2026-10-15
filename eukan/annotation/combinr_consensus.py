@@ -28,6 +28,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from eukan.annotation.evidence import EVIDENCE_ROLES, _first_source_token
+from eukan.gff.rows import iter_gff3_rows, parse_attrs
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.settings import PipelineConfig
@@ -38,16 +39,6 @@ log = get_logger(__name__)
 def _combinr_bin(config: PipelineConfig) -> str:
     """The combinr executable: explicit ``combinr_path`` or ``combinr`` on PATH."""
     return str(config.combinr_path) if config.combinr_path else "combinr"
-
-
-def _parse_attrs(col9: str) -> dict[str, str]:
-    attrs: dict[str, str] = {}
-    for part in col9.split(";"):
-        part = part.strip()
-        if "=" in part:
-            key, val = part.split("=", 1)
-            attrs[key.strip()] = val.strip()
-    return attrs
 
 
 def _chains_to_match(in_gff: Path, out_gff: Path, *, feature_type: str, match_type: str) -> int:
@@ -63,23 +54,19 @@ def _chains_to_match(in_gff: Path, out_gff: Path, *, feature_type: str, match_ty
     """
     chains: dict[str, list] = {}  # key -> [chrom, source, strand, [(lend, rend)]]
     order: list[str] = []
-    with open(in_gff) as fh:
-        for line in fh:
-            if line.startswith("#") or not line.strip():
-                continue
-            cols = line.rstrip("\n").split("\t")
-            if len(cols) < 9 or cols[2] != feature_type:
-                continue
-            attrs = _parse_attrs(cols[8])
-            key = attrs.get("Parent") or attrs.get("ID")
-            if not key:
-                continue
-            rec = chains.get(key)
-            if rec is None:
-                rec = [cols[0], cols[1], cols[6], []]
-                chains[key] = rec
-                order.append(key)
-            rec[3].append((int(cols[3]), int(cols[4])))
+    for cols in iter_gff3_rows(in_gff):
+        if cols[2] != feature_type:
+            continue
+        attrs = parse_attrs(cols[8])
+        key = attrs.get("Parent") or attrs.get("ID")
+        if not key:
+            continue
+        rec = chains.get(key)
+        if rec is None:
+            rec = [cols[0], cols[1], cols[6], []]
+            chains[key] = rec
+            order.append(key)
+        rec[3].append((int(cols[3]), int(cols[4])))
 
     with open(out_gff, "w") as out:
         for key in order:

@@ -10,16 +10,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from eukan.gff.rows import iter_gff3_rows
+
 
 def _first_source_token(gff3: Path) -> str | None:
     """Return the GFF3 source column (col 2) of the first data line, or None."""
-    with open(gff3) as fh:
-        for line in fh:
-            if not line or line.startswith("#"):
-                continue
-            cols = line.rstrip("\n").split("\t")
-            if len(cols) >= 2 and cols[1]:
-                return cols[1]
+    for cols in iter_gff3_rows(gff3):
+        if cols[1]:
+            return cols[1]
     return None
 
 

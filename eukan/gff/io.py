@@ -15,6 +15,7 @@ from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
 from eukan.gff import create_gff_db
+from eukan.gff.rows import iter_gff3_rows
 from eukan.infra.genome import ContigIndex
 
 
@@ -23,15 +24,7 @@ def count_gff3_features(gff3_path: str | Path, feature_type: str = "gene") -> in
 
     Fast line-based parsing — does not load the file into a database.
     """
-    count = 0
-    with open(gff3_path) as f:
-        for line in f:
-            if line.startswith("#") or not line.strip():
-                continue
-            cols = line.split("\t")
-            if len(cols) >= 3 and cols[2] == feature_type:
-                count += 1
-    return count
+    return sum(1 for cols in iter_gff3_rows(gff3_path) if cols[2] == feature_type)
 
 
 def featuredb2gff3_file(featuredb: gffutils.FeatureDB, out: str | Path) -> None:

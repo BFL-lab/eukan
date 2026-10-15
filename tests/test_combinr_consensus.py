@@ -16,6 +16,7 @@ from eukan.annotation.combinr_consensus import (
     _stage_combinr_inputs,
     run_combinr_consensus,
 )
+from eukan.gff.rows import parse_attrs
 from eukan.settings import PipelineConfig
 
 
@@ -439,7 +440,7 @@ def test_combinr_consensus_end_to_end(tmp_path, combinr_bin):
     report = sdir / "combinr.evidence_report.txt"
     assert report.exists() and report.stat().st_size > 0
     gene_ids = {
-        cc._parse_attrs(row[8])["ID"]
+        parse_attrs(row[8])["ID"]
         for row in _read_rows(sdir / "consensus_models.gff3")
         if row[2] == "gene"
     }

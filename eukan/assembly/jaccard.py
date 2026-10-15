@@ -51,6 +51,7 @@ from Bio.Seq import Seq
 from eukan.assembly.minimap2 import map_reads_to_transcripts
 from eukan.gff import create_gff_db
 from eukan.gff.io import iter_assembled_sequences
+from eukan.gff.rows import iter_gff3_rows, parse_attrs
 from eukan.infra.genome import ContigIndex
 from eukan.infra.logging import get_logger
 from eukan.settings import AssemblyConfig
@@ -542,23 +543,6 @@ class _Tx:
     exons: list[tuple[int, int]] = field(default_factory=list)
 
 
-def _parse_attrs(col9: str) -> dict[str, str]:
-    """Parse column 9 of either GFF3 (``key=value``) or GTF (``key "value"``)."""
-    attrs: dict[str, str] = {}
-    for part in col9.strip().split(";"):
-        part = part.strip()
-        if not part:
-            continue
-        if "=" in part:  # GFF3
-            key, val = part.split("=", 1)
-            attrs[key.strip()] = val.strip()
-        else:  # GTF: key "value"
-            bits = part.split(None, 1)
-            if len(bits) == 2:
-                attrs[bits[0].strip()] = bits[1].strip().strip('"')
-    return attrs
-
-
 def _parse_transcript_models(gff: str | Path) -> list[_Tx]:
     """Parse a transcript>exon GFF3 or GTF into transcript records.
 
@@ -578,22 +562,16 @@ def _parse_transcript_models(gff: str | Path) -> list[_Tx]:
             order.append(tid)
         return tx
 
-    with open(gff) as fh:
-        for line in fh:
-            if line.startswith("#") or not line.strip():
-                continue
-            cols = line.rstrip("\n").split("\t")
-            if len(cols) < 9:
-                continue
-            attrs = _parse_attrs(cols[8])
-            if cols[2] in ("transcript", "mRNA"):
-                tid = attrs.get("ID") or attrs.get("transcript_id")
-                if tid:
-                    _get(tid, cols)
-            elif cols[2] == "exon":
-                tid = attrs.get("Parent") or attrs.get("transcript_id")
-                if tid:
-                    _get(tid, cols).exons.append((int(cols[3]), int(cols[4])))
+    for cols in iter_gff3_rows(gff):
+        attrs = parse_attrs(cols[8])
+        if cols[2] in ("transcript", "mRNA"):
+            tid = attrs.get("ID") or attrs.get("transcript_id")
+            if tid:
+                _get(tid, cols)
+        elif cols[2] == "exon":
+            tid = attrs.get("Parent") or attrs.get("transcript_id")
+            if tid:
+                _get(tid, cols).exons.append((int(cols[3]), int(cols[4])))
 
     models = []
     for tid in order:
@@ -661,23 +639,19 @@ def _iter_transcript_models(gff: str | Path) -> Iterator[_Tx]:
     BAM-derived GFF3. Streaming keeps memory bounded on a genome-wide model set.
     """
     cur: _Tx | None = None
-    with open(gff) as fh:
-        for line in fh:
-            if line.startswith("#") or not line.strip():
-                continue
-            cols = line.rstrip("\n").split("\t")
-            if len(cols) < 9 or cols[2] != "exon":
-                continue
-            attrs = _parse_attrs(cols[8])
-            tid = attrs.get("Parent") or attrs.get("transcript_id")
-            if not tid:
-                continue
-            if cur is None or cur.tid != tid:
-                if cur is not None and cur.exons:
-                    cur.exons.sort()
-                    yield cur
-                cur = _Tx(tid, cols[0], cols[6], cols[1])
-            cur.exons.append((int(cols[3]), int(cols[4])))
+    for cols in iter_gff3_rows(gff):
+        if cols[2] != "exon":
+            continue
+        attrs = parse_attrs(cols[8])
+        tid = attrs.get("Parent") or attrs.get("transcript_id")
+        if not tid:
+            continue
+        if cur is None or cur.tid != tid:
+            if cur is not None and cur.exons:
+                cur.exons.sort()
+                yield cur
+            cur = _Tx(tid, cols[0], cols[6], cols[1])
+        cur.exons.append((int(cols[3]), int(cols[4])))
     if cur is not None and cur.exons:
         cur.exons.sort()
         yield cur

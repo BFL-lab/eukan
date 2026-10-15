@@ -6,7 +6,6 @@ from pathlib import Path
 
 from eukan.assembly import combinr
 from eukan.assembly.combinr import (
-    _parse_attrs,
     _parse_combinr_gff3,
     _Transcript,
     _write_transcript_alignments_and_hints,
@@ -32,12 +31,6 @@ def _config(tmp_path, **kw):
 
 
 # --- parsing ---------------------------------------------------------------
-
-
-def test_parse_attrs():
-    assert _parse_attrs("ID=m1;Parent=g1;contains=a,b") == {
-        "ID": "m1", "Parent": "g1", "contains": "a,b"
-    }
 
 
 def test_parse_combinr_gff3_groups_and_sorts_exons(tmp_path):

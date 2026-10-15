@@ -13,6 +13,7 @@ from eukan.annotation.spaln_params import build_ssp
 from eukan.gff import create_gff_db
 from eukan.gff import transforms as gff_transforms
 from eukan.gff.normalize import normalize_to_gff3
+from eukan.gff.rows import iter_gff3_rows
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_dir
@@ -131,16 +132,12 @@ def _run_spaln(
 def _run_fitild(intron_hints_path: Path, sdir: Path) -> str:
     """Compute intron length distribution via fitild. Returns the -yI parameter string."""
     counts: Counter[int] = Counter()
-    with open(intron_hints_path) as fin:
-        for line in fin:
-            cols = line.split("\t")
-            if len(cols) < 5:
-                continue
-            try:
-                length = int(cols[4]) - int(cols[3])
-            except ValueError:
-                continue
-            counts[length] += 1
+    for cols in iter_gff3_rows(intron_hints_path):
+        try:
+            length = int(cols[4]) - int(cols[3])
+        except ValueError:
+            continue
+        counts[length] += 1
     with open(sdir / "introns.ild", "w") as fout:
         for length in sorted(counts):
             fout.write(f"{length} {counts[length]}\n")

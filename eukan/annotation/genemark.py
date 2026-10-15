@@ -8,6 +8,7 @@ import gffutils
 
 from eukan.gff import transforms as gff_transforms
 from eukan.gff.normalize import normalize_to_gff3
+from eukan.gff.rows import iter_gff3_rows
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_dir
@@ -70,11 +71,10 @@ def run_genemark(config: PipelineConfig, hints: Path | None = None) -> Path:
     has_intron_hints = False
     if hints is not None:
         intron_count = 0
-        with open(hints) as fin, open(sdir / "introns.gff", "w") as fout:
-            for line in fin:
-                cols = line.split("\t")
-                if len(cols) >= 3 and cols[2] == "intron":
-                    fout.write(line)
+        with open(sdir / "introns.gff", "w") as fout:
+            for cols in iter_gff3_rows(hints):
+                if cols[2] == "intron":
+                    fout.write("\t".join(cols) + "\n")
                     intron_count += 1
         has_intron_hints = intron_count >= 150
 

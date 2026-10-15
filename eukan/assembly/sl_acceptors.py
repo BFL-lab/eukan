@@ -44,6 +44,7 @@ from eukan.assembly.sl_depletion import (
     _variants,
     is_adapter,
 )
+from eukan.gff.rows import iter_gff3_rows, parse_attrs
 from eukan.infra.artifacts import Artifact
 from eukan.infra.logging import get_logger
 from eukan.settings import AssemblyConfig
@@ -290,18 +291,14 @@ def _write_acceptors(sites: list[AcceptorSite], out: Path) -> None:
 def load_sl_acceptors(path: str | Path) -> list[AcceptorSite]:
     """Parse an ``sl_acceptors.gff3`` back into :class:`AcceptorSite` records."""
     sites: list[AcceptorSite] = []
-    with open(path) as fh:
-        for line in fh:
-            if line.startswith("#") or not line.strip():
-                continue
-            cols = line.rstrip("\n").split("\t")
-            if len(cols) < 9 or cols[2] != "SL_acceptor":
-                continue
-            attrs = dict(p.split("=", 1) for p in cols[8].split(";") if "=" in p)
-            support = int(cols[5]) if cols[5].lstrip("-").isdigit() else 0
-            raw_src = attrs.get("sources", "")
-            sources = tuple(raw_src.split(",")) if raw_src else ()
-            sites.append(AcceptorSite(cols[0], int(cols[3]), cols[6], support, sources))
+    for cols in iter_gff3_rows(path):
+        if cols[2] != "SL_acceptor":
+            continue
+        attrs = parse_attrs(cols[8])
+        support = int(cols[5]) if cols[5].lstrip("-").isdigit() else 0
+        raw_src = attrs.get("sources", "")
+        sources = tuple(raw_src.split(",")) if raw_src else ()
+        sites.append(AcceptorSite(cols[0], int(cols[3]), cols[6], support, sources))
     return sites
 
 
