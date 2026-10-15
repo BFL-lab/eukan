@@ -212,7 +212,12 @@ def download_kofam(output_dir: Path) -> DatabaseEntry:
         shutil.rmtree(extract_dir)
     extract_dir.mkdir(parents=True)
     with tarfile.open(tarball, "r:gz") as tf:
-        tf.extractall(extract_dir)
+        # The "data" filter refuses members that would land outside
+        # extract_dir; it exists from Python 3.11.4 (pyproject allows 3.11.0).
+        if hasattr(tarfile, "data_filter"):
+            tf.extractall(extract_dir, filter="data")
+        else:
+            tf.extractall(extract_dir)
     tarball.unlink()
 
     # Tarball layout: profiles/eukaryote.hal + profiles/K*.hmm

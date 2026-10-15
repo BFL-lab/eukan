@@ -1,6 +1,10 @@
 """Tests for eukan.dbfetch — manifest tracking, integrity, and resumable downloads."""
 
+import io
+import tarfile
 from unittest.mock import patch
+
+import pytest
 
 from eukan.functional import dbfetch
 from eukan.functional.dbfetch import (
@@ -221,3 +225,25 @@ class TestDownloadResume:
 
         assert not dest.exists()
         assert partial.exists() and partial.read_bytes() == b"first-chunk"
+
+
+class TestKofamExtraction:
+    @pytest.mark.skipif(
+        not hasattr(tarfile, "data_filter"), reason="extraction filters need Python >= 3.11.4",
+    )
+    def test_member_escaping_extract_dir_is_refused(self, tmp_path):
+        """A profiles.tar.gz member named ../escaped.txt must not be written
+        outside the extraction directory."""
+
+        def fake_download(url, dest):
+            data = b"escaped\n"
+            info = tarfile.TarInfo("../escaped.txt")
+            info.size = len(data)
+            with tarfile.open(dest, "w:gz") as tf:
+                tf.addfile(info, io.BytesIO(data))
+
+        with patch.object(dbfetch, "_download_file", side_effect=fake_download):
+            with pytest.raises(tarfile.OutsideDestinationError):
+                dbfetch.download_kofam(tmp_path)
+
+        assert not (tmp_path / "escaped.txt").exists()
