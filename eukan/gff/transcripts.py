@@ -2,7 +2,8 @@
 
 The assembly steps hand transcript models to each other as gene>mRNA>exon GFF3
 (and read StringTie's transcript>exon GTF). This module holds the one record type
-and the one reader, writer, splitter and sequence stitcher for them. It reads rows
+and the one reader, writer, splitter, streaming cut loop and sequence stitcher for
+them. It reads rows
 with :mod:`eukan.gff.rows` instead of building a gffutils database, which is about
 30x slower on a genome-wide model set.
 """
@@ -108,6 +109,30 @@ def write_transcripts(models: Iterable[Transcript], out_gff: str | Path) -> None
         fh.write("##gff-version 3\n")
         for tx in sorted(models, key=lambda t: (t.chrom, t.start)):
             write_transcript(fh, tx)
+
+
+def stream_cut(
+    src: str | Path,
+    out_gff: str | Path,
+    cut: Callable[[Transcript], list[Transcript] | None],
+) -> int:
+    """Copy the models of *src* to *out_gff*, each replaced by ``cut(tx)`` unless ``None``.
+
+    Streams one transcript at a time, in file order; *out_gff* is always written
+    (a copy-through when nothing is cut). Returns the number of transcripts cut.
+    """
+    n_cut = 0
+    with open(out_gff, "w") as fh:
+        fh.write("##gff-version 3\n")
+        for tx in iter_transcripts(src):
+            pieces = cut(tx)
+            if pieces is None:
+                write_transcript(fh, tx)
+            else:
+                for piece in pieces:
+                    write_transcript(fh, piece)
+                n_cut += 1
+    return n_cut
 
 
 def partition_exons(

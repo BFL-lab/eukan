@@ -8,6 +8,7 @@ from eukan.gff.transcripts import (
     read_transcripts,
     split_at,
     stitch,
+    stream_cut,
     write_transcripts,
 )
 from eukan.infra.genome import ContigIndex
@@ -97,3 +98,20 @@ def test_stitch_joins_exons_and_reverse_complements(tmp_path):
     with ContigIndex(fa) as contigs:
         assert stitch(Transcript("p", "c", "+", "s", [(1, 4), (9, 12)]), contigs) == "AAAAGGGG"
         assert stitch(Transcript("m", "c", "-", "s", [(1, 4), (9, 12)]), contigs) == "CCCCTTTT"
+
+
+def test_stream_cut_replaces_cut_models_and_counts_them(tmp_path):
+    src = tmp_path / "in.gff3"
+    write_transcripts(
+        [Transcript("a", "c1", "+", "s", [(1, 50)]), Transcript("b", "c1", "+", "s", [(101, 200)])],
+        src,
+    )
+    out = tmp_path / "out.gff3"
+
+    def cut(tx):
+        return split_at(tx, [40], 10) if tx.tid == "b" else None
+
+    assert stream_cut(src, out, cut) == 1
+    got = [(t.tid, t.exons) for t in read_transcripts(out)]
+    assert got == [("a", [(1, 50)]), ("b.j1", [(101, 140)]), ("b.j2", [(141, 200)])]
+    assert out.read_text().startswith("##gff-version 3\n")

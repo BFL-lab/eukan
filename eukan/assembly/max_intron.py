@@ -22,7 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from eukan.assembly.tracks import MAXINTRON_GFF3, mapped_transcript_stems, resolve_model_source
-from eukan.gff.transcripts import Transcript, iter_transcripts, split_at, write_transcript
+from eukan.gff.transcripts import Transcript, split_at, stream_cut
 from eukan.infra.logging import get_logger
 from eukan.settings import AssemblyConfig
 
@@ -96,20 +96,16 @@ def cut_models_at_max_intron(
     cut) so it can serve as the SL cut's stable input. Returns
     ``(transcripts_cut, over_long_introns_severed)``.
     """
-    n_cut = 0
     n_long = 0
-    with open(out_gff, "w") as fh:
-        fh.write("##gff-version 3\n")
-        for tx in iter_transcripts(gff_or_gtf):
-            long_here = _count_long_introns(tx, max_intron_len)
-            result = _cut_one(tx, min_segment, max_intron_len=max_intron_len)
-            if result is None:
-                write_transcript(fh, tx)
-            else:
-                for piece in result:
-                    write_transcript(fh, piece)
-                n_cut += 1
-                n_long += long_here
+
+    def cut(tx: Transcript) -> list[Transcript] | None:
+        nonlocal n_long
+        result = _cut_one(tx, min_segment, max_intron_len=max_intron_len)
+        if result is not None:
+            n_long += _count_long_introns(tx, max_intron_len)
+        return result
+
+    n_cut = stream_cut(gff_or_gtf, out_gff, cut)
     return n_cut, n_long
 
 

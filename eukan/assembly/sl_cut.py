@@ -26,7 +26,7 @@ import pysam
 from eukan.assembly.bam_reads import REF_CONSUMING
 from eukan.assembly.sl_acceptors import AcceptorSite, load_sl_acceptors
 from eukan.assembly.tracks import CUT_GFF3, MAXINTRON_GFF3, TRANSCRIPT_SETS, mapped_transcript_stems
-from eukan.gff.transcripts import Transcript, iter_transcripts, split_at, write_transcript
+from eukan.gff.transcripts import Transcript, split_at, stream_cut, write_transcript
 from eukan.infra.artifacts import Artifact
 from eukan.infra.logging import get_logger
 from eukan.settings import AssemblyConfig
@@ -170,29 +170,25 @@ def cut_models_at_sl(
     for site in sites:
         by_chrom.setdefault(site.chrom, []).append(site)
 
-    n_cut = 0
     n_conflict = 0
-    with open(out_gff, "w") as fh:
-        fh.write("##gff-version 3\n")
-        for tx in iter_transcripts(gff_or_gtf):
-            span_lo, span_hi = tx.exons[0][0], tx.exons[-1][1]
-            relevant = [s for s in by_chrom.get(tx.chrom, []) if span_lo <= s.pos <= span_hi]
-            result = _cut_one(tx, relevant, min_segment)
-            if result is None:
-                # A multi-exon, stranded transcript whose only in-span SL acceptors
-                # sit on the opposite strand: the splice-derived strand and the SL
-                # disagree. Trust the introns — keep the strand, skip the cut.
-                if (
-                    relevant and len(tx.exons) > 1
-                    and tx.strand in ("+", "-")
-                    and all(s.strand != tx.strand for s in relevant)
-                ):
-                    n_conflict += 1
-                write_transcript(fh, tx)
-            else:
-                for piece in result:
-                    write_transcript(fh, piece)
-                n_cut += 1
+
+    def cut(tx: Transcript) -> list[Transcript] | None:
+        nonlocal n_conflict
+        span_lo, span_hi = tx.exons[0][0], tx.exons[-1][1]
+        relevant = [s for s in by_chrom.get(tx.chrom, []) if span_lo <= s.pos <= span_hi]
+        result = _cut_one(tx, relevant, min_segment)
+        # A multi-exon, stranded transcript whose only in-span SL acceptors sit on
+        # the opposite strand: the splice-derived strand and the SL disagree. Trust
+        # the introns — keep the strand, skip the cut.
+        if (
+            result is None and relevant and len(tx.exons) > 1
+            and tx.strand in ("+", "-")
+            and all(s.strand != tx.strand for s in relevant)
+        ):
+            n_conflict += 1
+        return result
+
+    n_cut = stream_cut(gff_or_gtf, out_gff, cut)
     if n_conflict:
         log.warning(
             "%d multi-exon transcript(s) had SL acceptors only on the opposite "
