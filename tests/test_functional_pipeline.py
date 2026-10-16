@@ -57,7 +57,7 @@ def _fake_search(calls):
     return _search_and_cache
 
 
-def _fake_annotate_fasta(proteins, homology_res, hmmscan_res, homology_db="uniprot"):
+def _fake_annotate_fasta(proteins, homology_res, hmmscan_res, format_hit):
     out = proteins.parent / f"{proteins.stem}.mod{proteins.suffix}"
     out.write_text(">x\nMA\n")
     return out
@@ -87,15 +87,13 @@ def _install_counts(monkeypatch) -> dict[str, int]:
         cache.write_text(json.dumps(results))
         return results
 
-    def fake_annotate_fasta(proteins, homology_res, hmmscan_res, homology_db="uniprot"):
+    def fake_annotate_fasta(proteins, homology_res, hmmscan_res, format_hit):
         counts["annotate_fasta"] += 1
         out = proteins.parent / f"{proteins.stem}.mod{proteins.suffix}"
         out.write_text(">s1 hypothetical protein\nMACE\n")
         return out
 
-    def fake_annotate_gff3(
-        gff3_path, homology_res, hmmscan_res, output_dir=None, homology_db="uniprot"
-    ):
+    def fake_annotate_gff3(gff3_path, homology_res, hmmscan_res, apply_hits, output_dir=None):
         counts["annotate_gff3"] += 1
         out = (output_dir or gff3_path.parent) / f"{gff3_path.stem}.mod{gff3_path.suffix}"
         out.write_text("##gff-version 3\nchr1\teukan\tgene\t1\t100\t.\t+\t.\tID=g1\n")

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TypedDict
@@ -60,6 +60,11 @@ def _pfam_accession(info: HitInfo, hit_name: str) -> str:
 
 # query_id -> {hit_id -> HitInfo}
 HitResults = dict[str, dict[str, HitInfo]]
+
+# How the hits of one homology DB are written out: one hit as a FASTA header
+# field, and a query's hits onto its mRNA/CDS feature's GFF3 attributes.
+HitFormatter = Callable[[str, HitInfo], str]
+HitApplier = Callable[[gffutils.Feature, dict[str, HitInfo]], None]
 
 
 # ---------------------------------------------------------------------------
@@ -182,21 +187,16 @@ def annotate_fasta(
     proteins: Path,
     homology_res: HitResults,
     hmmscan_res: HitResults,
-    homology_db: str = "uniprot",
+    format_hit: HitFormatter,
 ) -> Path:
     """Annotate protein FASTA headers with functional information.
 
-    ``homology_db`` selects the source of the homology hits cached in
-    ``homology_res`` and only affects the wording of the marginal-hit
-    fallback label. Returns the path to the annotated output file.
+    ``format_hit`` writes one hit of ``homology_res``: :func:`format_uniprot_hit`
+    or :func:`format_kofam_hit`, after the homology DB searched. Returns the
+    path to the annotated output file.
     """
-    if homology_db == "kofam":
-        homology_fmt = _format_kofam_results(homology_res)
-    else:
-        homology_fmt = _format_results(
-            homology_res, marginal_label="hypothetical protein [{desc}]",
-        )
-    hmmscan_fmt = _format_results(hmmscan_res, marginal_label="{desc} [marginal domain hit]")
+    homology_fmt = _format_hits(homology_res, format_hit)
+    hmmscan_fmt = _format_hits(hmmscan_res, _format_pfam_hit)
 
     output_path = proteins.parent / f"{proteins.stem}.mod{proteins.suffix}"
 
@@ -214,38 +214,40 @@ def annotate_fasta(
     return output_path
 
 
-def _format_results(results: HitResults, marginal_label: str = "{desc} [marginal hit]") -> dict[str, str]:
-    """Format UniProt/Pfam-style search results with marginal hit annotations."""
-    formatted = {}
-    for query_id, hits in results.items():
-        parts = []
-        for hit_id, info in hits.items():
-            desc = info["description"]
-            ev = info["evalue"]
-            if ev >= 1e-3:
-                desc = marginal_label.format(desc=desc)
-            parts.append(f"{hit_id}: {desc} ({ev:.2e})")
-        formatted[query_id] = " ;; ".join(parts)
-    return formatted
+def _format_hits(results: HitResults, format_hit: HitFormatter) -> dict[str, str]:
+    """Each query's hits as one FASTA header field, one ``format_hit`` per hit."""
+    return {
+        query_id: " ;; ".join(format_hit(hit_id, info) for hit_id, info in hits.items())
+        for query_id, hits in results.items()
+    }
 
 
-def _format_kofam_results(results: HitResults) -> dict[str, str]:
-    """Format KOfam hits for FASTA headers.
+def _format_evalue_hit(hit_id: str, info: HitInfo, marginal_label: str) -> str:
+    """A UniProt or Pfam hit; a marginal one's description becomes ``marginal_label``."""
+    desc, ev = info["description"], info["evalue"]
+    if ev >= 1e-3:
+        desc = marginal_label.format(desc=desc)
+    return f"{hit_id}: {desc} ({ev:.2e})"
+
+
+def format_uniprot_hit(hit_id: str, info: HitInfo) -> str:
+    """A UniProt hit for a FASTA header; a marginal one reads as a hypothetical protein."""
+    return _format_evalue_hit(hit_id, info, "hypothetical protein [{desc}]")
+
+
+def _format_pfam_hit(hit_id: str, info: HitInfo) -> str:
+    return _format_evalue_hit(hit_id, info, "{desc} [marginal domain hit]")
+
+
+def format_kofam_hit(k_number: str, info: HitInfo) -> str:
+    """A KOfam hit for a FASTA header.
 
     Above-threshold hits are emitted verbatim; below-threshold hits are
     tagged ``[marginal KO hit]`` so the user can tell at a glance whether
     a record's KO assignment passed the per-KO cutoff.
     """
-    formatted = {}
-    for query_id, hits in results.items():
-        parts = []
-        for k_number, info in hits.items():
-            desc = info["description"]
-            ev = info["evalue"]
-            tag = "" if info.get("above_threshold") else " [marginal KO hit]"
-            parts.append(f"{k_number}: {desc}{tag} ({ev:.2e})")
-        formatted[query_id] = " ;; ".join(parts)
-    return formatted
+    tag = "" if info.get("above_threshold") else " [marginal KO hit]"
+    return f"{k_number}: {info['description']}{tag} ({info['evalue']:.2e})"
 
 
 # ---------------------------------------------------------------------------
@@ -257,10 +259,14 @@ def annotate_gff3(
     gff3_path: Path,
     homology_res: HitResults,
     hmmscan_res: HitResults,
+    apply_hits: HitApplier,
     output_dir: Path | None = None,
-    homology_db: str = "uniprot",
 ) -> Path:
     """Annotate GFF3 features with functional information.
+
+    ``apply_hits`` sets a feature's attributes from its ``homology_res`` hits:
+    :func:`apply_uniprot_hits` or :func:`apply_kofam_hits`, after the homology
+    DB searched.
 
     Output filename is ``<stem>.mod<suffix>``. When *output_dir* is given,
     the file lands there; otherwise it lands next to *gff3_path*. The
@@ -279,7 +285,7 @@ def annotate_gff3(
     from eukan.gff import create_gff_db
     gff3 = create_gff_db(gff3_path)
     gff3.update(
-        _add_func_info(gff3, homology_res, hmmscan_strict, homology_db),
+        _add_func_info(gff3, homology_res, hmmscan_strict, apply_hits),
         merge_strategy="replace",
     )
 
@@ -294,7 +300,7 @@ def annotate_gff3(
     return output_path
 
 
-def _apply_uniprot_hits(f: gffutils.Feature, hits: dict[str, HitInfo]) -> None:
+def apply_uniprot_hits(f: gffutils.Feature, hits: dict[str, HitInfo]) -> None:
     """Set product/inference from UniProt phmmer hits (E-value gated)."""
     f.attributes["product"] = [
         v["description"] if v["evalue"] <= _EVALUE_GOOD_HIT else "hypothetical protein"
@@ -307,7 +313,7 @@ def _apply_uniprot_hits(f: gffutils.Feature, hits: dict[str, HitInfo]) -> None:
     ]
 
 
-def _apply_kofam_hits(f: gffutils.Feature, hits: dict[str, HitInfo]) -> None:
+def apply_kofam_hits(f: gffutils.Feature, hits: dict[str, HitInfo]) -> None:
     """Set product/ec_number/Dbxref/inference from KOfam hits (per-KO threshold gated).
 
     Only above-threshold KOs contribute to ``product``/``Dbxref``/
@@ -343,7 +349,7 @@ def _add_func_info(
     gff3: gffutils.FeatureDB,
     homology_res: HitResults,
     hmmscan_res: HitResults,
-    homology_db: str = "uniprot",
+    apply_hits: HitApplier,
 ) -> Iterator[gffutils.Feature]:
     """Yield mRNA/CDS features annotated with functional information."""
     for f in gff3.features_of_type(["mRNA", "CDS"]):
@@ -354,11 +360,7 @@ def _add_func_info(
         lookup_id = feature_id if f.featuretype == "mRNA" else parent_id
 
         if lookup_id and lookup_id in homology_res:
-            hits = homology_res[lookup_id]
-            if homology_db == "kofam":
-                _apply_kofam_hits(f, hits)
-            else:
-                _apply_uniprot_hits(f, hits)
+            apply_hits(f, homology_res[lookup_id])
         else:
             f.attributes["product"] = ["hypothetical protein"]
 

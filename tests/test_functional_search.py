@@ -13,6 +13,7 @@ from eukan.functional.search import (
     _open_hmm_db,
     _pfam_accession,
     annotate_gff3,
+    apply_uniprot_hits,
     run_hmmscan_search,
 )
 from eukan.gff import create_gff_db
@@ -69,7 +70,7 @@ class TestAddFuncInfoPfam:
                 }
             }
         }
-        feats = list(_add_func_info(db, phmmer_res, hmmscan_res))
+        feats = list(_add_func_info(db, phmmer_res, hmmscan_res, apply_uniprot_hits))
         # mRNA carries the inference attribute
         mrna = next(f for f in feats if f.featuretype == "mRNA")
         assert mrna.attributes["inference"] == ["protein motif:PFAM:PF00710"]
@@ -86,7 +87,7 @@ class TestAddFuncInfoPfam:
                 }
             }
         }
-        feats = list(_add_func_info(db, phmmer_res, hmmscan_res))
+        feats = list(_add_func_info(db, phmmer_res, hmmscan_res, apply_uniprot_hits))
         mrna = next(f for f in feats if f.featuretype == "mRNA")
         # Falls back to name when accession is missing
         assert mrna.attributes["inference"] == ["protein motif:PFAM:Asparaginase"]
@@ -110,7 +111,7 @@ class TestAddFuncInfoPfam:
                 }
             }
         }
-        feats = list(_add_func_info(db, phmmer_res, hmmscan_res))
+        feats = list(_add_func_info(db, phmmer_res, hmmscan_res, apply_uniprot_hits))
         mrna = next(f for f in feats if f.featuretype == "mRNA")
         assert mrna.attributes["inference"] == [
             "similar to AA sequence:UniProtKB:sp|Q9UTS7|ASPG2_SCHPO",
@@ -147,7 +148,7 @@ class TestAnnotateGff3OutputRouting:
         gff3 = annotate_dir / "final.gff3"
         self._write_minimal_gff(gff3)
 
-        out = annotate_gff3(gff3, {}, {}, output_dir=func_dir)
+        out = annotate_gff3(gff3, {}, {}, apply_uniprot_hits, output_dir=func_dir)
 
         assert out == func_dir / "final.mod.gff3"
         assert out.exists()
@@ -157,7 +158,7 @@ class TestAnnotateGff3OutputRouting:
         gff3 = tmp_path / "final.gff3"
         self._write_minimal_gff(gff3)
 
-        out = annotate_gff3(gff3, {}, {})
+        out = annotate_gff3(gff3, {}, {}, apply_uniprot_hits)
 
         assert out == tmp_path / "final.mod.gff3"
         assert out.exists()

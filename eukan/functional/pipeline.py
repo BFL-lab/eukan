@@ -7,7 +7,8 @@ driver assumes. Each step is driven directly via ``run_orchestrated_step``
 with a per-proteome+mode scoped manifest key (see :func:`_step_scope`) and
 explicit input fingerprints (see :func:`_func_step_fingerprints`).
 
-The homology search has two modes controlled by ``config.homology_db``:
+The homology search has two modes controlled by ``config.homology_db``, one
+``_MODES`` entry each:
 
 * ``"uniprot"`` — phmmer of the proteome vs UniProt-SwissProt (default).
 * ``"kofam"``   — hmmscan of the proteome vs the pressed KOfam HMM
@@ -24,12 +25,23 @@ from __future__ import annotations
 import gc
 import hashlib
 import json
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
+from eukan.functional.kofam import run_kofam_search
 from eukan.functional.search import (
+    HitApplier,
+    HitFormatter,
     HitResults,
+    _load_digital_sequences,
+    _open_hmm_db,
     annotate_fasta,
     annotate_gff3,
+    apply_kofam_hits,
+    apply_uniprot_hits,
+    format_kofam_hit,
+    format_uniprot_hit,
     run_hmmscan_search,
     run_phmmer_search,
 )
@@ -47,12 +59,42 @@ from eukan.settings import FunctionalConfig
 log = get_logger(__name__)
 
 
+@dataclass(frozen=True)
+class _HomologyMode:
+    """Everything that depends on ``config.homology_db``."""
+
+    cache_suffix: str  # names the search cache and scopes the step keys
+    search: Callable[[FunctionalConfig, float], HitResults]  # (config, E-value cutoff)
+    db_scalars: Callable[[FunctionalConfig], list[str]]  # its databases, for the search fingerprint
+    format_hit: HitFormatter  # one homology hit in a FASTA header
+    apply_hits: HitApplier  # a query's homology hits onto its GFF3 feature
+
+
+_MODES: dict[str, _HomologyMode] = {
+    "uniprot": _HomologyMode(
+        cache_suffix="phmmer",
+        search=lambda c, evalue: _run_uniprot_phmmer(c.proteins, c.uniprot_db, c.num_cpu, evalue),
+        db_scalars=lambda c: [f"uniprot_db={c.uniprot_db}"],
+        format_hit=format_uniprot_hit,
+        apply_hits=apply_uniprot_hits,
+    ),
+    "kofam": _HomologyMode(
+        cache_suffix="kofam",
+        search=lambda c, evalue: run_kofam_search(
+            c.proteins, c.kofam_db, c.ko_list_path, c.num_cpu, evalue,
+        ),
+        db_scalars=lambda c: [f"kofam_db={c.kofam_db}", f"ko_list={c.ko_list_path}"],
+        format_hit=format_kofam_hit,
+        apply_hits=apply_kofam_hits,
+    ),
+}
+
+
 def _search_cache_path(config: FunctionalConfig) -> Path:
     """Return the search step's JSON cache (homology and Pfam hits) for the active
     homology DB, beside the proteome."""
-    stem = config.proteins.stem
-    suffix = "kofam" if config.homology_db == "kofam" else "phmmer"
-    return config.proteins.parent / f"{stem}.{suffix}.search.json"
+    suffix = _MODES[config.homology_db].cache_suffix
+    return config.proteins.parent / f"{config.proteins.stem}.{suffix}.search.json"
 
 
 def _step_scope(config: FunctionalConfig) -> str:
@@ -77,7 +119,7 @@ def _step_scope(config: FunctionalConfig) -> str:
     *which* proteome+mode; the input fingerprints (see
     :func:`_func_step_fingerprints`) handle *content* changes within one scope.
     """
-    suffix = "kofam" if config.homology_db == "kofam" else "phmmer"
+    suffix = _MODES[config.homology_db].cache_suffix
     path = run_dir_relative(config.proteins, config.manifest_dir)
     digest = hashlib.md5(str(path).encode()).hexdigest()[:8]
     return f"{config.proteins.stem}.{suffix}.{digest}"
@@ -86,7 +128,6 @@ def _step_scope(config: FunctionalConfig) -> str:
 def _run_uniprot_phmmer(
     proteins: Path, uniprot_db: Path, num_cpu: int, evalue: float,
 ) -> HitResults:
-    from eukan.functional.search import _load_digital_sequences
     log.info("Loading proteome from %s", proteins)
     queries = _load_digital_sequences(proteins)
     log.info("Loading UniProt database from %s", uniprot_db)
@@ -104,7 +145,6 @@ def _run_uniprot_phmmer(
 def _run_pfam_hmmscan(
     proteins: Path, pfam_db: Path, num_cpu: int, evalue: float,
 ) -> HitResults:
-    from eukan.functional.search import _load_digital_sequences, _open_hmm_db
     log.info("Loading proteome from %s", proteins)
     queries = _load_digital_sequences(proteins)
     log.info(
@@ -124,18 +164,7 @@ def _search_and_cache(config: FunctionalConfig, cache: Path) -> dict[str, HitRes
     runtimes.
     """
     evalue_f = float(config.evalue)
-
-    if config.homology_db == "kofam":
-        from eukan.functional.kofam import run_kofam_search
-        homology_res = run_kofam_search(
-            config.proteins, config.kofam_db, config.ko_list_path,
-            config.num_cpu, evalue_f,
-        )
-    else:
-        homology_res = _run_uniprot_phmmer(
-            config.proteins, config.uniprot_db, config.num_cpu, evalue_f,
-        )
-
+    homology_res = _MODES[config.homology_db].search(config, evalue_f)
     pfam_res = _run_pfam_hmmscan(
         config.proteins, config.pfam_db, config.num_cpu, evalue_f,
     )
@@ -165,18 +194,11 @@ def _func_step_fingerprints(
     fingerprint, so a record from before the current cache layout (the
     homology and Pfam hits in two files) re-runs the search.
     """
-    if config.homology_db == "kofam":
-        db_scalars = [
-            f"kofam_db={config.kofam_db}",
-            f"ko_list={config.ko_list_path}",
-        ]
-    else:
-        db_scalars = [f"uniprot_db={config.uniprot_db}"]
     search_scalars = [
         f"homology_db={config.homology_db}",
         f"evalue={config.evalue}",
         f"pfam_db={config.pfam_db}",
-        *db_scalars,
+        *_MODES[config.homology_db].db_scalars(config),
         f"cache={cache.name}",
     ]
     steps: dict[str, tuple[list[Path], list[str]]] = {
@@ -205,6 +227,7 @@ def run_functional_annotation(
     manifest = get_or_create_manifest(manifest_dir, config)
     save_manifest(manifest_dir, manifest)
 
+    mode = _MODES[config.homology_db]
     cache = _search_cache_path(config)
 
     # Namespace step keys per proteome+mode so several proteomes can be
@@ -255,8 +278,7 @@ def run_functional_annotation(
     fasta_files, fasta_scalars = fingerprints["annotate_fasta"]
     run_orchestrated_step(
         manifest_dir, manifest, _key("annotate_fasta"),
-        annotate_fasta, config.proteins, homology_res, hmmscan_res,
-        config.homology_db,
+        annotate_fasta, config.proteins, homology_res, hmmscan_res, mode.format_hit,
         step_dir=work_dir / "annotate_fasta",
         force=force,
         input_files=fasta_files,
@@ -268,7 +290,7 @@ def run_functional_annotation(
         run_orchestrated_step(
             manifest_dir, manifest, _key("annotate_gff3"),
             annotate_gff3, config.gff3_path, homology_res, hmmscan_res,
-            work_dir, config.homology_db,
+            mode.apply_hits, work_dir,
             step_dir=work_dir / "annotate_gff3",
             force=force,
             input_files=gff3_files,
