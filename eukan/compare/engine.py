@@ -140,6 +140,27 @@ def _group_by_parent(
     return groups
 
 
+# (genes, mRNAs by gene, CDSs by mRNA, introns by mRNA)
+_Annotation = tuple[
+    list[Interval],
+    dict[str, list[Interval]],
+    dict[str, list[Interval]],
+    dict[str, list[Interval]],
+]
+
+
+def _parse_annotation(path: Path) -> _Annotation:
+    """Read a GFF3 into the features and groupings the comparison uses."""
+    genes, mrnas, cds = _stream_features(path)
+    cds_by_mrna = _group_by_parent(cds)
+    introns_by_mrna = {
+        mid: introns
+        for mid, cds_list in cds_by_mrna.items()
+        if (introns := _derive_introns(cds_list))
+    }
+    return genes, _group_by_parent(mrnas), cds_by_mrna, introns_by_mrna
+
+
 # ---------------------------------------------------------------------------
 # Overlap computation
 # ---------------------------------------------------------------------------
@@ -345,26 +366,17 @@ def _classify_subfeatures(
 
 def compare_annotations(ref_path: Path, pred_path: Path) -> ComparisonResult:
     """Compare predicted annotations against a reference GFF3."""
-    ref_genes, ref_mrnas, ref_cds = _stream_features(ref_path)
-    pred_genes, pred_mrnas, pred_cds = _stream_features(pred_path)
+    return _compare_to_reference(_parse_annotation(ref_path), ref_path, pred_path)
 
-    # Group by parent
-    ref_mrnas_by_gene = _group_by_parent(ref_mrnas)
-    pred_mrnas_by_gene = _group_by_parent(pred_mrnas)
-    ref_cds_by_mrna = _group_by_parent(ref_cds)
-    pred_cds_by_mrna = _group_by_parent(pred_cds)
 
-    # Derive introns from CDS gaps
-    ref_introns_by_mrna = {
-        mid: introns
-        for mid, cds in ref_cds_by_mrna.items()
-        if (introns := _derive_introns(cds))
-    }
-    pred_introns_by_mrna = {
-        mid: introns
-        for mid, cds in pred_cds_by_mrna.items()
-        if (introns := _derive_introns(cds))
-    }
+def _compare_to_reference(
+    ref: _Annotation, ref_path: Path, pred_path: Path,
+) -> ComparisonResult:
+    """compare_annotations against an already parsed reference."""
+    ref_genes, ref_mrnas_by_gene, ref_cds_by_mrna, ref_introns_by_mrna = ref
+    pred_genes, pred_mrnas_by_gene, pred_cds_by_mrna, pred_introns_by_mrna = (
+        _parse_annotation(pred_path)
+    )
 
     # --- Gene-level classification ---
     gene_match_map, gene_records = _classify_genes(ref_genes, pred_genes)
@@ -446,8 +458,9 @@ def compare_multiple(
 ) -> MultiComparisonResult:
     """Compare a reference GFF3 against N predictions.
 
-    For each prediction, runs :func:`compare_annotations` and stamps the
-    user-supplied label onto the result. Builds a per-class powerset:
+    Parses the reference once, compares each prediction against it as
+    :func:`compare_annotations` does, and stamps the user-supplied label
+    onto the result. Builds a per-class powerset:
     for each gene-level classification in :data:`POWERSET_CLASSES`
     (``match``, ``missing``, ``merged``, ``fragmented``), records — for
     each reference gene — the sorted tuple of prediction labels whose
@@ -463,9 +476,10 @@ def compare_multiple(
     if len(set(labels)) != len(labels):
         raise ValueError("prediction labels must be unique")
 
+    ref = _parse_annotation(ref_path)
     per_pred: list[ComparisonResult] = []
     for label, path in predictions:
-        result = compare_annotations(ref_path, path)
+        result = _compare_to_reference(ref, ref_path, path)
         result.label = label
         per_pred.append(result)
 

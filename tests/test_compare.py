@@ -191,6 +191,16 @@ class TestCompareMultiple:
             ("p3", _write(tmp_path / "p3.gff3", _MULTI_P3_GFF)),
         ]
 
+    def test_reference_parsed_once(self, three_preds, monkeypatch):
+        ref, preds = three_preds
+        parsed = []
+        monkeypatch.setattr(
+            "eukan.compare.engine._stream_features",
+            lambda path: parsed.append(path) or _stream_features(path),
+        )
+        compare_multiple(ref, preds)
+        assert sorted(parsed) == sorted([ref] + [path for _, path in preds])
+
     def test_returns_multi_result(self, three_preds):
         ref, preds = three_preds
         result = compare_multiple(ref, preds)
