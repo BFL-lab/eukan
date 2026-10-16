@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from eukan.exceptions import ConfigurationError
 from eukan.settings import SubmissionConfig
@@ -158,6 +157,7 @@ class TestAutoDiscovery:
             organism="Foo bar",
             gff3=submission_inputs["gff3"],
         )
+        config.discover()
         assert config.genome == submission_inputs["genome"]
 
     def test_discovers_gff3_prefers_mod(self, submission_inputs, tmp_path: Path):
@@ -174,6 +174,7 @@ class TestAutoDiscovery:
             template=submission_inputs["template"],
             organism="Foo bar",
         )
+        config.discover()
         assert config.gff3 == mod
 
     def test_discovers_gff3_falls_back_to_plain(self, submission_inputs, tmp_path: Path):
@@ -187,30 +188,46 @@ class TestAutoDiscovery:
             template=submission_inputs["template"],
             organism="Foo bar",
         )
+        config.discover()
         assert config.gff3 == plain
 
+    def test_construction_reads_no_manifest(self, submission_inputs, tmp_path: Path):
+        """Building the config needs neither input and reads no manifest;
+        discover() fills them in or says which one is missing."""
+        work_dir = tmp_path / "wd"
+        work_dir.mkdir()
+        config = SubmissionConfig(
+            work_dir=work_dir, template=submission_inputs["template"], organism="Foo bar",
+        )
+        assert config.genome is None
+        assert config.gff3 is None
+        with pytest.raises(ConfigurationError, match="genome not set"):
+            config.discover()
+
     def test_missing_genome_raises(self, submission_inputs, tmp_path: Path):
-        # work_dir has no eukan-run.json; no --genome → ValidationError.
+        # work_dir has no eukan-run.json; no --genome → discover() raises.
         empty = tmp_path / "empty"
         empty.mkdir()
-        with pytest.raises(ValidationError, match="genome"):
-            SubmissionConfig(
-                work_dir=empty,
-                template=submission_inputs["template"],
-                gff3=submission_inputs["gff3"],
-                organism="Foo bar",
-            )
+        config = SubmissionConfig(
+            work_dir=empty,
+            template=submission_inputs["template"],
+            gff3=submission_inputs["gff3"],
+            organism="Foo bar",
+        )
+        with pytest.raises(ConfigurationError, match="genome"):
+            config.discover()
 
     def test_missing_gff3_raises(self, submission_inputs, tmp_path: Path):
         empty = tmp_path / "empty"
         empty.mkdir()
-        with pytest.raises(ValidationError, match="gff3"):
-            SubmissionConfig(
-                work_dir=empty,
-                template=submission_inputs["template"],
-                genome=submission_inputs["genome"],
-                organism="Foo bar",
-            )
+        config = SubmissionConfig(
+            work_dir=empty,
+            template=submission_inputs["template"],
+            genome=submission_inputs["genome"],
+            organism="Foo bar",
+        )
+        with pytest.raises(ConfigurationError, match="gff3"):
+            config.discover()
 
 
 # ---------------------------------------------------------------------------

@@ -150,6 +150,7 @@ def prep_submission(
         output_file=resolve_optional_path(output_file),
         output_dir=resolve_optional_path(output_dir),
     ))
+    config.discover()
 
     sqn = run_prep_submission(config, print_only=print_command, dry_run=dry_run)
 

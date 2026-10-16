@@ -135,6 +135,7 @@ def annotate(
         transcripts_gff=resolve_optional_path(transcripts_gff),
         rnaseq_hints=resolve_optional_path(rnaseq_hints),
     ))
+    config.discover()
 
     force_steps = force_steps_from_run_flags(
         spaln_ssp=spsp,

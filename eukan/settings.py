@@ -161,30 +161,25 @@ class PipelineConfig(_StepRunSettings):
             object.__setattr__(self, "name", self.genome.stem)
         return self
 
-    @model_validator(mode="after")
-    def _discover_assembly_outputs(self) -> PipelineConfig:
-        """Auto-discover assembly outputs (own work_dir or sibling assemble/)."""
+    # --- Discovery -----------------------------------------------------
+
+    def discover(self) -> None:
+        """Auto-discover assembly outputs (own work_dir or sibling assemble/).
+
+        Building the config reads no files; the CLI calls this once it is built.
+        """
         log = get_logger(__name__)
         from eukan.infra import artifacts
         from eukan.infra.artifacts import Artifact
 
-        # If the user already set all three explicitly, nothing to do
-        if all([self.transcripts_fasta, self.transcripts_gff, self.rnaseq_hints]):
-            return self
-
-        # If the user set some but not all explicitly, don't override their intent
+        # If the user set any of the three explicitly, don't override their intent
         field_to_artifact = {
             "transcripts_fasta": Artifact.NR_TRANSCRIPTS_FASTA,
             "transcripts_gff":   Artifact.NR_TRANSCRIPTS_GFF,
             "rnaseq_hints":      Artifact.RNASEQ_HINTS,
         }
-        explicitly_set = {
-            field: getattr(self, field)
-            for field in field_to_artifact
-            if getattr(self, field) is not None
-        }
-        if explicitly_set:
-            return self
+        if any(getattr(self, field) is not None for field in field_to_artifact):
+            return
 
         # Search work_dir and (when in step layout) sibling assemble/
         found: dict[str, Path] = {}
@@ -209,9 +204,7 @@ class PipelineConfig(_StepRunSettings):
                 ", ".join(str(p) for p in found.values()),
             )
             for field, path in found.items():
-                object.__setattr__(self, field, path)
-
-        return self
+                setattr(self, field, path)
 
     # --- Computed properties --------------------------------------------
 
@@ -474,8 +467,8 @@ class FunctionalConfig(_StepRunSettings):
 class SubmissionConfig(_StepRunSettings):
     """Configuration for NCBI submission preparation (eukan prep-submission).
 
-    Wraps NCBI's table2asn validator. Auto-discovers ``genome`` from
-    ``eukan-run.json`` and ``gff3`` from ``work_dir`` (preferring
+    Wraps NCBI's table2asn validator. :meth:`discover` fills in ``genome``
+    from ``eukan-run.json`` and ``gff3`` from ``work_dir`` (preferring
     ``final.mod.gff3`` over ``final.gff3``) when not given explicitly.
     """
 
@@ -508,8 +501,21 @@ class SubmissionConfig(_StepRunSettings):
     # --- GFF3 preprocessing ---
     cleanup_gff3: bool = True  # strip UniProt cruft, drop CDS-less mRNAs, etc.
 
+    def _derive_output_file(self) -> None:
+        if self.output_file is None and self.genome is not None:
+            self.output_file = self.output_dir / f"{self.genome.stem}.sqn"
+
     @model_validator(mode="after")
-    def _discover_inputs(self) -> SubmissionConfig:
+    def _default_output_file(self) -> SubmissionConfig:
+        self._derive_output_file()
+        return self
+
+    def discover(self) -> None:
+        """Fill in ``genome`` and ``gff3`` from earlier runs when not given; both
+        must then be set.
+
+        Building the config reads no files; the CLI calls this once it is built.
+        """
         log = get_logger(__name__)
         from eukan.infra import artifacts
         from eukan.infra.artifacts import Artifact
@@ -527,7 +533,7 @@ class SubmissionConfig(_StepRunSettings):
                 manifest = load_manifest(candidate_dir)
                 if manifest and manifest.genome:
                     discovered = Path(manifest.genome)
-                    object.__setattr__(self, "genome", discovered)
+                    self.genome = discovered
                     log.info("Auto-discovered genome from eukan-run.json: %s", discovered)
                     break
 
@@ -535,10 +541,10 @@ class SubmissionConfig(_StepRunSettings):
             preferred = artifacts.find(self.work_dir, Artifact.FINAL_FUNC_GFF3)
             fallback = artifacts.find(self.work_dir, Artifact.FINAL_GFF3)
             if preferred is not None:
-                object.__setattr__(self, "gff3", preferred)
+                self.gff3 = preferred
                 log.info("Auto-discovered annotated GFF3: %s", preferred)
             elif fallback is not None:
-                object.__setattr__(self, "gff3", fallback)
+                self.gff3 = fallback
                 log.warning(
                     "Using %s (no functional annotations). "
                     "Run `eukan func-annot` first for product names.",
@@ -546,17 +552,14 @@ class SubmissionConfig(_StepRunSettings):
                 )
 
         if self.genome is None:
-            raise ValueError(
-                "genome not set and not discoverable. "
-                "Pass --genome or run from a directory containing eukan-run.json."
+            raise ConfigurationError(
+                "genome not set and not discoverable.",
+                hint="Pass --genome or run from a directory containing eukan-run.json.",
             )
         if self.gff3 is None:
-            raise ValueError(
-                "gff3 not set and not discoverable. "
-                "Pass --gff3 or run `eukan annotate` (and optionally `eukan func-annot`) first."
+            raise ConfigurationError(
+                "gff3 not set and not discoverable.",
+                hint="Pass --gff3 or run `eukan annotate` (and optionally `eukan func-annot`) first.",
             )
 
-        if self.output_file is None:
-            object.__setattr__(self, "output_file", self.output_dir / f"{self.genome.stem}.sqn")
-
-        return self
+        self._derive_output_file()

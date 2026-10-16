@@ -68,6 +68,7 @@ class TestPipelineConfig:
         (tmp_path / "hints_rnaseq.gff").write_text("# hints\n")
 
         config = PipelineConfig(genome=genome, proteins=[genome], work_dir=tmp_path)
+        config.discover()
         assert config.has_transcripts is True
         assert config.transcripts_fasta == tmp_path / "nr_transcripts.fasta"
         assert config.transcripts_gff == tmp_path / "nr_transcripts.gff3"
@@ -79,6 +80,7 @@ class TestPipelineConfig:
         genome.touch()
 
         config = PipelineConfig(genome=genome, proteins=[genome], work_dir=tmp_path)
+        config.discover()
         assert config.has_transcripts is False
         assert config.transcripts_fasta is None
 
@@ -97,7 +99,29 @@ class TestPipelineConfig:
             genome=genome, proteins=[genome], work_dir=tmp_path,
             transcripts_fasta=custom, transcripts_gff=custom, rnaseq_hints=custom,
         )
+        config.discover()
         assert config.transcripts_fasta == custom
+
+    def test_construction_does_not_discover(self, tmp_path, caplog):
+        """Building the config reads no files and logs nothing; discover() finds
+        the assembly outputs of a sibling assemble/ step dir."""
+        genome = tmp_path / "genome.fa"
+        assemble = tmp_path / "assemble"
+        assemble.mkdir()
+        for name in ("nr_transcripts.fasta", "nr_transcripts.gff3", "hints_rnaseq.gff"):
+            (assemble / name).write_text("x\n")
+
+        import logging
+        with caplog.at_level(logging.INFO, logger="eukan.settings"):
+            config = PipelineConfig(
+                genome=genome, proteins=[genome], work_dir=tmp_path / "annotate",
+                manifest_dir=tmp_path,
+            )
+        assert config.transcripts_fasta is None
+        assert caplog.text == ""
+        config.discover()
+        assert config.transcripts_fasta == assemble / "nr_transcripts.fasta"
+        assert config.has_transcripts is True
 
     def test_partial_assembly_outputs_warns(self, tmp_path, caplog):
         """Should warn when only some assembly outputs exist."""
@@ -109,6 +133,7 @@ class TestPipelineConfig:
         import logging
         with caplog.at_level(logging.WARNING, logger="eukan.settings"):
             config = PipelineConfig(genome=genome, proteins=[genome], work_dir=tmp_path)
+            config.discover()
         assert config.has_transcripts is False
         assert "Partial assembly outputs" in caplog.text
 
