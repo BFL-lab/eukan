@@ -24,9 +24,9 @@ from pathlib import Path
 from eukan.assembly.tracks import CUT_GFF3, mapped_transcript_stems
 from eukan.gff.transcripts import Transcript, read_transcripts, stitch
 from eukan.infra.artifacts import Artifact
+from eukan.infra.combinr import run_combinr as run_combinr_cmd
 from eukan.infra.genome import ContigIndex
 from eukan.infra.logging import get_logger
-from eukan.infra.runner import run_cmd
 from eukan.infra.utils import concat_files
 from eukan.settings import AssemblyConfig
 
@@ -42,24 +42,19 @@ _CUT_MODELS = tuple(f"{stem}{CUT_GFF3}" for stem in mapped_transcript_stems())
 _SOURCE = "combinr-assembly"
 
 
-def _combinr_bin(config: AssemblyConfig) -> str:
-    """The combinr executable: explicit ``combinr_path`` or ``combinr`` on PATH."""
-    return str(config.combinr_path) if config.combinr_path else "combinr"
-
-
 def _run_combinr_assemble(config: AssemblyConfig, inputs: list[Path], out_gff: Path) -> None:
     """Run ``combinr assemble`` over *inputs* (GFF3/GTF/BAM), GFF3 stdout to *out_gff*."""
-    cmd = [_combinr_bin(config), "assemble"]
+    args = ["assemble"]
     for path in inputs:
-        cmd += ["-i", str(path)]
-    cmd += [
+        args += ["-i", str(path)]
+    args += [
         "--format", "gff3",
         "-t", str(config.num_cpu),
         "--max-intron", str(config.max_intron_len),
         # --stringent-overlap: 0 = off (any-overlap, the default).
         "--stringent-overlap", str(config.combinr_stringent_overlap),
     ]
-    run_cmd(cmd, cwd=config.work_dir, out_file=out_gff.name)
+    run_combinr_cmd(config, args, cwd=config.work_dir, out_file=out_gff.name)
 
 
 def _write_transcript_alignments_and_hints(

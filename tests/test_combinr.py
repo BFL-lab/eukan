@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from eukan.assembly import combinr
 from eukan.assembly.combinr import (
     _write_transcript_alignments_and_hints,
     _write_transcript_fasta,
     run_combinr,
 )
+from eukan.exceptions import ConfigurationError
 from eukan.gff.transcripts import Transcript
 from eukan.gff.transcripts import read_transcripts as _parse_combinr_gff3
+from eukan.infra import combinr as infra_combinr
 from eukan.infra.artifacts import Artifact
 from eukan.settings import AssemblyConfig
 
@@ -89,9 +93,22 @@ def _read_fasta(path):
 # --- command construction --------------------------------------------------
 
 
+def _capture_run_cmd(monkeypatch) -> list[tuple[list[str], dict]]:
+    """Record the combinr command lines; answer the version probe as 0.3.0."""
+    calls: list[tuple[list[str], dict]] = []
+
+    def fake(cmd, *, cwd, out_file, **kw):
+        if cmd[1:] == ["--version"]:
+            (cwd / out_file).write_text("combinr 0.3.0\n")
+        else:
+            calls.append((cmd, {"cwd": cwd, "out_file": out_file, **kw}))
+
+    monkeypatch.setattr(infra_combinr, "run_cmd", fake)
+    return calls
+
+
 def test_run_combinr_assemble_command(tmp_path, monkeypatch):
-    calls = []
-    monkeypatch.setattr(combinr, "run_cmd", lambda cmd, **kw: calls.append((cmd, kw)))
+    calls = _capture_run_cmd(monkeypatch)
     combinr._run_combinr_assemble(
         _config(tmp_path), [tmp_path / "a.bam", tmp_path / "b.bam"], tmp_path / "out.gff3"
     )
@@ -106,19 +123,33 @@ def test_run_combinr_assemble_command(tmp_path, monkeypatch):
 
 
 def test_run_combinr_assemble_passes_stringent_overlap(tmp_path, monkeypatch):
-    calls = []
-    monkeypatch.setattr(combinr, "run_cmd", lambda cmd, **kw: calls.append(cmd))
+    calls = _capture_run_cmd(monkeypatch)
     cfg = _config(tmp_path, combinr_stringent_overlap=30.0)
     combinr._run_combinr_assemble(cfg, [tmp_path / "a.bam"], tmp_path / "o.gff3")
-    assert calls[0][calls[0].index("--stringent-overlap") + 1] == "30.0"
+    cmd, _ = calls[0]
+    assert cmd[cmd.index("--stringent-overlap") + 1] == "30.0"
 
 
 def test_combinr_path_override(tmp_path, monkeypatch):
-    calls = []
-    monkeypatch.setattr(combinr, "run_cmd", lambda cmd, **kw: calls.append(cmd))
+    calls = _capture_run_cmd(monkeypatch)
     cfg = _config(tmp_path, combinr_path=tmp_path / "bin" / "combinr")
     combinr._run_combinr_assemble(cfg, [tmp_path / "a.bam"], tmp_path / "o.gff3")
-    assert calls[0][0] == str(tmp_path / "bin" / "combinr")
+    assert calls[0][0][0] == str(tmp_path / "bin" / "combinr")
+
+
+def test_old_combinr_is_refused_before_assemble_runs(tmp_path):
+    # combinr 0.1.x lacks the consensus --evidence-report flag eukan passes; the
+    # gate stops it at either subcommand, with the version it found.
+    exe = tmp_path / "combinr"
+    exe.write_text(
+        '#!/bin/sh\n[ "$1" = --version ] && { echo "combinr 0.1.1"; exit 0; }\n'
+        f'echo "$@" >> {tmp_path / "ran.log"}\n'
+    )
+    exe.chmod(0o755)
+    cfg = _config(tmp_path, combinr_path=exe)
+    with pytest.raises(ConfigurationError, match=r"combinr >= 0\.3\.0.*0\.1\.1"):
+        combinr._run_combinr_assemble(cfg, [tmp_path / "a.gff3"], tmp_path / "o.gff3")
+    assert not (tmp_path / "ran.log").exists()
 
 
 # --- run_combinr integration (combinr mocked) ------------------------------
@@ -172,6 +203,5 @@ def test_run_combinr_skips_empty_cut_models(tmp_path, monkeypatch):
 def test_run_combinr_errors_without_inputs(tmp_path, monkeypatch):
     (tmp_path / "genome.fa").write_text(">chr1\nACGT\n")
     monkeypatch.setattr(combinr, "_run_combinr_assemble", _fake_assemble([]))
-    import pytest
     with pytest.raises(FileNotFoundError):
         run_combinr(_config(tmp_path))

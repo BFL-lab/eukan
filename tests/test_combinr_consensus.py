@@ -9,14 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from eukan.annotation import combinr_consensus as cc
 from eukan.annotation import consensus as cons
 from eukan.annotation.combinr_consensus import (
     _chains_to_match,
     _stage_combinr_inputs,
     run_combinr_consensus,
 )
+from eukan.exceptions import ConfigurationError
 from eukan.gff.rows import parse_attrs
+from eukan.infra import combinr as infra_combinr
 from eukan.settings import PipelineConfig
 
 
@@ -221,8 +222,16 @@ def test_stage_combinr_inputs_without_transcripts(tmp_path):
 
 
 def _capture_run_cmd(monkeypatch) -> list[tuple[list[str], dict]]:
+    """Record the combinr command lines; answer the version probe as 0.3.0."""
     calls: list[tuple[list[str], dict]] = []
-    monkeypatch.setattr(cc, "run_cmd", lambda cmd, **kw: calls.append((cmd, kw)))
+
+    def fake(cmd, *, cwd, out_file, **kw):
+        if cmd[1:] == ["--version"]:
+            (cwd / out_file).write_text("combinr 0.3.0\n")
+        else:
+            calls.append((cmd, {"cwd": cwd, "out_file": out_file, **kw}))
+
+    monkeypatch.setattr(infra_combinr, "run_cmd", fake)
     return calls
 
 
@@ -304,6 +313,26 @@ def test_combinr_path_override(tmp_path, monkeypatch):
     calls = _capture_run_cmd(monkeypatch)
     run_combinr_consensus(cfg, sdir, [prot], transcripts=None)
     assert calls[0][0][0] == str(binpath)
+
+
+def test_old_combinr_is_refused_before_consensus_runs(tmp_path):
+    # combinr 0.1.x rejects --evidence-report with a bare usage error; the gate
+    # names the version it found instead, before the consensus command runs.
+    sdir = tmp_path / "consensus_models"
+    sdir.mkdir()
+    src = tmp_path / "src"
+    src.mkdir()
+    prot = _prot_gff(src / "prot.gff3")
+    exe = tmp_path / "combinr"
+    exe.write_text(
+        '#!/bin/sh\n[ "$1" = --version ] && { echo "combinr 0.1.1"; exit 0; }\n'
+        f'echo "$@" >> {tmp_path / "ran.log"}\n'
+    )
+    exe.chmod(0o755)
+    cfg = _config(tmp_path, combinr_path=exe)
+    with pytest.raises(ConfigurationError, match=r"combinr >= 0\.3\.0.*0\.1\.1"):
+        run_combinr_consensus(cfg, sdir, [prot], transcripts=None)
+    assert not (tmp_path / "ran.log").exists()
 
 
 # --- integration: combinr output through eukan's prettify tail --------------

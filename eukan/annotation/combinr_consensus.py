@@ -30,16 +30,11 @@ from pathlib import Path
 from eukan.annotation.evidence import EVIDENCE_ROLES, _first_source_token
 from eukan.gff.rows import iter_gff3_rows, parse_attrs
 from eukan.gff.transcripts import Transcript
+from eukan.infra.combinr import run_combinr
 from eukan.infra.logging import get_logger
-from eukan.infra.runner import run_cmd
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
-
-
-def _combinr_bin(config: PipelineConfig) -> str:
-    """The combinr executable: explicit ``combinr_path`` or ``combinr`` on PATH."""
-    return str(config.combinr_path) if config.combinr_path else "combinr"
 
 
 def _chains_to_match(in_gff: Path, out_gff: Path, *, feature_type: str, match_type: str) -> int:
@@ -144,27 +139,27 @@ def run_combinr_consensus(
     log.info("Running combinr consensus model building...")
     have_transcripts = _stage_combinr_inputs(config, sdir, evidence, transcripts)
 
-    cmd = [
-        _combinr_bin(config), "consensus",
+    args = [
+        "consensus",
         "--weights", "weights.txt",
         "--genome", str(config.genome),
         "--gene-predictions", "gene_predictions.gff3",
         "--genetic-code", str(config.genetic_code),
         "-t", str(config.num_cpu),
         "--format", "gff3",
-        # QC side-output; the flag needs combinr >= 0.3.0.
+        # QC side-output; the flag needs combinr >= 0.3.0 (infra.combinr.MIN_VERSION).
         "--evidence-report", "combinr.evidence_report.txt",
     ]
     if (sdir / "prot.match.gff3").exists():
-        cmd += ["--protein-alignments", "prot.match.gff3"]
+        args += ["--protein-alignments", "prot.match.gff3"]
     if have_transcripts:
-        cmd += [
+        args += [
             "--transcript-alignments", "transcripts.match.gff3",
             "--alt-splice", "--events", "combinr.alt_splice_events.tsv",
             # --stringent-overlap tunes the isoform grouping; 0 = off (any overlap).
             "--stringent-overlap", str(config.combinr_stringent_overlap),
         ]
 
-    run_cmd(cmd, cwd=sdir, out_file="consensus_models.gff3")
+    run_combinr(config, args, cwd=sdir, out_file="consensus_models.gff3")
     log.info("combinr evidence report: %s", sdir / "combinr.evidence_report.txt")
     return sdir / "consensus_models.gff3"
