@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from eukan.compare import compare_annotations, compare_multiple
-from eukan.compare.engine import _stream_features
-from eukan.compare.models import POWERSET_CLASSES, MultiComparisonResult
+from eukan.compare.engine import _max_pairwise_matching, _stream_features
+from eukan.compare.models import POWERSET_CLASSES, Interval, MultiComparisonResult
 
 # A minimal GFF3 with two genes: one single-CDS, one with two CDS (one intron).
 _REF_GFF = """##gff-version 3
@@ -62,6 +62,38 @@ class TestStreamFeatures:
         gff = _write(tmp_path / "ref.gff3", gff_text)
         _, mrnas, _ = _stream_features(gff)
         assert mrnas[0].parent_id == "g1"
+
+
+def _iv(start: int, end: int, feat_id: str) -> Interval:
+    return Interval("chr1", "+", start, end, feat_id, "m1")
+
+
+class TestMaxPairwiseMatching:
+    def test_more_than_eight_features_matched_optimally(self):
+        """p0 overlaps r0 by 100 bp and r1 by 90, p1 overlaps r0 by 90.
+        Taking the largest overlap first (r0-p0) leaves r1 and p1 unmatched,
+        100 bp in all, against 180 for r0-p1 plus r1-p0. Eight more pairs
+        lift the set past the 8 features the exhaustive search covered."""
+        refs = [_iv(101, 300, "r0"), _iv(301, 390, "r1")]
+        preds = [_iv(201, 390, "p0"), _iv(111, 200, "p1")]
+        for i in range(8):
+            start = 1000 + 500 * i
+            refs.append(_iv(start, start + 99, f"r{i + 2}"))
+            preds.append(_iv(start, start + 99, f"p{i + 2}"))
+        matches = _max_pairwise_matching(refs, preds)
+        pairs = {(r.feat_id, p.feat_id) for r, p, _ in matches}
+        assert {("r0", "p1"), ("r1", "p0")} <= pairs
+        assert sum(ovl for _, _, ovl in matches) == 180 + 8 * 100
+
+    def test_pairs_listed_in_the_order_of_the_smaller_side(self):
+        refs = [_iv(1, 100, "r0"), _iv(201, 300, "r1"), _iv(401, 500, "r2")]
+        preds = [_iv(401, 500, "p0"), _iv(1, 100, "p1")]
+        assert [(r.feat_id, p.feat_id) for r, p, _ in _max_pairwise_matching(refs, preds)] == [
+            ("r2", "p0"), ("r0", "p1"),
+        ]
+        assert [(r.feat_id, p.feat_id) for r, p, _ in _max_pairwise_matching(preds, refs)] == [
+            ("p0", "r2"), ("p1", "r0"),
+        ]
 
 
 class TestCompareAnnotations:

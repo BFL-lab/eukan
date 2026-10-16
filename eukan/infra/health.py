@@ -314,18 +314,10 @@ def _probe_pydantic_settings() -> str:
 
 
 def _probe_scipy() -> str:
-    from scipy.stats import (
-        chi2_contingency,
-        false_discovery_control,
-        ks_2samp,
-    )
-    d, _ = ks_2samp([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
-    assert 0.0 <= d <= 1.0
-    chi2_res = chi2_contingency([[10, 20], [30, 40]])
-    assert int(chi2_res.dof) == 1
-    adj = false_discovery_control([0.01, 0.5], method="bh")
-    assert len(adj) == 2
-    return "ks_2samp/chi2/BH work"
+    from scipy.optimize import linear_sum_assignment
+    _, cols = linear_sum_assignment([[1, 5], [4, 1]], maximize=True)
+    assert cols.tolist() == [1, 0]
+    return "linear_sum_assignment works"
 
 
 def _probe_tool_registry() -> str:
