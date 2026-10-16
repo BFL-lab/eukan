@@ -112,7 +112,7 @@ class PipelineConfig(_StepRunSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="EUKAN_",
-        extra="ignore",
+        extra="forbid",
     )
 
     # --- Required (must come from CLI) ---
@@ -256,7 +256,7 @@ class AssemblyConfig(_StepRunSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="EUKAN_ASSEMBLE_",
-        extra="ignore",
+        extra="forbid",
     )
 
     genome: Path
@@ -441,7 +441,7 @@ class RepeatsConfig(_StepRunSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="EUKAN_REPEATS_",
-        extra="ignore",
+        extra="forbid",
     )
 
     genome: Path
@@ -463,7 +463,7 @@ class FunctionalConfig(_StepRunSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="EUKAN_FUNC_",
-        extra="ignore",
+        extra="forbid",
     )
 
     proteins: Path
@@ -491,7 +491,7 @@ class SubmissionConfig(_StepRunSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="EUKAN_SUBMIT_",
-        extra="ignore",
+        extra="forbid",
     )
 
     # --- Inputs (auto-discoverable) ---

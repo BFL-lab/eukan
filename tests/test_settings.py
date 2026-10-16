@@ -5,7 +5,14 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from eukan.settings import AssemblyConfig, FunctionalConfig, Kingdom, PipelineConfig
+from eukan.settings import (
+    AssemblyConfig,
+    FunctionalConfig,
+    Kingdom,
+    PipelineConfig,
+    RepeatsConfig,
+    SubmissionConfig,
+)
 
 
 class TestPipelineConfig:
@@ -331,3 +338,25 @@ class TestTypedFields:
     def test_unknown_homology_db_rejected(self, tmp_path):
         with pytest.raises(ValidationError, match="homology_db"):
             FunctionalConfig(proteins=tmp_path / "p.faa", work_dir=tmp_path, homology_db="pfam")
+
+
+class TestUnknownFields:
+    """A keyword that is not a field (a typo, a CLI option name, a removed
+    field) is an error instead of being dropped silently."""
+
+    @pytest.mark.parametrize(("cls", "required"), [
+        (PipelineConfig, {"genome": "g.fa", "proteins": ["p.faa"]}),
+        (AssemblyConfig, {"genome": "g.fa"}),
+        (RepeatsConfig, {"genome": "g.fa"}),
+        (FunctionalConfig, {"proteins": "p.faa"}),
+        (SubmissionConfig, {"template": "t.sbt", "organism": "Foo bar"}),
+    ])
+    def test_unknown_keyword_rejected(self, tmp_path, cls, required):
+        with pytest.raises(ValidationError, match="numcpu\n  Extra inputs are not permitted"):
+            cls(work_dir=tmp_path, numcpu=4, **required)
+
+    def test_unrelated_env_vars_ignored(self, tmp_path, monkeypatch):
+        # To PipelineConfig (prefix EUKAN_) both name fields that don't exist.
+        monkeypatch.setenv("EUKAN_NO_SUCH_FIELD", "1")
+        monkeypatch.setenv("EUKAN_ASSEMBLE_NUM_CPU", "3")
+        PipelineConfig(genome="g.fa", proteins=["p.faa"], work_dir=tmp_path)
