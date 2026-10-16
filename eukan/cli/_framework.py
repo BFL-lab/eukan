@@ -12,6 +12,7 @@ import multiprocessing
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import NoReturn
 
 import click
 from click_option_group import optgroup
@@ -137,39 +138,37 @@ class EukanGroup(click.Group):
             raise
         except click.exceptions.Abort:
             raise
-        except SystemExit:
-            raise
         except Exception as exc:
             from pydantic import ValidationError as PydanticValidationError
 
             disk_full = _format_disk_full(exc)
             if disk_full is not None:
-                title, details = disk_full
-                click.secho(title, fg="red", err=True)
-                for line in details:
-                    click.echo(f"  {line}", err=True)
-                raise SystemExit(1) from exc
+                _fail(*disk_full, exc)
 
             if isinstance(exc, PydanticValidationError):
-                click.secho("Error: invalid configuration", fg="red", err=True)
+                details = []
                 for err in exc.errors():
                     # Model-level checks (cross-field) have no location.
                     loc = " → ".join(str(part) for part in err["loc"])
-                    click.echo(f"  {loc}: {err['msg']}" if loc else f"  {err['msg']}", err=True)
-                raise SystemExit(1) from exc
+                    details.append(f"{loc}: {err['msg']}" if loc else err["msg"])
+                _fail("Error: invalid configuration", details, exc)
 
             from eukan.exceptions import EukanError
             if not isinstance(exc, EukanError):
                 raise
 
             title, details = exc.format_for_cli()
-            click.secho(title, fg="red", err=True)
-            for line in details:
-                click.echo(f"  {line}", err=True)
             if exc.hint:
-                click.echo(f"  Hint: {exc.hint}", err=True)
+                details.append(f"Hint: {exc.hint}")
+            _fail(title, details, exc)
 
-            raise SystemExit(1) from exc
+
+def _fail(title: str, details: list[str], exc: Exception) -> NoReturn:
+    """Print *title* in red and each detail line indented to stderr; exit 1."""
+    click.secho(title, fg="red", err=True)
+    for line in details:
+        click.echo(f"  {line}", err=True)
+    raise SystemExit(1) from exc
 
 
 _DISK_FULL_PATTERNS = (

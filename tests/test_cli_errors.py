@@ -179,3 +179,26 @@ class TestConfigErrors:
         result = CliRunner().invoke(app_factory(_validation_error(left="x")), ["boom"])
         assert result.exit_code == 1
         assert "  left: Input should be a valid integer" in result.output
+
+
+class TestEukanErrors:
+    def test_title_details_and_hint(self, app_factory):
+        exc = ExternalToolError(
+            "spaln crashed", tool="spaln", returncode=2, cmd=["spaln"],
+            stderr_snippet="bad\n", step="annotation/prot_align",
+        )
+        exc.hint = "Check the protein FASTA."
+        result = CliRunner().invoke(app_factory(exc), ["boom"])
+        assert result.exit_code == 1
+        assert result.output == (
+            "Error: spaln failed (exit 2)\n"
+            "  spaln crashed\n"
+            "  Step: annotation/prot_align\n"
+            "  stderr: bad\n\n"
+            "  Run with -v for full command and stderr output.\n"
+            "  Hint: Check the protein FASTA.\n"
+        )
+
+    @pytest.mark.parametrize("exc", [SystemExit(3), click.exceptions.Exit(3)])
+    def test_exits_pass_through(self, app_factory, exc):
+        assert CliRunner().invoke(app_factory(exc), ["boom"]).exit_code == 3
