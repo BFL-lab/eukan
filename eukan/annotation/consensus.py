@@ -6,7 +6,7 @@ from pathlib import Path
 
 from eukan.annotation.combinr_consensus import run_combinr_consensus
 from eukan.gff import concordance, create_gff_db
-from eukan.gff.hierarchy import fix_CDS_phases, prettify_gff3
+from eukan.gff.hierarchy import prettify_gff3
 from eukan.gff.io import count_gff3_features
 from eukan.infra.artifacts import Artifact
 from eukan.infra.logging import get_logger
@@ -19,8 +19,7 @@ log = get_logger(__name__)
 def _patch_in_unmatched_orfs(consdb, orf_path: Path):
     """Add transcript ORFs that don't overlap any consensus gene.
 
-    Returns either the original ``consdb`` (no changes) or a new FeatureDB
-    with the missing ORFs merged in.
+    Returns ``consdb``, updated in place when there are ORFs to add.
     """
     if not orf_path.exists():
         return consdb
@@ -29,14 +28,12 @@ def _patch_in_unmatched_orfs(consdb, orf_path: Path):
     if not missing:
         return consdb
     log.info("Reintroduced %d transcript ORFs not overlapping the consensus", len(missing))
-    all_features = [*consdb.all_features(), *missing]
-    return create_gff_db(all_features, merge_strategy="merge")
+    return consdb.update(missing, merge_strategy="merge")
 
 
 def _write_prettified_gff3(consdb, shortname: str, out_path: Path) -> None:
     """Fix CDS phases, assign locus tags, and write the final GFF3."""
     consdb.dialect["order"].append("locus_tag")
-    consdb = create_gff_db(fix_CDS_phases(consdb), merge_strategy="merge")
     with open(out_path, "w") as outfile:
         for feature in prettify_gff3(consdb, shortname):
             outfile.write(f"{feature}\n")

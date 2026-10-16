@@ -2,7 +2,6 @@
 
 from eukan.gff.hierarchy import (
     add_missing_feats_to_gff3,
-    fix_CDS_phases,
     prettify_gff3,
 )
 
@@ -71,67 +70,6 @@ class TestAddMissingFeats:
 
 
 # ---------------------------------------------------------------------------
-# fix_CDS_phases
-# ---------------------------------------------------------------------------
-
-
-class TestFixCDSPhases:
-    def test_single_cds_phase_zero(self, db_from_string):
-        """Single-CDS gene should have phase 0."""
-        gff = (
-            "chr1\ttest\tgene\t100\t400\t.\t+\t.\tID=gene1\n"
-            "chr1\ttest\tmRNA\t100\t400\t.\t+\t.\tID=mrna1;Parent=gene1\n"
-            "chr1\ttest\texon\t100\t400\t.\t+\t.\tID=exon1;Parent=mrna1\n"
-            "chr1\ttest\tCDS\t100\t400\t.\t+\t.\tID=cds1;Parent=mrna1\n"
-        )
-        db = db_from_string(gff)
-        features = list(fix_CDS_phases(db))
-
-        cds_feats = [f for f in features if f.featuretype == "CDS"]
-        assert len(cds_feats) == 1
-        assert cds_feats[0].frame == "0"
-
-    def test_multi_cds_phase_propagation(self, db_from_string):
-        """Multi-CDS gene should have correct phase propagation."""
-        gff = (
-            "chr1\ttest\tgene\t100\t600\t.\t+\t.\tID=gene1\n"
-            "chr1\ttest\tmRNA\t100\t600\t.\t+\t.\tID=mrna1;Parent=gene1\n"
-            "chr1\ttest\texon\t100\t200\t.\t+\t.\tID=exon1;Parent=mrna1\n"
-            "chr1\ttest\texon\t400\t600\t.\t+\t.\tID=exon2;Parent=mrna1\n"
-            "chr1\ttest\tCDS\t100\t200\t.\t+\t.\tID=cds1;Parent=mrna1\n"
-            "chr1\ttest\tCDS\t400\t600\t.\t+\t.\tID=cds2;Parent=mrna1\n"
-        )
-        db = db_from_string(gff)
-        features = list(fix_CDS_phases(db))
-
-        cds_feats = [f for f in features if f.featuretype == "CDS"]
-        assert len(cds_feats) == 2
-        assert cds_feats[0].frame == "0"
-
-        # First CDS is 101 nt (100-200 inclusive), phase 0
-        # next_phase = (3 - ((101 - 0) % 3)) % 3 = (3 - 2) % 3 = 1
-        assert cds_feats[1].frame == "1"
-
-    def test_minus_strand_phase(self, db_from_string):
-        """Minus strand: phases should be computed from the last CDS first."""
-        gff = (
-            "chr1\ttest\tgene\t100\t600\t.\t-\t.\tID=gene1\n"
-            "chr1\ttest\tmRNA\t100\t600\t.\t-\t.\tID=mrna1;Parent=gene1\n"
-            "chr1\ttest\texon\t100\t200\t.\t-\t.\tID=exon1;Parent=mrna1\n"
-            "chr1\ttest\texon\t400\t600\t.\t-\t.\tID=exon2;Parent=mrna1\n"
-            "chr1\ttest\tCDS\t100\t200\t.\t-\t.\tID=cds1;Parent=mrna1\n"
-            "chr1\ttest\tCDS\t400\t600\t.\t-\t.\tID=cds2;Parent=mrna1\n"
-        )
-        db = db_from_string(gff)
-        features = list(fix_CDS_phases(db))
-
-        cds_feats = [f for f in features if f.featuretype == "CDS"]
-        assert len(cds_feats) == 2
-        # On minus strand, the last CDS (400-600, 201 nt) is processed first
-        assert cds_feats[0].frame == "0"
-
-
-# ---------------------------------------------------------------------------
 # prettify_gff3
 # ---------------------------------------------------------------------------
 
@@ -158,3 +96,55 @@ class TestPrettifyGFF3:
         assert genes[0].attributes["ID"] == ["TEST_00001"]
         assert genes[1].attributes["ID"] == ["TEST_00002"]
         assert all(f.source == "eukannotpass" for f in features)
+
+    def _cds_frames(self, db):
+        return {
+            (f.start, f.end): f.frame
+            for f in prettify_gff3(db, "TEST") if f.featuretype == "CDS"
+        }
+
+    def test_single_cds_phase_zero(self, db_from_string):
+        gff = (
+            "chr1\ttest\tgene\t100\t400\t.\t+\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t100\t400\t.\t+\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\ttest\texon\t100\t400\t.\t+\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t100\t400\t.\t+\t2\tID=cds1;Parent=mrna1\n"
+        )
+        assert self._cds_frames(db_from_string(gff)) == {(100, 400): "0"}
+
+    def test_multi_cds_phase_propagation(self, db_from_string):
+        gff = (
+            "chr1\ttest\tgene\t100\t600\t.\t+\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t100\t600\t.\t+\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\ttest\texon\t100\t200\t.\t+\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\texon\t400\t600\t.\t+\t.\tID=exon2;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t100\t200\t.\t+\t.\tID=cds1;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t400\t600\t.\t+\t.\tID=cds2;Parent=mrna1\n"
+        )
+        # 101 nt at phase 0 leaves (3 - 101 % 3) % 3 = 1 for the next CDS.
+        assert self._cds_frames(db_from_string(gff)) == {(100, 200): "0", (400, 600): "1"}
+
+    def test_minus_strand_phase_starts_at_the_last_cds(self, db_from_string):
+        gff = (
+            "chr1\ttest\tgene\t100\t601\t.\t-\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t100\t601\t.\t-\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\ttest\texon\t100\t200\t.\t-\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\texon\t400\t601\t.\t-\t.\tID=exon2;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t100\t200\t.\t-\t.\tID=cds1;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t400\t601\t.\t-\t.\tID=cds2;Parent=mrna1\n"
+        )
+        # The 5'-most CDS on the minus strand (400-601, 202 nt) is phase 0.
+        assert self._cds_frames(db_from_string(gff)) == {(400, 601): "0", (100, 200): "2"}
+
+    def test_only_exon_and_cds_children_are_written(self, db_from_string):
+        """UTR features are left out; exons extending past the CDS carry them."""
+        gff = (
+            "chr1\ttest\tgene\t100\t600\t.\t+\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t100\t600\t.\t+\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\ttest\texon\t100\t600\t.\t+\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\tfive_prime_UTR\t100\t199\t.\t+\t.\tID=u5;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t200\t500\t.\t+\t0\tID=cds1;Parent=mrna1\n"
+            "chr1\ttest\tthree_prime_UTR\t501\t600\t.\t+\t.\tID=u3;Parent=mrna1\n"
+        )
+        types = sorted(f.featuretype for f in prettify_gff3(db_from_string(gff), "TEST"))
+        assert types == ["CDS", "exon", "gene", "mRNA"]

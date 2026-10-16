@@ -1,4 +1,4 @@
-"""Feature hierarchy completion, CDS phase correction, and final prettification."""
+"""Feature hierarchy completion and final prettification (with CDS phases)."""
 
 from __future__ import annotations
 
@@ -51,53 +51,31 @@ def add_missing_feats_to_gff3(
 
 
 # ---------------------------------------------------------------------------
-# CDS phase correction
-# ---------------------------------------------------------------------------
-
-
-def fix_CDS_phases(
-    gff3: gffutils.FeatureDB,
-) -> Iterator[gffutils.Feature]:
-    """Recalculate CDS phases for all gene models.
-
-    Yields all features (gene, mRNA, exon, CDS) with corrected CDS frame values.
-    """
-    for gene in gff3.features_of_type("gene"):
-        yield gene
-        for mRNA in gff3.children(gene, featuretype="mRNA"):
-            yield mRNA
-            yield from gff3.children(mRNA, featuretype="exon")
-
-            reverse = mRNA.strand == "-"
-            all_cds = list(
-                gff3.children(
-                    mRNA,
-                    featuretype="CDS",
-                    order_by="start",
-                    reverse=reverse,
-                )
-            )
-            if not all_cds:
-                continue
-
-            next_phase = 0
-            for cds in all_cds:
-                phase = 0 if cds is all_cds[0] else next_phase
-                cds_len = cds.end - cds.start + 1
-                next_phase = (3 - ((cds_len - phase) % 3)) % 3
-                cds.frame = str(phase)
-                yield cds
-
-
-# ---------------------------------------------------------------------------
 # Final GFF3 prettification
 # ---------------------------------------------------------------------------
+
+
+def _cds_phases(gff3: gffutils.FeatureDB, mRNA: gffutils.Feature) -> dict[str, str]:
+    """Phase of each CDS of *mRNA*, walking from the 5'-most CDS (phase 0)."""
+    phases: dict[str, str] = {}
+    phase = 0
+    for cds in gff3.children(
+        mRNA, featuretype="CDS", order_by="start", reverse=mRNA.strand == "-",
+    ):
+        phases[cds.id] = str(phase)
+        phase = (3 - ((cds.end - cds.start + 1 - phase) % 3)) % 3
+    return phases
 
 
 def prettify_gff3(
     gff3: gffutils.FeatureDB, shortname: str
 ) -> Iterator[gffutils.Feature]:
-    """Assign clean sequential locus tags to all features."""
+    """Assign clean sequential locus tags to all features.
+
+    Yields each gene, its mRNAs and their exon and CDS children (other
+    child types, such as UTRs, are left out), with every CDS phase
+    recomputed from the mRNA's 5'-most CDS.
+    """
     for gene_num, gene in enumerate(
         gff3.features_of_type("gene", order_by=("seqid", "start")), start=1
     ):
@@ -110,6 +88,7 @@ def prettify_gff3(
 
         child_types = {
             f.featuretype for f in gff3.children(gene, level=2)
+            if f.featuretype in ("exon", "CDS")
         }
 
         for mRNA_num, mRNA in enumerate(
@@ -123,10 +102,13 @@ def prettify_gff3(
             mRNA.source = "eukannotpass"
             yield mRNA
 
+            phases = _cds_phases(gff3, mRNA)
             for child_type in child_types:
                 for f_num, f in enumerate(
                     gff3.children(mRNA, featuretype=child_type), start=1
                 ):
+                    if child_type == "CDS":
+                        f.frame = phases[f.id]
                     f_name = f"{mRNA_name}:{f.featuretype}:{f_num}"
                     f.attributes.update(
                         ID=f_name, Parent=mRNA_name, locus_tag=f_name

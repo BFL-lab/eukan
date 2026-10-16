@@ -8,7 +8,8 @@ any consensus gene back into the model set.
 
 from __future__ import annotations
 
-from eukan.annotation.consensus import _patch_in_unmatched_orfs
+from eukan.annotation import consensus
+from eukan.annotation.consensus import _patch_in_unmatched_orfs, _write_prettified_gff3
 from eukan.gff import create_gff_db
 
 
@@ -46,6 +47,18 @@ class TestPatchInUnmatchedOrfs:
 
         assert _gene_ids(result) == {"g1", "orf1"}
 
+    def test_orfs_are_added_in_place(self, tmp_path):
+        """The ORFs go into the consensus DB itself, not a rebuilt copy."""
+        consdb = self._consdb(tmp_path)
+        orf = tmp_path / "transcript_orfs.gff3"
+        orf.write_text(_gene_gff("chr1", 1000, 1300, "orf1"))
+
+        result = _patch_in_unmatched_orfs(consdb, orf)
+
+        assert result is consdb
+        assert _gene_ids(consdb) == {"g1", "orf1"}
+        assert [f.id for f in consdb.children("orf1.t1")] == ["orf1.cds"]
+
     def test_overlapping_orf_not_added(self, tmp_path):
         consdb = self._consdb(tmp_path)
         orf = tmp_path / "transcript_orfs.gff3"
@@ -63,3 +76,29 @@ class TestPatchInUnmatchedOrfs:
         result = _patch_in_unmatched_orfs(consdb, orf)
 
         assert result is consdb
+
+
+class TestWritePrettifiedGff3:
+    def test_phases_are_fixed_without_rebuilding_the_db(self, tmp_path, monkeypatch):
+        path = tmp_path / "consensus_models.gff3"
+        path.write_text(
+            "chr1\tx\tgene\t1\t600\t.\t+\t.\tID=g1\n"
+            "chr1\tx\tmRNA\t1\t600\t.\t+\t.\tID=g1.t1;Parent=g1\n"
+            "chr1\tx\tCDS\t1\t100\t.\t+\t0\tID=g1.cds1;Parent=g1.t1\n"
+            "chr1\tx\tCDS\t301\t600\t.\t+\t0\tID=g1.cds2;Parent=g1.t1\n"
+        )
+        consdb = create_gff_db(path)
+        builds = []
+        real_create = consensus.create_gff_db
+        monkeypatch.setattr(
+            consensus, "create_gff_db",
+            lambda *a, **k: builds.append(a) or real_create(*a, **k),
+        )
+
+        _write_prettified_gff3(consdb, "TEST", tmp_path / "final.gff3")
+
+        assert builds == []
+        cds = [ln.split("\t") for ln in (tmp_path / "final.gff3").read_text().splitlines()
+               if ln.split("\t")[2] == "CDS"]
+        # 100 nt at phase 0 leaves phase 2 for the second CDS.
+        assert [(c[3], c[7]) for c in cds] == [("1", "0"), ("301", "2")]
