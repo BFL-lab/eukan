@@ -392,4 +392,4 @@ def extract_supported_models(
 
     out_path = (output_dir / "training_set.gff3") if output_dir else Path("training_set.gff3")
     featuredb2gff3_file(training_set, out_path)
-    return create_gff_db(out_path)
+    return training_set

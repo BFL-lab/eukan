@@ -410,6 +410,17 @@ class TestExtractSupportedModels:
         assert len(genes) == 1
         assert genes[0].id == "ga"
 
+    def test_no_concordant_models_returns_empty_db(self, tmp_path):
+        """Zero concordant models: an empty training_set.gff3 and an empty
+        DB (re-reading the empty file raised gffutils' EmptyInputError)."""
+        a = self._write_simple_pair(tmp_path, "a.gff3", "ga")
+        b = self._write_simple_pair(tmp_path, "b.gff3", "gb", start=5000, end=5300)
+
+        result = extract_supported_models(a, b, output_dir=tmp_path)
+
+        assert result.count_features_of_type("gene") == 0
+        assert (tmp_path / "training_set.gff3").read_text() == ""
+
     def test_three_paths_logs_per_source_counts(self, tmp_path, caplog):
         """3-way concordance: per-source gene counts always go to INFO,
         labelled by file stem so users see ``genemark`` / ``spaln`` /

@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import gffutils
-
 from eukan.gff import concordance
 from eukan.infra.runner import run_cmd
 from eukan.settings import PipelineConfig
@@ -33,8 +31,12 @@ def build_training_set(
         1, len([f.id for f in training_db.features_of_type("gene")]) // 4
     )
 
-    gene_db = gffutils.create_db(str(evidence[0]), ":memory:")
-    gene_lengths = [f.end - f.start for f in gene_db.features_of_type("gene")]
+    gene_lengths = []
+    with open(evidence[0]) as fh:
+        for line in fh:
+            cols = line.split("\t")
+            if len(cols) == 9 and cols[2] == "gene" and not line.startswith("#"):
+                gene_lengths.append(int(cols[4]) - int(cols[3]))
     flank = int(sum(gene_lengths) / len(gene_lengths) / 2)
 
     run_cmd(
