@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import click
 from click_option_group import optgroup
@@ -34,15 +35,7 @@ from eukan.cli._framework import (
 @optgroup.option("--run-modeler", is_flag=True, help="Force re-run BuildDatabase + RepeatModeler.")
 @optgroup.option("--run-masker", is_flag=True, help="Force re-run RepeatMasker.")
 @force_option
-def mask_repeats(
-    genome: Path,
-    numcpu: int,
-    engine: str,
-    lib: Path | None,
-    run_modeler: bool,
-    run_masker: bool,
-    force: bool,
-) -> None:
+def mask_repeats(**opts: Any) -> None:
     """Soft-mask repeats with RepeatModeler + RepeatMasker.
 
     \b
@@ -60,18 +53,12 @@ def mask_repeats(
     from eukan.repeats.pipeline import force_steps_from_run_flags
     from eukan.settings import RepeatsConfig
 
+    run_flags = {k: opts.pop(k) for k in list(opts) if k.startswith("run_") or k == "force"}
     config = RepeatsConfig(**drop_none(
-        genome=genome,
-        work_dir=step_work_dir("mask-repeats"),
-        manifest_dir=Path.cwd(),
-        num_cpu=numcpu,
-        engine=engine.lower(),
-        lib=lib,
+        **opts, work_dir=step_work_dir("mask-repeats"), manifest_dir=Path.cwd(),
     ))
 
-    force_steps = force_steps_from_run_flags(
-        run_modeler=run_modeler, run_masker=run_masker, force=force,
-    )
+    force_steps = force_steps_from_run_flags(**run_flags)
     masked = run_repeats(config, force_steps=force_steps or None)
     click.echo(f"Done. Masked genome: {masked}")
     click.echo(

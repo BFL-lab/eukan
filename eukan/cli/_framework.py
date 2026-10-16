@@ -225,7 +225,7 @@ def drop_none(**kwargs) -> dict:
 
 def numcpu_option(func):
     return optgroup.option(
-        "--numcpu", "-n", type=int, default=multiprocessing.cpu_count(),
+        "--numcpu", "-n", "num_cpu", type=int, default=multiprocessing.cpu_count(),
         show_default=True, help="Number of CPU threads.",
     )(func)
 
@@ -266,7 +266,7 @@ def code_option(default: int = 1):
     """Build a --code/-c NCBI genetic-code option with a command-specific default."""
     def decorator(func):
         return optgroup.option(
-            "--code", "-c", type=int, default=default, show_default=True,
+            "--code", "-c", "genetic_code", type=int, default=default, show_default=True,
             help="NCBI genetic code table number.",
         )(func)
     return decorator

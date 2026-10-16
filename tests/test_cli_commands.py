@@ -96,3 +96,38 @@ class TestPathsReachTheCommandAbsolute:
         monkeypatch.setattr(importlib.import_module(target[0]), target[1], stub)
         CliRunner().invoke(cli, args)
         assert seen == [tuple(tree / name for name in expected)]
+
+
+class TestOptionsAreConfigFields:
+    """Each command hands its options to its config by name, so every option
+    except the re-run flags and output modifiers must be named after a field."""
+
+    @pytest.mark.parametrize(("command", "config"), [
+        ("annotate", "PipelineConfig"),
+        ("assemble", "AssemblyConfig"),
+        ("func-annot", "FunctionalConfig"),
+        ("mask-repeats", "RepeatsConfig"),
+        ("prep-submission", "SubmissionConfig"),
+    ])
+    def test_destinations_are_field_names(self, command, config):
+        import eukan.settings
+
+        fields = getattr(eukan.settings, config).model_fields
+        # click-option-group adds a hidden parameter per group heading
+        params = [p for p in cli.commands[command].params if not getattr(p, "hidden", False)]
+        names = {p.name for p in params} - {"force", "print_command", "dry_run"}
+        assert {n for n in names if not n.startswith("run_")} - set(fields) == set()
+
+    def test_renamed_options_reach_the_config(self, run_dir, monkeypatch):
+        seen = []
+        monkeypatch.setattr(eukan.assembly, "run_assembly", lambda c, **k: seen.append(c))
+        result = CliRunner().invoke(cli, [
+            "assemble", "-g", "g.fa", "-l", "l.fq", "-r", "r.fq", "-n", "3", "-c", "6",
+            "-m", "30", "-M", "900", "--phred", "64", "--adapter-sequence", "ACGT",
+        ])
+        assert result.exit_code == 0, result.output
+        (config,) = seen
+        assert (config.left_reads, config.right_reads) == (run_dir / "l.fq", run_dir / "r.fq")
+        assert (config.num_cpu, config.genetic_code) == (3, "6")
+        assert (config.min_intron_len, config.max_intron_len) == (30, 900)
+        assert (config.phred_quality, config.adapter_sequences) == (64, ["ACGT"])

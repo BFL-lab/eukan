@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shlex
 from pathlib import Path
+from typing import Any
 
 import click
 from click_option_group import optgroup
@@ -88,24 +89,7 @@ from eukan.cli._framework import PreformattedEpilogCommand
     "--dry-run", is_flag=True,
     help="Print the command and create the output directory, but don't run table2asn.",
 )
-def prep_submission(
-    template: Path,
-    organism: str | None,
-    isolate: str | None,
-    source_info: str | None,
-    locus_tag_prefix: str | None,
-    genome: Path | None,
-    gff3: Path | None,
-    cleanup: str,
-    mode: str,
-    assembly_type: str,
-    extra_args: str,
-    cleanup_gff3: bool,
-    output_file: Path | None,
-    output_dir: Path | None,
-    print_command: bool,
-    dry_run: bool,
-) -> None:
+def prep_submission(**opts: Any) -> None:
     """Validate + package an annotated genome for NCBI submission via table2asn.
 
     \b
@@ -132,23 +116,11 @@ def prep_submission(
     from eukan.settings import SubmissionConfig
     from eukan.submission import run_prep_submission
 
+    print_command = opts.pop("print_command")
+    dry_run = opts.pop("dry_run")
+    opts["extra_args"] = shlex.split(opts["extra_args"]) if opts["extra_args"] else None
     config = SubmissionConfig(**drop_none(
-        work_dir=step_work_dir("prep-submission"),
-        manifest_dir=Path.cwd(),
-        template=template,
-        organism=organism,
-        isolate=isolate,
-        source_info=source_info,
-        locus_tag_prefix=locus_tag_prefix,
-        genome=genome,
-        gff3=gff3,
-        cleanup=cleanup,
-        mode=mode,
-        assembly_type=assembly_type,
-        extra_args=shlex.split(extra_args) if extra_args else None,
-        cleanup_gff3=cleanup_gff3,
-        output_file=output_file,
-        output_dir=output_dir,
+        **opts, work_dir=step_work_dir("prep-submission"), manifest_dir=Path.cwd(),
     ))
     config.discover()
 

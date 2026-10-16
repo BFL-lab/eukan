@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import click
 from click_option_group import optgroup
@@ -66,7 +67,7 @@ from eukan.cli._framework import (
     help="Path to the combinr binary (default: 'combinr' on PATH).",
 )
 @optgroup.option(
-    "--splice-permissive", is_flag=True, default=False,
+    "--splice-permissive", "allow_noncanonical_splice", is_flag=True, default=False,
     help="Allow rarer non-canonical splice sites in AUGUSTUS. With assembly evidence, "
     "every observed donor-acceptor pair seen at >= 10 junctions by >= 50 unique reads "
     "is allowed regardless of its share of all junctions (the default also requires "
@@ -74,7 +75,7 @@ from eukan.cli._framework import (
 )
 @optgroup.group("Experimental")
 @optgroup.option(
-    "--spsp", is_flag=True, default=False,
+    "--spsp", "spaln_ssp", is_flag=True, default=False,
     help="Build species-specific spaln parameters from transcripts (alternative to fitild).",
 )
 @optgroup.group("Re-run steps")
@@ -83,26 +84,7 @@ from eukan.cli._framework import (
 @optgroup.option("--run-augustus", is_flag=True, help="Force re-run AUGUSTUS training and prediction.")
 @optgroup.option("--run-snap", is_flag=True, help="Force re-run SNAP (and CodingQuarry) prediction.")
 @optgroup.option("--run-consensus", is_flag=True, help="Force re-run consensus model building.")
-def annotate(
-    genome: Path,
-    proteins: tuple[Path, ...],
-    transcripts_fasta: Path | None,
-    transcripts_gff: Path | None,
-    rnaseq_hints: Path | None,
-    splice_permissive: bool,
-    spsp: bool,
-    numcpu: int,
-    weights: tuple[int, ...],
-    code: int,
-    combinr_path: Path | None,
-    combinr_stringent_overlap: float | None,
-    kingdom: str | None,
-    run_genemark: bool,
-    run_prot_align: bool,
-    run_augustus: bool,
-    run_snap: bool,
-    run_consensus: bool,
-) -> None:
+def annotate(**opts: Any) -> None:
     """Run the genome annotation pipeline.
 
     \b
@@ -115,35 +97,15 @@ def annotate(
     from eukan.infra.layout import step_work_dir
     from eukan.settings import PipelineConfig
 
+    run_flags = {k: opts.pop(k) for k in list(opts) if k.startswith("run_")}
     # Only pass fields explicitly set by the user; pydantic-settings
     # fills the rest from env vars / defaults.
     config = PipelineConfig(**drop_none(
-        genome=genome,
-        proteins=list(proteins),
-        work_dir=step_work_dir("annotate"),
-        manifest_dir=Path.cwd(),
-        num_cpu=numcpu,
-        genetic_code=str(code),
-        weights=list(weights),
-        combinr_path=combinr_path,
-        combinr_stringent_overlap=combinr_stringent_overlap,
-        allow_noncanonical_splice=splice_permissive,
-        spaln_ssp=spsp,
-        kingdom=kingdom or None,
-        transcripts_fasta=transcripts_fasta,
-        transcripts_gff=transcripts_gff,
-        rnaseq_hints=rnaseq_hints,
+        **opts, work_dir=step_work_dir("annotate"), manifest_dir=Path.cwd(),
     ))
     config.discover()
 
-    force_steps = force_steps_from_run_flags(
-        spaln_ssp=spsp,
-        run_genemark=run_genemark,
-        run_prot_align=run_prot_align,
-        run_augustus=run_augustus,
-        run_snap=run_snap,
-        run_consensus=run_consensus,
-    )
+    force_steps = force_steps_from_run_flags(spaln_ssp=config.spaln_ssp, **run_flags)
 
     result = run_annotation_pipeline(config, force_steps=force_steps or None)
     click.echo(f"Done. Final annotation: {result}")

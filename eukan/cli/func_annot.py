@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import click
 from click_option_group import optgroup
@@ -32,38 +33,27 @@ from eukan.cli._framework import (
     help="Amino acid sequences in FASTA format.",
 )
 @optgroup.option(
-    "--uniprot", type=click.Path(exists=True, resolve_path=True, path_type=Path),
+    "--uniprot", "uniprot_db", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     default=None, help="UniProt-SwissProt database FASTA.",
 )
 @optgroup.option(
-    "--kofam", type=click.Path(exists=True, resolve_path=True, path_type=Path),
+    "--kofam", "kofam_db", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     default=None, help="KOfam pressed HMM database.",
 )
 @optgroup.option(
-    "--ko-list", type=click.Path(exists=True, resolve_path=True, path_type=Path),
+    "--ko-list", "ko_list_path", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     default=None, help="KOfam ko_list TSV (per-KO thresholds + definitions).",
 )
 @optgroup.option(
-    "--pfam", type=click.Path(exists=True, resolve_path=True, path_type=Path),
+    "--pfam", "pfam_db", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     default=None, help="Pfam HMM database.",
 )
 @optgroup.option(
-    "--gff3", type=click.Path(exists=True, resolve_path=True, path_type=Path),
+    "--gff3", "gff3_path", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     default=None, help="GFF3 file to annotate with functional info.",
 )
 @force_option
-def func_annot(
-    proteins: Path,
-    homology_db: str,
-    uniprot: Path | None,
-    kofam: Path | None,
-    ko_list: Path | None,
-    pfam: Path | None,
-    gff3: Path | None,
-    numcpu: int,
-    evalue: str,
-    force: bool,
-) -> None:
+def func_annot(**opts: Any) -> None:
     """Add functional annotations (UniProt/KOfam + Pfam) to proteins.
 
     \b
@@ -83,23 +73,14 @@ def func_annot(
     from eukan.infra.layout import step_work_dir
     from eukan.settings import FunctionalConfig
 
-    if proteins is None:
+    if opts["proteins"] is None:
         raise click.UsageError(
             "No protein file found. Provide --proteins or run `eukan annotate` first."
         )
 
+    force = opts.pop("force")
     config = FunctionalConfig(**drop_none(
-        proteins=proteins,
-        work_dir=step_work_dir("func-annot"),
-        manifest_dir=Path.cwd(),
-        num_cpu=numcpu,
-        evalue=evalue,
-        homology_db=homology_db.lower(),
-        uniprot_db=uniprot,
-        kofam_db=kofam,
-        ko_list_path=ko_list,
-        pfam_db=pfam,
-        gff3_path=gff3,
+        **opts, work_dir=step_work_dir("func-annot"), manifest_dir=Path.cwd(),
     ))
     run_functional_annotation(config, force=force)
     click.echo("Done.")
