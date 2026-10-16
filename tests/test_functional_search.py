@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 
 import pyhmmer
@@ -9,6 +10,7 @@ import pytest
 
 from eukan.functional.search import (
     _add_func_info,
+    _open_hmm_db,
     _pfam_accession,
     annotate_gff3,
     run_hmmscan_search,
@@ -197,3 +199,33 @@ class TestHmmscanNonOverlap:
         res = run_hmmscan_search([query], rrefam, num_cpu=1, evalue_threshold=1e-3)
 
         assert set(res["q"]) == {"Stand_Alone_Lasso_RRE", "Thiopeptide_F_RRE"}
+
+
+# The same RRE family HMMs, pressed (.h3m/.h3f/.h3p/.h3i beside the .hmm).
+PRESSED_RREFAM = RREFAM.parents[1] / "db" / "RREFam.hmm"
+
+
+class TestPressedDatabase:
+    def test_pressed_hits_match_loaded_hits(self, rrefam):
+        """A pressed database's optimized profiles are read straight into one
+        block; the hits are those of the HMMs loaded whole, and of the same
+        models in the unpressed file."""
+        linker = "GGSGGS" * 4
+        consensus = [hmm.consensus.upper() for hmm in rrefam[:4]]
+        queries = [
+            pyhmmer.easel.TextSequence(name=f"q{i}", sequence=a + linker + b).digitize(
+                pyhmmer.easel.Alphabet.amino(),
+            )
+            for i, (a, b) in enumerate(itertools.permutations(consensus, 2))
+        ]
+
+        with _open_hmm_db(PRESSED_RREFAM) as profiles:
+            assert isinstance(profiles, pyhmmer.plan7.OptimizedProfileBlock)
+            assert len(profiles) == len(rrefam)
+            pressed = run_hmmscan_search(queries, profiles, num_cpu=2, evalue_threshold=1e-3)
+        with _open_hmm_db(RREFAM) as profiles:
+            unpressed = run_hmmscan_search(queries, profiles, num_cpu=2, evalue_threshold=1e-3)
+        loaded = run_hmmscan_search(queries, rrefam, num_cpu=2, evalue_threshold=1e-3)
+
+        assert len(pressed) == len(queries)
+        assert pressed == unpressed == loaded

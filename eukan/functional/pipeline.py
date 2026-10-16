@@ -104,19 +104,15 @@ def _run_uniprot_phmmer(
 def _run_pfam_hmmscan(
     proteins: Path, pfam_db: Path, num_cpu: int, evalue: float,
 ) -> HitResults:
-    from eukan.functional.search import _load_digital_sequences, _load_hmm_db
+    from eukan.functional.search import _load_digital_sequences, _open_hmm_db
     log.info("Loading proteome from %s", proteins)
     queries = _load_digital_sequences(proteins)
-    log.info("Loading Pfam HMMs from %s", pfam_db)
-    hmms = _load_hmm_db(pfam_db)
     log.info(
-        "Running hmmscan (%d queries vs %d profiles, %d CPUs)...",
-        len(queries), len(hmms), num_cpu,
+        "Running hmmscan (%d queries vs the Pfam HMMs in %s, %d CPUs)...",
+        len(queries), pfam_db, num_cpu,
     )
-    res = run_hmmscan_search(queries, hmms, num_cpu, evalue)
-    del hmms
-    gc.collect()
-    return res
+    with _open_hmm_db(pfam_db) as profiles:
+        return run_hmmscan_search(queries, profiles, num_cpu, evalue)
 
 
 def _search_and_cache(config: FunctionalConfig, cache: Path) -> dict[str, HitResults]:

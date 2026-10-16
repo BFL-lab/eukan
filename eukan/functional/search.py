@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TypedDict
 
@@ -74,11 +75,23 @@ def _load_digital_sequences(fasta_path: Path) -> list[pyhmmer.easel.DigitalSeque
     return seqs
 
 
-def _load_hmm_db(hmm_path: Path) -> list[pyhmmer.plan7.HMM]:
-    """Load HMM profiles from a pressed Pfam database."""
+@contextmanager
+def _open_hmm_db(
+    hmm_path: Path,
+) -> Iterator[Iterable[pyhmmer.plan7.HMM | pyhmmer.plan7.OptimizedProfile]]:
+    """Open an HMM database as the profiles to hand to hmmscan.
+
+    A pressed database (``eukan db-fetch`` presses the ones it fetches) gives
+    its optimized profiles, read straight into one block; an unpressed one
+    gives the open file, which hmmscan configures into a block itself.
+    """
     with pyhmmer.plan7.HMMFile(str(hmm_path)) as hf:
-        hmms: list[pyhmmer.plan7.HMM] = list(hf)
-    return hmms
+        if hf.is_pressed():
+            yield pyhmmer.plan7.OptimizedProfileBlock(
+                pyhmmer.easel.Alphabet.amino(), hf.optimized_profiles(),
+            )
+        else:
+            yield hf
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +128,7 @@ def run_phmmer_search(
 
 def run_hmmscan_search(
     queries: list[pyhmmer.easel.DigitalSequence],
-    hmms: list[pyhmmer.plan7.HMM],
+    profiles: Iterable[pyhmmer.plan7.HMM | pyhmmer.plan7.OptimizedProfile],
     num_cpu: int,
     evalue_threshold: float,
 ) -> HitResults:
@@ -127,7 +140,7 @@ def run_hmmscan_search(
     """
     results: HitResults = {}
 
-    for top_hits in pyhmmer.hmmer.hmmscan(queries, hmms, cpus=num_cpu, E=evalue_threshold):
+    for top_hits in pyhmmer.hmmer.hmmscan(queries, profiles, cpus=num_cpu, E=evalue_threshold):
         query_name = _decode(top_hits.query.name)
         if not top_hits:
             continue
