@@ -1,9 +1,12 @@
 """Tests for eukan.dbfetch — manifest tracking, integrity, and resumable downloads."""
 
+import gzip
 import io
 import tarfile
+from pathlib import Path
 from unittest.mock import patch
 
+import pyhmmer
 import pytest
 
 from eukan.functional import dbfetch
@@ -225,6 +228,29 @@ class TestDownloadResume:
 
         assert not dest.exists()
         assert partial.exists() and partial.read_bytes() == b"first-chunk"
+
+
+class TestDownloadPfam:
+    def test_decompresses_presses_and_records(self, tmp_path):
+        """The fetched .gz is decompressed to Pfam-A.hmm and removed, the HMMs
+        are pressed, and the manifest entry hashes the decompressed file."""
+        source = Path(pyhmmer.__file__).parent / "tests" / "data" / "hmms" / "txt" / "RREFam.hmm"
+        if not source.exists():
+            pytest.skip("pyhmmer installed without its bundled test HMMs")
+
+        def fake_download(url, dest):
+            with gzip.open(dest, "wb") as fh:
+                fh.write(source.read_bytes())
+
+        with patch.object(dbfetch, "_download_file", side_effect=fake_download):
+            entry = dbfetch.download_pfam(tmp_path)
+
+        hmm = tmp_path / "Pfam-A.hmm"
+        assert hmm.read_bytes() == source.read_bytes()
+        assert not (tmp_path / "Pfam-A.hmm.gz").exists()
+        assert entry.md5 == md5_file(hmm)
+        with pyhmmer.plan7.HMMFile(str(hmm)) as hf:
+            assert len(hf.optimized_profiles()) == 10
 
 
 class TestKofamExtraction:

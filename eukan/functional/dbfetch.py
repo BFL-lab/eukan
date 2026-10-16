@@ -126,6 +126,15 @@ def _download_file(url: str, dest: Path) -> None:
     partial.replace(dest)
 
 
+def _fetch_gunzip(url: str, gz_path: Path, out_path: Path) -> None:
+    """Download *url* to *gz_path*, decompress it to *out_path*, delete the .gz."""
+    _download_file(url, gz_path)
+    log.info("Decompressing %s...", gz_path.name)
+    with gzip.open(gz_path, "rb") as f_in, open(out_path, "wb") as f_out:
+        shutil.copyfileobj(f_in, f_out)
+    gz_path.unlink()
+
+
 def _make_entry(name: str, filename: str, url: str, db_dir: Path) -> DatabaseEntry:
     """Create a manifest entry for a freshly downloaded/processed file."""
     path = db_dir / filename
@@ -146,34 +155,20 @@ def _make_entry(name: str, filename: str, url: str, db_dir: Path) -> DatabaseEnt
 
 def download_uniprot(output_dir: Path) -> DatabaseEntry:
     """Download UniProt-SwissProt FASTA and decompress."""
-    gz_path = output_dir / "uniprot_sprot.fasta.gz"
-    faa_path = output_dir / "uniprot_sprot.faa"
-
-    _download_file(UNIPROT_URL, gz_path)
-
-    log.info("Decompressing UniProt FASTA...")
-    with gzip.open(gz_path, "rb") as f_in, open(faa_path, "wb") as f_out:
-        shutil.copyfileobj(f_in, f_out)
-
-    gz_path.unlink()
+    _fetch_gunzip(
+        UNIPROT_URL, output_dir / "uniprot_sprot.fasta.gz", output_dir / "uniprot_sprot.faa",
+    )
     return _make_entry("uniprot", "uniprot_sprot.faa", UNIPROT_URL, output_dir)
 
 
 def download_pfam(output_dir: Path) -> DatabaseEntry:
     """Download Pfam-A HMM database, decompress, and press it."""
-    gz_path = output_dir / "Pfam-A.hmm.gz"
     hmm_path = output_dir / "Pfam-A.hmm"
-
-    _download_file(PFAM_URL, gz_path)
-
-    log.info("Decompressing Pfam HMM...")
-    with gzip.open(gz_path, "rb") as f_in, open(hmm_path, "wb") as f_out:
-        shutil.copyfileobj(f_in, f_out)
-
-    gz_path.unlink()
+    _fetch_gunzip(PFAM_URL, output_dir / "Pfam-A.hmm.gz", hmm_path)
 
     log.info("Pressing HMM database...")
-    pyhmmer.hmmer.hmmpress(hmms=pyhmmer.plan7.HMMFile(str(hmm_path)), output=str(hmm_path))
+    with pyhmmer.plan7.HMMFile(str(hmm_path)) as hf:
+        pyhmmer.hmmer.hmmpress(hmms=hf, output=str(hmm_path))
 
     return _make_entry("pfam", "Pfam-A.hmm", PFAM_URL, output_dir)
 
@@ -247,25 +242,15 @@ def download_kofam(output_dir: Path) -> DatabaseEntry:
     shutil.rmtree(extract_dir)
 
     log.info("Pressing KOfam HMM database (%s)...", final_hmm.name)
-    pyhmmer.hmmer.hmmpress(
-        hmms=pyhmmer.plan7.HMMFile(str(final_hmm)), output=str(final_hmm),
-    )
+    with pyhmmer.plan7.HMMFile(str(final_hmm)) as hf:
+        pyhmmer.hmmer.hmmpress(hmms=hf, output=str(final_hmm))
 
     return _make_entry("kofam", KOFAM_HMM_FILE, KOFAM_PROFILES_URL, output_dir)
 
 
 def download_ko_list(output_dir: Path) -> DatabaseEntry:
     """Download the KOfam ``ko_list`` TSV (per-KO thresholds + definitions)."""
-    gz_path = output_dir / "ko_list.gz"
-    tsv_path = output_dir / KOFAM_KO_LIST_FILE
-
-    _download_file(KOFAM_KO_LIST_URL, gz_path)
-
-    log.info("Decompressing ko_list...")
-    with gzip.open(gz_path, "rb") as f_in, open(tsv_path, "wb") as f_out:
-        shutil.copyfileobj(f_in, f_out)
-
-    gz_path.unlink()
+    _fetch_gunzip(KOFAM_KO_LIST_URL, output_dir / "ko_list.gz", output_dir / KOFAM_KO_LIST_FILE)
     return _make_entry("ko_list", KOFAM_KO_LIST_FILE, KOFAM_KO_LIST_URL, output_dir)
 
 
