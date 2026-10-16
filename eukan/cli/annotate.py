@@ -117,7 +117,7 @@ def annotate(
     from eukan.settings import PipelineConfig
 
     # Only pass fields explicitly set by the user; pydantic-settings
-    # fills the rest from pyproject.toml / env vars / defaults.
+    # fills the rest from env vars / defaults.
     config = PipelineConfig(**drop_none(
         genome=genome.resolve(),
         proteins=[p.resolve() for p in proteins],

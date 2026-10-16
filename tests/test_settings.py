@@ -123,6 +123,15 @@ class TestPipelineConfig:
         assert config.genetic_code == "6"
         assert config.num_cpu == 4
 
+    def test_pyproject_in_cwd_is_not_read(self, tmp_path, monkeypatch):
+        """A [tool.eukan] table in the current directory's pyproject.toml is not a
+        settings source."""
+        (tmp_path / "pyproject.toml").write_text('[tool.eukan]\nkingdom = "fungus"\n')
+        monkeypatch.chdir(tmp_path)
+        genome = tmp_path / "genome.fa"
+        config = PipelineConfig(genome=genome, proteins=[genome], work_dir=tmp_path)
+        assert config.kingdom is None
+
     def test_constructor_overrides_env(self, tmp_path, monkeypatch):
         """Explicit constructor args should beat env vars."""
         genome = tmp_path / "genome.fa"

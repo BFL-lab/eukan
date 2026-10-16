@@ -2,9 +2,8 @@
 
 Settings are resolved in this order (last wins):
   1. Defaults defined here
-  2. [tool.eukan] section in pyproject.toml
-  3. Environment variables prefixed with EUKAN_
-  4. CLI flags (applied by cli.py when constructing models)
+  2. Environment variables prefixed with EUKAN_
+  3. CLI flags (applied by the eukan.cli commands when constructing models)
 """
 
 from __future__ import annotations
@@ -28,50 +27,6 @@ def _rand_string(length: int = 5) -> str:
     return "".join(random.choice(string.ascii_uppercase) for _ in range(length))
 
 
-def _pyproject_toml_settings(settings: BaseSettings) -> dict[str, Any]:
-    """Load [tool.eukan] from pyproject.toml if it exists."""
-    import tomllib
-    pyproject = Path("pyproject.toml")
-    if not pyproject.exists():
-        return {}
-    try:
-        with open(pyproject, "rb") as f:
-            data = tomllib.load(f)
-        return data.get("tool", {}).get("eukan", {})
-    except (OSError, ValueError, KeyError):
-        return {}
-
-
-def _pyproject_settings_sources(toml_key: str | None = None):
-    """Create a settings_customise_sources classmethod for pyproject.toml.
-
-    Args:
-        toml_key: Sub-key under [tool.eukan] (e.g., "assemble").
-            If None, reads directly from [tool.eukan].
-    """
-    def settings_customise_sources(cls, settings_cls, **kwargs):
-        from pydantic_settings import PydanticBaseSettingsSource
-
-        class PyprojectSource(PydanticBaseSettingsSource):
-            def get_field_value(self, field, field_name):
-                data = _pyproject_toml_settings(self.settings_cls)
-                section = data.get(toml_key, {}) if toml_key else data
-                val = section.get(field_name)
-                return val, field_name, val is not None
-
-            def __call__(self):
-                data = _pyproject_toml_settings(self.settings_cls)
-                return data.get(toml_key, {}) if toml_key else data
-
-        return (
-            kwargs.get("init_settings"),
-            kwargs.get("env_settings"),
-            PyprojectSource(settings_cls),
-        )
-
-    return classmethod(settings_customise_sources)
-
-
 class Kingdom(str, Enum):
     fungus = "fungus"
     protist = "protist"
@@ -88,7 +43,7 @@ class _StepRunSettings(BaseSettings):
     """Common fields, validators, and accessors shared by step-driven configs.
 
     Subclasses (PipelineConfig, AssemblyConfig) provide their own
-    ``model_config`` (env_prefix, settings sources) and may override
+    ``model_config`` (env_prefix) and may override
     field defaults (e.g. ``genetic_code``).
     """
 
@@ -143,7 +98,6 @@ class PipelineConfig(_StepRunSettings):
     """Configuration for the annotation pipeline.
 
     Fields can be set via:
-      - [tool.eukan] in pyproject.toml
       - EUKAN_ prefixed env vars (e.g., EUKAN_NUM_CPU=8)
       - CLI flags (override at construction time)
 
@@ -158,7 +112,6 @@ class PipelineConfig(_StepRunSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="EUKAN_",
-        env_nested_delimiter="__",
         extra="ignore",
     )
 
@@ -273,8 +226,6 @@ class PipelineConfig(_StepRunSettings):
     @property
     def has_transcripts(self) -> bool:
         return all([self.transcripts_fasta, self.transcripts_gff, self.rnaseq_hints])
-
-    settings_customise_sources = _pyproject_settings_sources()
 
 
 # ---------------------------------------------------------------------------
@@ -469,8 +420,6 @@ class AssemblyConfig(_StepRunSettings):
         description="Assembly memory cap in GiB (Trinity --max_memory / rnaSPAdes -m).",
     )
 
-    settings_customise_sources = _pyproject_settings_sources("assemble")
-
 
 # ---------------------------------------------------------------------------
 # Repeat-masking settings (eukan mask-repeats)
@@ -492,8 +441,6 @@ class RepeatsConfig(_StepRunSettings):
     @property
     def name(self) -> str:
         return self.genome.stem
-
-    settings_customise_sources = _pyproject_settings_sources("mask-repeats")
 
 
 # ---------------------------------------------------------------------------
@@ -517,8 +464,6 @@ class FunctionalConfig(_StepRunSettings):
     pfam_db: Path = Path("databases/Pfam-A.hmm")
     gff3_path: Path | None = None
     evalue: float = 1e-1
-
-    settings_customise_sources = _pyproject_settings_sources("func-annot")
 
 
 # ---------------------------------------------------------------------------
@@ -615,5 +560,3 @@ class SubmissionConfig(_StepRunSettings):
             object.__setattr__(self, "output_file", self.output_dir / f"{self.genome.stem}.sqn")
 
         return self
-
-    settings_customise_sources = _pyproject_settings_sources("prep-submission")

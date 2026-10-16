@@ -215,9 +215,9 @@ def drop_none(**kwargs) -> dict:
     """Build a kwargs dict, dropping keys whose value is ``None``.
 
     Keeps the CLI → config plumbing terse without losing the ability for
-    pydantic-settings to discover unset fields from pyproject.toml or
-    environment variables: an explicit ``None`` from a missing CLI flag
-    must not overwrite a value those sources would have provided.
+    pydantic-settings to fill unset fields from environment variables: an
+    explicit ``None`` from a missing CLI flag must not overwrite a value
+    that source would have provided.
     """
     return {k: v for k, v in kwargs.items() if v is not None}
 
