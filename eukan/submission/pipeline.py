@@ -61,19 +61,16 @@ def build_command(config: SubmissionConfig) -> list[str]:
     Pure function — no filesystem or subprocess side-effects. Validates
     that required source qualifiers are present.
     """
-    assert config.genome is not None  # post-discovery invariant
-    assert config.gff3 is not None
-    assert config.output_file is not None
-
+    genome, gff3, sqn = config.required_paths()
     cmd: list[str] = ["table2asn", *_FIXED_FLAGS]
     cmd += ["-M", config.mode]
     cmd += ["-c", config.cleanup]
     cmd += ["-a", config.assembly_type]
     cmd += ["-t", str(config.template)]
     cmd += ["-j", _build_source_info(config)]
-    cmd += ["-i", str(config.genome)]
-    cmd += ["-f", str(config.gff3)]
-    cmd += ["-o", str(config.output_file)]
+    cmd += ["-i", str(genome)]
+    cmd += ["-f", str(gff3)]
+    cmd += ["-o", str(sqn)]
     cmd += ["-outdir", str(config.output_dir)]
     if config.locus_tag_prefix:
         cmd += ["-locus-tag-prefix", config.locus_tag_prefix]
@@ -105,12 +102,6 @@ def _parse_val_report(val_path: Path) -> dict[str, int]:
     return counts
 
 
-def _val_path(config: SubmissionConfig) -> Path:
-    """Path to the .val report table2asn writes alongside the .sqn output."""
-    assert config.output_file is not None
-    return config.output_file.with_suffix(".val")
-
-
 def run_prep_submission(
     config: SubmissionConfig,
     *,
@@ -127,19 +118,18 @@ def run_prep_submission(
         Path to the produced ``.sqn`` file (or the planned path under
         ``--print-command``/``--dry-run``).
     """
-    assert config.output_file is not None  # post-discovery invariant
+    _, gff3, sqn = config.required_paths()
 
     if print_only:
         cmd = build_command(config)
         log.info("table2asn command: %s", shell_repr(cmd))
-        return config.output_file
+        return sqn
 
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
     if config.cleanup_gff3:
-        assert config.gff3 is not None
-        cleaned = config.output_dir / f"{config.gff3.stem}.cleaned.gff3"
-        report = clean_gff3_for_submission(config.gff3, cleaned)
+        cleaned = config.output_dir / f"{gff3.stem}.cleaned.gff3"
+        report = clean_gff3_for_submission(gff3, cleaned)
         log.info("GFF3 cleanup: %s", report.summary())
         log.info("Cleaned GFF3: %s", cleaned)
         object.__setattr__(config, "gff3", cleaned)
@@ -149,25 +139,25 @@ def run_prep_submission(
 
     if dry_run:
         log.info("Dry-run requested; skipping table2asn invocation.")
-        return config.output_file
+        return sqn
 
     # table2asn doesn't honour absolute paths in -outdir consistently; cd
     # to the parent so its log files land next to the .sqn output.
     run_cmd(cmd, cwd=config.work_dir)
 
-    log.info("Wrote %s", config.output_file)
+    log.info("Wrote %s", sqn)
 
-    counts = _parse_val_report(_val_path(config))
+    val = sqn.with_suffix(".val")  # table2asn writes it next to the .sqn
+    counts = _parse_val_report(val)
     if any(counts.values()):
         log.info(
             "Validator: %d FATAL, %d ERROR, %d WARNING, %d INFO (full report: %s)",
-            counts["FATAL"], counts["ERROR"], counts["WARNING"], counts["INFO"],
-            _val_path(config),
+            counts["FATAL"], counts["ERROR"], counts["WARNING"], counts["INFO"], val,
         )
     if counts["FATAL"]:
         raise ConfigurationError(
             f"table2asn reported {counts['FATAL']} FATAL validation error(s).",
-            hint=f"See {_val_path(config)} for details.",
+            hint=f"See {val} for details.",
         )
 
-    return config.output_file
+    return sqn

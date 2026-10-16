@@ -84,6 +84,12 @@ class TestBuildCommand:
         with pytest.raises(ConfigurationError, match="source qualifier"):
             build_command(config)
 
+    def test_undiscovered_config_raises(self, submission_inputs):
+        # genome not given and discover() not called: no command with "None" in it
+        config = _base_config(submission_inputs, genome=None)
+        with pytest.raises(ValueError, match="call discover"):
+            build_command(config)
+
     def test_locus_tag_prefix_appended(self, submission_inputs):
         cmd = build_command(_base_config(submission_inputs, locus_tag_prefix="ABC"))
         assert "-locus-tag-prefix" in cmd

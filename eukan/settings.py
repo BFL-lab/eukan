@@ -580,3 +580,9 @@ class SubmissionConfig(_StepRunSettings):
             )
 
         self._derive_output_file()
+
+    def required_paths(self) -> tuple[Path, Path, Path]:
+        """``(genome, gff3, output_file)``, which discover() leaves set."""
+        if self.genome is None or self.gff3 is None or self.output_file is None:
+            raise ValueError("genome, gff3 or output_file not set; call discover() first.")
+        return self.genome, self.gff3, self.output_file
