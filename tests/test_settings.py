@@ -207,6 +207,26 @@ class TestAssemblyConfig:
         config = AssemblyConfig(genome=genome, memory_gb=12)
         assert config.memory_gb == 12
 
+    @pytest.mark.parametrize(("kwargs", "message"), [
+        ({"left_reads": "l.fq"}, "requires both --left and --right"),
+        ({"right_reads": "r.fq"}, "requires both --left and --right"),
+        ({"single_reads": "s.fq", "strand_specific": "RF"}, "RF/FR"),
+        ({"left_reads": "l.fq", "right_reads": "r.fq", "strand_specific": "F"}, "R/F"),
+    ])
+    def test_inconsistent_read_pairing_rejected(self, tmp_path, kwargs, message):
+        with pytest.raises(ValidationError, match=message):
+            AssemblyConfig(genome=tmp_path / "g.fa", work_dir=tmp_path, **kwargs)
+
+    def test_consistent_read_pairing_accepted(self, tmp_path):
+        genome = tmp_path / "g.fa"
+        AssemblyConfig(genome=genome, work_dir=tmp_path, single_reads="s.fq", strand_specific="R")
+        AssemblyConfig(
+            genome=genome, work_dir=tmp_path, left_reads="l.fq", right_reads="r.fq",
+            strand_specific="RF",
+        )
+        # No reads at all: that check is the CLI's.
+        AssemblyConfig(genome=genome, work_dir=tmp_path, strand_specific="RF")
+
     def test_dump_and_repr_without_reads(self, tmp_path):
         """Derived values are plain properties, so model_dump() and repr() don't
         evaluate reads_args_*, which raise when no reads are set."""

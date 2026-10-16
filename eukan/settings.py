@@ -413,6 +413,23 @@ class AssemblyConfig(_StepRunSettings):
         description="Assembly memory cap in GiB (Trinity --max_memory / rnaSPAdes -m).",
     )
 
+    @model_validator(mode="after")
+    def _check_read_pairing(self) -> AssemblyConfig:
+        # Whether any reads were given at all is the CLI's check: steps and
+        # tests build reads-less configs.
+        paired = self.left_reads is not None or self.right_reads is not None
+        if paired and (self.left_reads is None or self.right_reads is None):
+            raise ValueError("Paired-end mode requires both --left and --right.")
+        if self.single_reads is not None and self.strand_specific in ("RF", "FR"):
+            raise ValueError(
+                "Paired-end strand types (RF/FR) cannot be used with single-end reads."
+            )
+        if paired and self.strand_specific in ("R", "F"):
+            raise ValueError(
+                "Single-end strand types (R/F) cannot be used with paired-end reads."
+            )
+        return self
+
 
 # ---------------------------------------------------------------------------
 # Repeat-masking settings (eukan mask-repeats)

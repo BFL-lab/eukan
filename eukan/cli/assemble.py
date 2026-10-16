@@ -244,18 +244,6 @@ def assemble(
 
     if not left and not right and not single:
         raise click.UsageError("Provide --left/--right (paired) or --single reads.")
-    if (left or right) and not (left and right):
-        raise click.UsageError("Paired-end mode requires both --left and --right.")
-
-    if strand_specific:
-        if single and strand_specific in ("RF", "FR"):
-            raise click.UsageError(
-                "Paired-end strand types (RF/FR) cannot be used with single-end reads."
-            )
-        if (left or right) and strand_specific in ("R", "F"):
-            raise click.UsageError(
-                "Single-end strand types (R/F) cannot be used with paired-end reads."
-            )
 
     if memory_gb is not None and memory_gb < 1:
         raise click.UsageError("--memory-gb must be at least 1 GiB.")
