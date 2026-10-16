@@ -132,7 +132,7 @@ def run_prep_submission(
         report = clean_gff3_for_submission(gff3, cleaned)
         log.info("GFF3 cleanup: %s", report.summary())
         log.info("Cleaned GFF3: %s", cleaned)
-        object.__setattr__(config, "gff3", cleaned)
+        config = config.model_copy(update={"gff3": cleaned})
 
     cmd = build_command(config)
     log.info("table2asn command: %s", shell_repr(cmd))

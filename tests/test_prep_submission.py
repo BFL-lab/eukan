@@ -9,7 +9,7 @@ import pytest
 
 from eukan.exceptions import ConfigurationError
 from eukan.settings import SubmissionConfig
-from eukan.submission import build_command, shell_repr
+from eukan.submission import build_command, run_prep_submission, shell_repr
 from eukan.submission.pipeline import _parse_val_report
 
 # ---------------------------------------------------------------------------
@@ -276,3 +276,18 @@ def test_shell_repr_quotes_arguments_with_spaces(submission_inputs):
     rendered = shell_repr(cmd)
     # The -j value contains a space and brackets; both must be quoted.
     assert "'[organism=Homo sapiens]'" in rendered
+
+
+def test_cleanup_runs_on_the_cleaned_gff3_without_changing_the_callers_config(
+    submission_inputs, caplog,
+):
+    import logging
+
+    config = _base_config(submission_inputs)
+    given = config.gff3
+    with caplog.at_level(logging.INFO, logger="eukan.submission.pipeline"):
+        run_prep_submission(config, dry_run=True)
+    assert config.gff3 == given
+    cleaned = config.output_dir / "final.mod.cleaned.gff3"
+    assert cleaned.exists()
+    assert f" -f {cleaned} " in caplog.text
