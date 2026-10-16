@@ -17,7 +17,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, computed_field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from eukan.exceptions import ConfigurationError
@@ -262,17 +262,14 @@ class PipelineConfig(_StepRunSettings):
 
     # --- Computed properties --------------------------------------------
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def is_fungus(self) -> bool:
         return self.kingdom == Kingdom.fungus
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def is_protist(self) -> bool:
         return self.kingdom == Kingdom.protist
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def has_transcripts(self) -> bool:
         return all([self.transcripts_fasta, self.transcripts_gff, self.rnaseq_hints])
@@ -438,12 +435,10 @@ class AssemblyConfig(_StepRunSettings):
     defuse_blastx_evalue: float = 1e-5
     """diamond blastx e-value cutoff for a protein hit to count toward de-fusion."""
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def name(self) -> str:
         return self.genome.stem
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def aligner_bam(self) -> str:
         """The read BAM downstream genome-guided steps (Trinity gg, SL read-side) use.
@@ -453,7 +448,6 @@ class AssemblyConfig(_StepRunSettings):
         """
         return "minimap2_Aligned.sortedByCoord.out.bam"
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def reads_args_minimap2(self) -> list[str]:
         if self.left_reads and self.right_reads:
@@ -462,7 +456,6 @@ class AssemblyConfig(_StepRunSettings):
             return [str(self.single_reads)]
         raise ValueError("No read files provided")
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def reads_args_trinity(self) -> list[str]:
         if self.left_reads and self.right_reads:
@@ -496,7 +489,6 @@ class RepeatsConfig(_StepRunSettings):
     lib: Path | None = None  # pre-built families library; skips RepeatModeler when set
     engine: str = "rmblast"
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def name(self) -> str:
         return self.genome.stem

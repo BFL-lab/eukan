@@ -173,6 +173,13 @@ class TestAssemblyConfig:
         config = AssemblyConfig(genome=genome, memory_gb=12)
         assert config.memory_gb == 12
 
+    def test_dump_and_repr_without_reads(self, tmp_path):
+        """Derived values are plain properties, so model_dump() and repr() don't
+        evaluate reads_args_*, which raise when no reads are set."""
+        config = AssemblyConfig(genome=tmp_path / "g.fa", work_dir=tmp_path)
+        assert "reads_args_minimap2" not in config.model_dump()
+        assert repr(config).startswith("AssemblyConfig(")
+
 
 class TestDefaultAssemblyMemoryGb:
     """Direct tests for ``_default_assembly_memory_gb`` against fixture meminfo."""
