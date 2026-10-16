@@ -60,6 +60,51 @@ class TestManifestIO:
         assert loaded.genome == "g.fa"
 
 
+class TestSaveManifestMerge:
+    """Copies of one run dir's manifest (two eukan invocations, say) each save
+    only what they changed, so neither loses the other's records."""
+
+    @staticmethod
+    def _two_copies(tmp_path, **fields):
+        save_manifest(tmp_path, RunManifest(**fields))
+        return load_manifest(tmp_path), load_manifest(tmp_path)
+
+    @staticmethod
+    def _completed(name):
+        return StepRecord(name=name, status=StepStatus.completed)
+
+    def test_copies_saving_different_steps_keep_both(self, tmp_path):
+        a, b = self._two_copies(tmp_path)
+        b.steps["repeats/modeler"] = self._completed("repeats/modeler")
+        save_manifest(tmp_path, b)
+        a.steps["assembly/minimap2"] = self._completed("assembly/minimap2")
+        save_manifest(tmp_path, a)
+
+        assert set(load_manifest(tmp_path).steps) == {"repeats/modeler", "assembly/minimap2"}
+
+    def test_unchanged_stale_record_does_not_overwrite_a_newer_one(self, tmp_path):
+        a, b = self._two_copies(tmp_path, steps={
+            "repeats/modeler": StepRecord(name="repeats/modeler", status=StepStatus.failed),
+        })
+        b.steps["repeats/modeler"].status = StepStatus.completed  # b re-ran it
+        save_manifest(tmp_path, b)
+        a.steps["assembly/minimap2"] = self._completed("assembly/minimap2")
+        save_manifest(tmp_path, a)  # a still holds the failed record
+
+        on_disk = load_manifest(tmp_path)
+        assert on_disk.steps["repeats/modeler"].status == StepStatus.completed
+        assert "assembly/minimap2" in on_disk.steps
+
+    def test_run_level_change_is_kept(self, tmp_path):
+        a, b = self._two_copies(tmp_path)
+        b.status = "completed"
+        save_manifest(tmp_path, b)
+        a.steps["assembly/minimap2"] = self._completed("assembly/minimap2")
+        save_manifest(tmp_path, a)
+
+        assert load_manifest(tmp_path).status == "completed"
+
+
 class TestPipelineStepContextManager:
     def test_success_creates_and_removes_sentinel(self, tmp_path):
         manifest = RunManifest()

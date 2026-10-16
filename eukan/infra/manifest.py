@@ -21,7 +21,7 @@ from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from eukan.infra.logging import get_logger
 
@@ -104,6 +104,9 @@ class RunManifest(BaseModel):
     has_transcripts: bool = False
     tool_versions: dict[str, str] = Field(default_factory=dict)
     steps: dict[str, StepRecord] = Field(default_factory=dict)
+    # This copy as last loaded or saved; save_manifest writes only what changed
+    # since, so copies saving to one run dir keep each other's changes.
+    _synced: dict[str, Any] = PrivateAttr(default_factory=dict)
 
     def pipeline_status(self, prefix: str) -> str:
         """Get the aggregate status for a pipeline (assembly, annotation, functional).
@@ -135,37 +138,40 @@ def load_manifest(work_dir: Path) -> RunManifest | None:
     if not path.exists():
         return None
     try:
-        return RunManifest.model_validate_json(path.read_text())
+        manifest = RunManifest.model_validate_json(path.read_text())
     except (ValueError, KeyError, OSError) as exc:
         log.warning("Corrupt manifest at %s (%s), ignoring", path, exc)
         return None
+    manifest._synced = manifest.model_dump(mode="json")
+    return manifest
 
 
 _manifest_lock = threading.Lock()
 
 
 def save_manifest(work_dir: Path, manifest: RunManifest) -> None:
-    """Save the run manifest to disk atomically.
+    """Save the run manifest to disk atomically, merged with the one there.
 
-    Writes to a temp file first, then renames -- prevents corruption
-    if the process crashes mid-write.  Thread-safe within a process via
-    ``_manifest_lock``; cross-process safe via an fcntl lock on the
-    target path so two simultaneous ``eukan`` invocations against the
-    same work_dir don't tear writes.
+    Several ``eukan`` invocations, and annotation's concurrent steps, save to
+    one eukan-run.json. Under the lock the file on disk is re-read, and only
+    what this copy changed since it was last loaded or saved (step records,
+    run-level fields) is written over it, so a writer keeps the step records
+    others saved meanwhile. Writes to a temp file first, then renames --
+    prevents corruption if the process crashes mid-write. Thread-safe within a
+    process via ``_manifest_lock``; cross-process safe via an fcntl lock on the
+    target path so two simultaneous ``eukan`` invocations against the same
+    work_dir don't tear writes.
 
     The fcntl import is local because Windows ships without it; on
     Windows we fall back to in-process locking only.
     """
-    payload = manifest.model_dump_json(indent=2) + "\n"
     target = work_dir / MANIFEST_FILE
-    tmp = target.with_suffix(".tmp")
 
     with _manifest_lock:
         try:
             import fcntl
         except ImportError:
-            tmp.write_text(payload)
-            tmp.replace(target)
+            _write_merged(work_dir, manifest)
             return
 
         # Lock a sidecar file (target itself may not exist yet, and we
@@ -174,10 +180,31 @@ def save_manifest(work_dir: Path, manifest: RunManifest) -> None:
         with open(lock_path, "w") as lock_fh:
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
             try:
-                tmp.write_text(payload)
-                tmp.replace(target)
+                _write_merged(work_dir, manifest)
             finally:
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+
+
+def _write_merged(work_dir: Path, manifest: RunManifest) -> None:
+    """Write *manifest*'s changes since it was last synced over the manifest in
+    *work_dir* (temp file, then rename). Caller holds the locks."""
+    mine = manifest.model_dump(mode="json")
+    on_disk = load_manifest(work_dir)
+    merged = mine
+    if on_disk is not None:
+        merged = on_disk.model_dump(mode="json")
+        synced = manifest._synced
+        for field, value in mine.items():
+            if field != "steps" and value != synced.get(field):
+                merged[field] = value
+        for key, record in mine["steps"].items():
+            if record != synced.get("steps", {}).get(key):
+                merged["steps"][key] = record
+    target = work_dir / MANIFEST_FILE
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(RunManifest.model_validate(merged).model_dump_json(indent=2) + "\n")
+    tmp.replace(target)
+    manifest._synced = mine
 
 
 def init_manifest(config: Any) -> RunManifest:
