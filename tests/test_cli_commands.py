@@ -139,3 +139,10 @@ class TestCodeTableEpilog:
         result = CliRunner().invoke(cli, ["gff3toseq", flag])
         assert result.exit_code == 0
         assert ("Genetic codes (NCBI translation tables):" in result.output) is shown
+
+
+def test_db_fetch_help_has_no_options_header():
+    """db-fetch lays out its option groups like every other command."""
+    result = CliRunner().invoke(cli, ["db-fetch", "-h"])
+    assert "Options:" not in result.output
+    assert "\nPipeline parameters: \n-o, --output-dir PATH" in result.output

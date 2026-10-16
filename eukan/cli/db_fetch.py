@@ -7,10 +7,10 @@ from pathlib import Path
 import click
 from click_option_group import optgroup
 
-from eukan.cli._framework import force_option
+from eukan.cli._framework import PreformattedEpilogCommand, force_option
 
 
-@click.command("db-fetch")
+@click.command("db-fetch", cls=PreformattedEpilogCommand)
 @optgroup.group("Pipeline parameters")
 @optgroup.option(
     "--output-dir", "-o", type=click.Path(resolve_path=True, path_type=Path), default="databases",
