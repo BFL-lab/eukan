@@ -1,139 +1,73 @@
 """Tests for eukan.annotation.orf — ORF finding and coordinate mapping."""
 
-import pandas as pd
+from eukan.annotation.orf import find_longest_orfs
 
-from eukan.annotation.orf import fetch_longest_orf, find_starts_stops
+
+def _orf(seq, genetic_code=1, **kw):
+    return find_longest_orfs([("t1", "+", seq)], genetic_code=genetic_code, **kw).get("t1")
+
 
 # ---------------------------------------------------------------------------
-# find_starts_stops
+# find_longest_orfs
 # ---------------------------------------------------------------------------
 
 
-class TestFindStartsStops:
-    def test_basic_start_stop(self):
-        """Should find ATG starts and TAA/TAG/TGA stops."""
-        seqs = [("seq1", "+", "AAATGCCCCTAAGGG")]
-        #                       ATG at pos 3, TAA at pos 10 (0-based: 2,9)
-        df = find_starts_stops(seqs, genetic_code=1)
+class TestFindLongestOrfs:
+    def test_basic_orf(self):
+        """1-based start of the start codon to the last base of the stop codon."""
+        seq = "CC" + "ATG" + "GCC" * 40 + "TAA" + "CC"
+        assert _orf(seq) == (3, 128)
 
-        starts = df[df["codon"] == "start"]
-        stops = df[df["codon"] == "stop"]
+    def test_first_start_after_the_previous_stop(self):
+        """An in-frame start downstream of the first one does not shorten the ORF."""
+        seq = "ATG" + "GCC" * 10 + "ATG" + "GCC" * 30 + "TAG"
+        assert _orf(seq) == (1, len(seq))
 
-        assert len(starts) >= 1
-        assert len(stops) >= 1
-        # ATG at position 3 (1-based)
-        assert 3 in starts["pos"].values
+    def test_upstream_orf_wins_a_tie_in_frame(self):
+        orf = "ATG" + "GCC" * 40 + "TAA"
+        assert _orf(orf + orf, orf_len_frac=0.4) == (1, len(orf))
 
-    def test_empty_sequence(self):
-        """Empty sequence should return empty DataFrame."""
-        df = find_starts_stops([("seq1", "+", "")], genetic_code=1)
-        assert len(df) == 0
+    def test_cross_frame_tie_goes_to_the_frame_whose_first_start_comes_first(self):
+        """Frame 2 has a start at position 3 with no ORF behind it, ahead of
+        frame 0's first start; both frames hold an equally long ORF."""
+        orf = "ATG" + "GCC" * 40 + "TAA"
+        seq = "GGATGTAA" + "C" * 22 + orf + "GG" + orf + "CC"
+        assert _orf(seq, orf_len_frac=0.3) == (len(seq) - 2 - len(orf) + 1, len(seq) - 2)
 
-    def test_no_starts(self):
-        """Sequence with no start codons."""
-        df = find_starts_stops([("seq1", "+", "CCCCCCCCCC")])
-        starts = df[df["codon"] == "start"]
-        assert len(starts) == 0
+    def test_min_length_is_strict(self):
+        assert _orf("ATG" + "GCC" * 29 + "TAA", orf_len_frac=0.0) is None  # 90 nt
+        assert _orf("ATG" + "GCC" * 30 + "TAA", orf_len_frac=0.0) == (1, 96)  # 93 nt
+
+    def test_fraction_filter_is_strict(self):
+        seq = "ATG" + "GCC" * 49 + "TAA" + "C" * 147  # 150 / 300 nt
+        assert _orf(seq) is None
+        assert _orf(seq[:-3]) == (1, 153)
+
+    def test_no_orf(self):
+        assert _orf("") is None
+        assert _orf("C" * 300) is None
+        assert _orf("ATG" + "GCC" * 100) is None  # no stop
 
     def test_genetic_code_6_taa_not_stop(self):
         """Under code 6 (Ciliate), TAA/TAG encode glutamine; TGA is the only stop."""
-        seqs = [("seq1", "+", "AAATGCCCCTAAGGG")]
-        #                       ATG at pos 3, TAA at pos 10
-
-        # Code 1: TAA is a stop codon
-        df_code1 = find_starts_stops(seqs, genetic_code=1)
-        stops_1 = df_code1[df_code1["codon"] == "stop"]
-        assert any(stops_1["pos"] == 10)
-
-        # Code 6: TAA is NOT a stop (only TGA is)
-        df_code6 = find_starts_stops(seqs, genetic_code=6)
-        stops_6 = df_code6[df_code6["codon"] == "stop"]
-        assert 10 not in stops_6["pos"].values
-
-    def test_overlapping_start_codons_all_found(self):
-        """Code 11 starts overlap: ATT@3 and TTG@4 share bases in CCATTGCC.
-        A non-overlapping scan resumed after ATT and lost the TTG."""
-        df = find_starts_stops([("seq1", "+", "CCATTGCC")], genetic_code=11)
-        starts = df[df["codon"] == "start"]
-        assert sorted(starts["pos"]) == [3, 4]
-
-    def test_overlapping_stop_codons_all_found(self):
-        """Code 2 stops overlap: TAG@2 and AGA@3 share bases in CTAGAC."""
-        df = find_starts_stops([("seq1", "+", "CTAGAC")], genetic_code=2)
-        stops = df[df["codon"] == "stop"]
-        assert sorted(stops["pos"]) == [2, 3]
-
-
-# ---------------------------------------------------------------------------
-# fetch_longest_orf
-# ---------------------------------------------------------------------------
-
-
-class TestFetchLongestORF:
-    def test_basic_orf(self):
-        """Should find the longest in-frame start-stop pair."""
-        # Create a simple case: one start at pos 1, one stop at pos 100
-        data = pd.DataFrame(
-            {
-                "id": ["s1"] * 4,
-                "seqlen": [200] * 4,
-                "pos": [1, 10, 100, 150],
-                "strand": ["+"] * 4,
-                "codon": ["start", "start", "stop", "stop"],
-                "frame": [0, 0, 0, 0],
-            }
-        )
-        result = fetch_longest_orf(data, min_orf_len=50, orf_len_frac=0.1)
-        assert len(result) == 1
-        assert result.iloc[0]["start"] == 1
-        # stop adjusted +2 for full codon
-        assert result.iloc[0]["stop"] == 102
-
-    def test_min_length_filter(self):
-        """ORFs below min_orf_len should be filtered out."""
-        data = pd.DataFrame(
-            {
-                "id": ["s1", "s1"],
-                "seqlen": [200, 200],
-                "pos": [1, 20],
-                "strand": ["+", "+"],
-                "codon": ["start", "stop"],
-                "frame": [0, 0],
-            }
-        )
-        result = fetch_longest_orf(data, min_orf_len=50, orf_len_frac=0.0)
-        assert len(result) == 0  # ORF is only 19 nt
-
-    def test_empty_input(self):
-        """Empty input should return empty DataFrame."""
-        data = pd.DataFrame(
-            columns=["id", "seqlen", "pos", "strand", "codon", "frame"]
-        )
-        result = fetch_longest_orf(data)
-        assert len(result) == 0
-
-    def test_fraction_filter(self):
-        """ORFs below orf_len_frac should be filtered out."""
-        data = pd.DataFrame(
-            {
-                "id": ["s1", "s1"],
-                "seqlen": [1000, 1000],
-                "pos": [1, 100],
-                "strand": ["+", "+"],
-                "codon": ["start", "stop"],
-                "frame": [0, 0],
-            }
-        )
-        # ORF is 99 nt / 1000 nt = 0.099, below default 0.50
-        result = fetch_longest_orf(data, min_orf_len=10, orf_len_frac=0.50)
-        assert len(result) == 0
+        seq = "ATG" + "GCC" * 40 + "TAA" + "GCC" * 40 + "TGA"
+        assert _orf(seq, orf_len_frac=0.0) == (1, 126)
+        assert _orf(seq, genetic_code=6, orf_len_frac=0.0) == (1, len(seq))
 
     def test_longest_orf_starts_at_overlapped_start_codon(self):
         """Under code 11 the longest ORF starts at TTG@2 (frame 1), which
         overlaps ATT@1 (frame 0). With that start lost, the scan fell back
         to the in-frame ATG@20 and reported a shorter ORF."""
         seq = "ATTG" + "AAA" * 5 + "ATG" + "AAA" * 35 + "TAA"
-        result = fetch_longest_orf(find_starts_stops([("t1", "+", seq)], genetic_code=11))
-        assert len(result) == 1
-        orf = result.iloc[0]
-        assert (orf["start"], orf["stop"], orf["frame"]) == (2, len(seq), 1)
+        assert _orf(seq, genetic_code=11) == (2, len(seq))
+
+    def test_overlapping_stop_codons_all_found(self):
+        """Code 2 stops overlap in TAGA: the in-frame AGA, one base after an
+        out-of-frame TAG, ends the ORF; a resumed scan read through it."""
+        seq = "CCC" + "ATG" + "GCC" * 39 + "GCT" + "AGA" + "GCC" * 10 + "TAA"
+        assert _orf(seq, genetic_code=2, orf_len_frac=0.0) == (4, 129)
+
+    def test_one_entry_per_transcript_with_an_orf(self):
+        orf = "ATG" + "GCC" * 40 + "TAA"
+        seqs = [("a", "+", orf), ("b", "-", "C" * 200), ("c", "-", "G" + orf)]
+        assert find_longest_orfs(seqs) == {"a": (1, 126), "c": (2, 127)}

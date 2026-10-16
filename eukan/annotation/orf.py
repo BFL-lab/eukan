@@ -11,7 +11,6 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import gffutils
-import pandas as pd
 from Bio.Data import CodonTable
 
 from eukan.gff import create_gff_db
@@ -44,134 +43,63 @@ def fetch_aligned_sequences(
 
 
 # ---------------------------------------------------------------------------
-# Start/stop codon scanning
+# Longest ORF selection
 # ---------------------------------------------------------------------------
 
 
-def find_starts_stops(
+def find_longest_orfs(
     seqs: list[tuple[str, str, str]],
     genetic_code: int = 1,
-) -> pd.DataFrame:
-    """Find all start and stop codon positions in transcript sequences.
+    min_orf_len: int = 90,
+    orf_len_frac: float = 0.50,
+) -> dict[str, tuple[int, int]]:
+    """Longest ORF of each transcript, as 1-based ``(start, end)``.
 
-    Returns:
-        DataFrame with columns: id, seqlen, pos, strand, codon, frame
+    Scans the three frames of each sequence (already on the transcript's
+    strand). In a frame, the ORF ending at a stop codon starts at the first
+    start codon after the previous stop; the longest ORF wins, the upstream
+    one on a tie. Across frames a tie goes to the frame whose first start
+    codon comes first. The ORF length, start codon to stop codon with the
+    stop excluded, must exceed *min_orf_len* and *orf_len_frac* of the
+    sequence length. ``end`` is the last base of the stop codon.
+
+    Args:
+        seqs: ``(transcript_id, strand, sequence)`` from fetch_aligned_sequences.
+        genetic_code: NCBI genetic code for the start and stop codon sets.
+        min_orf_len: Minimum ORF length in nucleotides (strict >).
+        orf_len_frac: Minimum ORF length as fraction of transcript length (strict >).
     """
     code = CodonTable.unambiguous_dna_by_id[genetic_code]
     # Zero-width lookahead so overlapping codons are all found: a plain
     # re.finditer resumes after each match, and several codes' start (or
     # stop) sets overlap, e.g. ATT/TTG in code 11 (ATTG), TAG/AGA in code 2.
-    start_pattern = "(?=(" + "|".join(code.start_codons) + "))"
-    stop_pattern = "(?=(" + "|".join(code.stop_codons) + "))"
+    start_re = re.compile("(?=(" + "|".join(code.start_codons) + "))")
+    stop_re = re.compile("(?=(" + "|".join(code.stop_codons) + "))")
 
-    rows: list[tuple[str, int, int, str, str, int]] = []
-
-    for name, strand, sequence in seqs:
-        seqlen = len(sequence)
-        for codon_type, pattern in [("start", start_pattern), ("stop", stop_pattern)]:
-            for match in re.finditer(pattern, sequence):
-                pos = match.start() + 1
-                frame = (pos - 1) % 3
-                rows.append((name, seqlen, pos, strand, codon_type, frame))
-
-    return pd.DataFrame(
-        rows, columns=["id", "seqlen", "pos", "strand", "codon", "frame"]
-    )
-
-
-# ---------------------------------------------------------------------------
-# Longest ORF selection
-# ---------------------------------------------------------------------------
-
-
-_ORF_COLUMNS = ["id", "seqlen", "start", "stop", "strand", "frame", "orflen"]
-
-
-def fetch_longest_orf(
-    codon_df: pd.DataFrame,
-    min_orf_len: int = 90,
-    orf_len_frac: float = 0.50,
-) -> pd.DataFrame:
-    """Select the longest ORF per transcript from start/stop codon positions.
-
-    For each (transcript, strand, frame), pairs each start with the
-    nearest downstream stop and tracks the longest such pair.  Across
-    frames, the longest ORF per (transcript, strand) wins.
-
-    The previous implementation built an O(starts * stops) merged
-    DataFrame per frame; this version walks the codons once and
-    binary-searches for the nearest stop, which is O((S+T) log T) per
-    frame and avoids materialising the cross product.
-
-    Args:
-        codon_df: Output of find_starts_stops.
-        min_orf_len: Minimum ORF length in nucleotides (strict >).
-        orf_len_frac: Minimum ORF length as fraction of transcript length (strict >).
-
-    Returns:
-        DataFrame with columns: id, seqlen, start, stop, strand, frame, orflen
-    """
-    if codon_df.empty:
-        return pd.DataFrame(columns=_ORF_COLUMNS)
-
-    from bisect import bisect_right
-    from collections import defaultdict
-    from dataclasses import dataclass, field
-
-    @dataclass
-    class _FrameData:
-        seqlen: int = 0
-        starts: list[int] = field(default_factory=list)
-        stops: list[int] = field(default_factory=list)
-
-    # Group codons by (id, strand, frame). seqlen is invariant per id.
-    groups: dict[tuple[str, str, int], _FrameData] = defaultdict(_FrameData)
-    for row in codon_df.itertuples(index=False):
-        slot = groups[(row.id, row.strand, row.frame)]
-        slot.seqlen = row.seqlen
-        (slot.starts if row.codon == "start" else slot.stops).append(row.pos)
-
-    # For each frame, find the longest in-frame ORF; keep the per-transcript winner.
-    best_per_transcript: dict[tuple[str, str], dict] = {}
-    for (tid, strand, frame), data in groups.items():
-        stops_sorted = sorted(data.stops)
-        if not stops_sorted:
+    orfs: dict[str, tuple[int, int]] = {}
+    for name, _strand, seq in seqs:
+        starts = [m.start() for m in start_re.finditer(seq)]
+        stops = [m.start() for m in stop_re.finditer(seq)]
+        # best = ((length, -first start of its frame), start, stop), 0-based
+        best: tuple[tuple[int, int], int, int] | None = None
+        for frame in range(3):
+            frame_starts = [p for p in starts if p % 3 == frame]
+            i = 0  # first start codon after the previous stop
+            for stop in (p for p in stops if p % 3 == frame):
+                if i == len(frame_starts):
+                    break
+                if frame_starts[i] < stop:
+                    rank = (stop - frame_starts[i], -frame_starts[0])
+                    if best is None or rank > best[0]:
+                        best = (rank, frame_starts[i], stop)
+                    while i < len(frame_starts) and frame_starts[i] < stop:
+                        i += 1
+        if best is None:
             continue
-        seqlen = data.seqlen
-
-        best_orflen = 0
-        best_start = best_stop = 0
-        for start in data.starts:
-            idx = bisect_right(stops_sorted, start)
-            if idx == len(stops_sorted):
-                continue
-            stop = stops_sorted[idx]
-            orflen = stop - start
-            if orflen > best_orflen:
-                best_orflen = orflen
-                best_start, best_stop = start, stop
-
-        if best_orflen <= min_orf_len:
-            continue
-        if seqlen <= 0 or best_orflen / seqlen <= orf_len_frac:
-            continue
-
-        key = (tid, strand)
-        prev = best_per_transcript.get(key)
-        if prev is None or prev["orflen"] < best_orflen:
-            best_per_transcript[key] = {
-                "id": tid,
-                "seqlen": seqlen,
-                "start": best_start,
-                "stop": best_stop + 2,  # include the full stop codon
-                "strand": strand,
-                "frame": frame,
-                "orflen": best_orflen,
-            }
-
-    if not best_per_transcript:
-        return pd.DataFrame(columns=_ORF_COLUMNS)
-    return pd.DataFrame(list(best_per_transcript.values()), columns=_ORF_COLUMNS)
+        length = best[0][0]
+        if length > min_orf_len and length / len(seq) > orf_len_frac:
+            orfs[name] = (best[1] + 1, best[2] + 3)
+    return orfs
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +108,7 @@ def fetch_longest_orf(
 
 
 def orf_to_genome_coords(
-    longest_orfs: pd.DataFrame,
+    longest_orfs: dict[str, tuple[int, int]],
     gff3: gffutils.FeatureDB,
 ) -> Iterator[gffutils.Feature]:
     """Map transcript-space ORF coordinates to genome CDS features.
@@ -188,13 +116,11 @@ def orf_to_genome_coords(
     For each mRNA with an identified ORF, walks through its exons and
     creates CDS features at the corresponding genome positions.
     """
-    orf_lookup = longest_orfs.set_index("id")
     for mRNA in gff3.features_of_type("mRNA"):
-        if mRNA.id not in orf_lookup.index:
+        if mRNA.id not in longest_orfs:
             continue
 
-        orf = orf_lookup.loc[mRNA.id]
-        orf_start, orf_stop = int(orf["start"]), int(orf["stop"])
+        orf_start, orf_stop = longest_orfs[mRNA.id]
 
         if mRNA.strand == "+":
             yield from _map_orf_plus_strand(gff3, mRNA, orf_start, orf_stop)
@@ -302,10 +228,9 @@ def create_transcriptome_orf_db(
     """Build a FeatureDB of transcript ORFs mapped to genome coordinates.
 
     1. Parse transcript GFF into a normalized FeatureDB.
-    2. Extract sequences, find start/stop codons.
-    3. Select longest ORFs.
-    4. Map ORF coords back to the genome.
-    5. Merge overlapping transcript genes.
+    2. Extract sequences and find each one's longest ORF.
+    3. Map ORF coords back to the genome.
+    4. Merge overlapping transcript genes.
     """
     dialect = gffutils.DataIterator(str(gff)).dialect
     dialect["fmt"] = "gtf"
@@ -318,8 +243,7 @@ def create_transcriptome_orf_db(
     xcripts = create_gff_db(xcripts, dialect=dialect, transform=gff3_it)
 
     seqs = fetch_aligned_sequences(xcripts, genome)
-    starts_stops = find_starts_stops(seqs, genetic_code=genetic_code)
-    longest_orfs = fetch_longest_orf(starts_stops)
+    longest_orfs = find_longest_orfs(seqs, genetic_code=genetic_code)
 
     xcripts.update(
         orf_to_genome_coords(longest_orfs, xcripts),

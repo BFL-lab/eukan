@@ -78,7 +78,7 @@ The `dev` group adds `pytest`, `ruff`, and `mypy`.
 
 ### Dependencies
 
-**Python** (managed by Poetry): click, click-option-group, gffutils, biopython, pandas, requests, pydantic-settings, pyhmmer, scipy, pysam.
+**Python** (managed by Poetry): click, click-option-group, gffutils, biopython, requests, pydantic-settings, pyhmmer, scipy, pysam.
 
 **External tools** (via Docker image or conda): AUGUSTUS, SNAP, CodingQuarry, spaln, GenomeThreader, Trinity, minimap2, samtools, diamond, jellyfish, TRF, RepeatModeler, RepeatMasker, rmblast, table2asn.
 
