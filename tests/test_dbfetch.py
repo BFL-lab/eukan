@@ -230,27 +230,74 @@ class TestDownloadResume:
         assert partial.exists() and partial.read_bytes() == b"first-chunk"
 
 
+# pyhmmer's bundled test HMMs (10 RRE families), as tests/test_functional_search.py uses them.
+RREFAM = Path(pyhmmer.__file__).parent / "tests" / "data" / "hmms" / "txt" / "RREFam.hmm"
+needs_rrefam = pytest.mark.skipif(
+    not RREFAM.exists(), reason="pyhmmer installed without its bundled test HMMs",
+)
+
+
+def _serve_gzipped_rrefam(url, dest):
+    with gzip.open(dest, "wb") as fh:
+        fh.write(RREFAM.read_bytes())
+
+
+def _serve_rrefam_profiles_tarball(url, dest):
+    """A profiles.tar.gz with one .hmm per RRE family, all listed in eukaryote.hal."""
+    with pyhmmer.plan7.HMMFile(str(RREFAM)) as hf:
+        hmms = list(hf)
+    with tarfile.open(dest, "w:gz") as tf:
+        def add(name: str, data: bytes) -> None:
+            info = tarfile.TarInfo(f"profiles/{name}")
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+
+        for hmm in hmms:
+            buf = io.BytesIO()
+            hmm.write(buf)
+            add(f"{hmm.name}.hmm", buf.getvalue())
+        add("eukaryote.hal", "".join(f"{hmm.name}.hmm\n" for hmm in hmms).encode())
+
+
+def _pressed_profile_count(hmm: Path) -> int:
+    with pyhmmer.plan7.HMMFile(str(hmm)) as hf:
+        return len(hf.optimized_profiles())
+
+
+@needs_rrefam
 class TestDownloadPfam:
     def test_decompresses_presses_and_records(self, tmp_path):
         """The fetched .gz is decompressed to Pfam-A.hmm and removed, the HMMs
         are pressed, and the manifest entry hashes the decompressed file."""
-        source = Path(pyhmmer.__file__).parent / "tests" / "data" / "hmms" / "txt" / "RREFam.hmm"
-        if not source.exists():
-            pytest.skip("pyhmmer installed without its bundled test HMMs")
-
-        def fake_download(url, dest):
-            with gzip.open(dest, "wb") as fh:
-                fh.write(source.read_bytes())
-
-        with patch.object(dbfetch, "_download_file", side_effect=fake_download):
+        with patch.object(dbfetch, "_download_file", side_effect=_serve_gzipped_rrefam):
             entry = dbfetch.download_pfam(tmp_path)
 
         hmm = tmp_path / "Pfam-A.hmm"
-        assert hmm.read_bytes() == source.read_bytes()
+        assert hmm.read_bytes() == RREFAM.read_bytes()
         assert not (tmp_path / "Pfam-A.hmm.gz").exists()
         assert entry.md5 == md5_file(hmm)
-        with pyhmmer.plan7.HMMFile(str(hmm)) as hf:
-            assert len(hf.optimized_profiles()) == 10
+        assert _pressed_profile_count(hmm) == 10
+
+    def test_refetch_presses_over_earlier_pressed_files(self, tmp_path):
+        """A second fetch (db-fetch --force) presses again over the .h3* files of
+        the first; HMMFile used to read the old .h3m while hmmpress truncated it
+        ("failed to read mat[...]"), leaving the pressed files empty."""
+        with patch.object(dbfetch, "_download_file", side_effect=_serve_gzipped_rrefam):
+            dbfetch.download_pfam(tmp_path)
+            dbfetch.download_pfam(tmp_path)
+
+        assert _pressed_profile_count(tmp_path / "Pfam-A.hmm") == 10
+
+
+@needs_rrefam
+class TestDownloadKofam:
+    def test_refetch_presses_over_earlier_pressed_files(self, tmp_path):
+        """As for Pfam: a second fetch presses again over the first one's .h3* files."""
+        with patch.object(dbfetch, "_download_file", side_effect=_serve_rrefam_profiles_tarball):
+            dbfetch.download_kofam(tmp_path)
+            dbfetch.download_kofam(tmp_path)
+
+        assert _pressed_profile_count(tmp_path / dbfetch.KOFAM_HMM_FILE) == 10
 
 
 class TestKofamExtraction:

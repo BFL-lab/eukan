@@ -167,6 +167,9 @@ def download_pfam(output_dir: Path) -> DatabaseEntry:
     _fetch_gunzip(PFAM_URL, output_dir / "Pfam-A.hmm.gz", hmm_path)
 
     log.info("Pressing HMM database...")
+    # HMMFile would read the .h3m an earlier fetch pressed while hmmpress truncates it.
+    for stale in output_dir.glob("Pfam-A.hmm.h3?"):
+        stale.unlink()
     with pyhmmer.plan7.HMMFile(str(hmm_path)) as hf:
         pyhmmer.hmmer.hmmpress(hmms=hf, output=str(hmm_path))
 
@@ -242,6 +245,9 @@ def download_kofam(output_dir: Path) -> DatabaseEntry:
     shutil.rmtree(extract_dir)
 
     log.info("Pressing KOfam HMM database (%s)...", final_hmm.name)
+    # As in download_pfam: first remove the pressed files of an earlier fetch.
+    for stale in output_dir.glob(f"{KOFAM_HMM_FILE}.h3?"):
+        stale.unlink()
     with pyhmmer.plan7.HMMFile(str(final_hmm)) as hf:
         pyhmmer.hmmer.hmmpress(hmms=hf, output=str(final_hmm))
 
