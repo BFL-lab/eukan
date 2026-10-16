@@ -158,7 +158,7 @@ class PipelineConfig(_StepRunSettings):
     @model_validator(mode="after")
     def _derive_name(self) -> PipelineConfig:
         if not self.name:
-            object.__setattr__(self, "name", self.genome.stem)
+            self.name = self.genome.stem
         return self
 
     # --- Discovery -----------------------------------------------------
