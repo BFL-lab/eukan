@@ -12,6 +12,7 @@ import pytest
 from eukan.annotation import consensus as cons
 from eukan.annotation.combinr_consensus import (
     _chains_to_match,
+    _first_source_token,
     _stage_combinr_inputs,
     run_combinr_consensus,
 )
@@ -216,6 +217,42 @@ def test_stage_combinr_inputs_without_transcripts(tmp_path):
     assert have_t is False
     assert not (sdir / "transcripts.match.gff3").exists()
     assert "TRANSCRIPT" not in (sdir / "weights.txt").read_text()
+
+
+# --- source token of the transcript evidence --------------------------------
+# The TRANSCRIPT weights line names the GFF3 source column (col 2) of the
+# evidence file's first data line, whatever token the file actually carries.
+
+
+def _make_gff(path: Path, source: str) -> Path:
+    path.write_text(
+        "##gff-version 3\n"
+        f"chr1\t{source}\tgene\t1\t300\t.\t+\t.\tID=g1\n"
+        f"chr1\t{source}\tmRNA\t1\t300\t.\t+\t.\tID=g1.t1;Parent=g1\n"
+        f"chr1\t{source}\tCDS\t1\t300\t.\t+\t0\tID=cds1;Parent=g1.t1\n"
+    )
+    return path
+
+
+class TestFirstSourceToken:
+    def test_returns_column_two(self, tmp_path):
+        gff = _make_gff(tmp_path / "x.gff3", "combinr-assembly")
+        assert _first_source_token(gff) == "combinr-assembly"
+
+    def test_skips_comments_and_blank_lines(self, tmp_path):
+        path = tmp_path / "x.gff3"
+        path.write_text(
+            "##gff-version 3\n"
+            "# some comment\n"
+            "\n"
+            "chr1\tgenemark\tgene\t1\t100\t.\t+\t.\tID=g1\n"
+        )
+        assert _first_source_token(path) == "genemark"
+
+    def test_returns_none_for_header_only(self, tmp_path):
+        path = tmp_path / "x.gff3"
+        path.write_text("##gff-version 3\n# no data\n")
+        assert _first_source_token(path) is None
 
 
 # --- run_combinr_consensus command construction ----------------------------

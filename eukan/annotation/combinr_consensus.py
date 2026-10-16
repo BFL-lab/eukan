@@ -27,7 +27,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from eukan.annotation.evidence import EVIDENCE_ROLES, _first_source_token
 from eukan.gff.rows import iter_gff3_rows, parse_attrs
 from eukan.gff.transcripts import Transcript
 from eukan.infra.combinr import run_combinr
@@ -35,6 +34,22 @@ from eukan.infra.logging import get_logger
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
+
+# Staged ab initio prediction file -> the GFF source token its rows carry, which
+# names its ABINITIO_PREDICTION line in weights.txt (weighted weights[1]).
+_ABINITIO_SOURCES: dict[str, str] = {
+    "augustus.gff3": "augustus",
+    "snap.gff3": "snap",
+    "codingquarry.gff3": "codingquarry",
+}
+
+
+def _first_source_token(gff3: Path) -> str | None:
+    """Return the GFF3 source column (col 2) of the first data line, or None."""
+    for cols in iter_gff3_rows(gff3):
+        if cols[1]:
+            return cols[1]
+    return None
 
 
 def _chains_to_match(in_gff: Path, out_gff: Path, *, feature_type: str, match_type: str) -> int:
@@ -83,11 +98,10 @@ def _stage_combinr_inputs(
 ) -> bool:
     """Stage gene_predictions.gff3, prot.match.gff3, transcripts.match.gff3, weights.txt.
 
-    Uses the same ab initio concatenation and the same weight tokens (via the
-    shared :data:`~eukan.annotation.evidence.EVIDENCE_ROLES`) the consensus engine
-    scores. The protein and transcript files are converted to
-    ``Target=`` match chains rather than symlinked. Returns ``True`` when
-    transcript evidence was staged.
+    The ab initio predictions are concatenated into gene_predictions.gff3, each
+    weighted under its source token (:data:`_ABINITIO_SOURCES`). The protein and
+    transcript files are converted to ``Target=`` match chains rather than
+    symlinked. Returns ``True`` when transcript evidence was staged.
     """
     weights = [str(w) for w in config.weights]
     weight_lines: list[str] = []
@@ -101,16 +115,14 @@ def _stage_combinr_inputs(
                 )
                 weight_lines.append("\t".join(["PROTEIN", "prot_align", weights[0]]))
                 continue
-            role = EVIDENCE_ROLES.get(ev.name)
-            if role is not None:
-                _cls, token = role
+            token = _ABINITIO_SOURCES.get(ev.name)
+            if token is not None:
                 weight_lines.append("\t".join(["ABINITIO_PREDICTION", token, weights[1]]))
             with open(ev, "rb") as ef:
                 pf.write(ef.read())
 
-    have_transcripts = bool(config.has_transcripts and transcripts is not None)
-    if have_transcripts:
-        assert transcripts is not None
+    have_transcripts = transcripts is not None
+    if transcripts is not None:
         source = _first_source_token(transcripts) or "transcript"
         _chains_to_match(
             transcripts, sdir / "transcripts.match.gff3",

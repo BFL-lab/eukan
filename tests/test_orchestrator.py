@@ -1144,11 +1144,9 @@ class TestAnnotationInputFingerprints:
         fake = _FakeAnnotation(monkeypatch, tmp_path)
         fake.run()
         fake.content["genemark"] = _GFF3.replace("ID=g1", "ID=g2")
-        # SNAP reads the AUGUSTUS and alignment outputs, which came out unchanged;
-        # the consensus reads the GeneMark models as its transcript stand-in.
-        assert fake.run("genemark") == [
-            "genemark", "prot_align", "augustus", "consensus_models",
-        ]
+        # SNAP and the consensus read the AUGUSTUS and alignment outputs, which came
+        # out unchanged; combinr is never given the GeneMark models.
+        assert fake.run("genemark") == ["genemark", "prot_align", "augustus"]
         assert fake.run() == []
 
     def test_unchanged_genemark_output_reruns_nothing_else(self, tmp_path, monkeypatch):

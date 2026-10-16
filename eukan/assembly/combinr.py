@@ -38,7 +38,8 @@ log = get_logger(__name__)
 # is present, so it is not always SL-cut.
 _CUT_MODELS = tuple(f"{stem}{CUT_GFF3}" for stem in mapped_transcript_stems())
 # Source token written into nr_transcripts.gff3; the consensus weights.txt picks
-# this up as the TRANSCRIPT evidence source (eukan/annotation/evidence.py::_first_source_token).
+# this up as the TRANSCRIPT evidence source
+# (eukan/annotation/combinr_consensus.py::_first_source_token).
 _SOURCE = "combinr-assembly"
 
 

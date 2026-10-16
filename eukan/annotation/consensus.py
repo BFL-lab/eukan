@@ -52,11 +52,8 @@ def build_consensus_models(
       2. Patch in transcript ORFs that don't overlap any consensus gene
       3. Recompute CDS phases, assign locus tags, write final.gff3
 
-    ``transcripts`` is the transcript-alignments evidence. It's the assembled
-    ``nr_transcripts.gff3`` when transcripts were assembled, the GeneMark
-    predictions standing in for the consensus engine in the protein-only
-    non-fungus/protist branch, or ``None``. (combinr ignores the GeneMark
-    stand-in — it gates transcript evidence on ``config.has_transcripts``.)
+    ``transcripts`` is the transcript-alignments evidence: the assembled
+    ``nr_transcripts.gff3`` when transcripts were assembled, else ``None``.
     """
     sdir = step_dir(config.work_dir, "consensus_models")
     log.info("Building consensus gene models...")

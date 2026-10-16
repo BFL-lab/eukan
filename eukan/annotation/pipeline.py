@@ -258,7 +258,7 @@ def _execute_steps(
             GeneMark, spaln, AUGUSTUS, SNAP || CodingQuarry,
             consensus(spaln, augustus, snap, cq)
       - no transcripts + neither
-            GeneMark, spaln, AUGUSTUS, SNAP, consensus(spaln, augustus, snap, genemark)
+            GeneMark, spaln, AUGUSTUS, SNAP, consensus(spaln, augustus, snap)
     """
     ev: dict[str, Path] = {}
     ev = _phase_orf_and_genemark(config, manifest, ev, forced)
@@ -414,10 +414,6 @@ def _phase_consensus(
     if config.has_transcripts:
         assert config.transcripts_gff is not None
         transcripts = config.transcripts_gff
-    elif "snap" in ev and not (config.is_fungus or config.is_protist):
-        # Protein-only non-fungus/protist: stand GeneMark in as the
-        # transcript_alignments input the consensus engine expects.
-        transcripts = ev["genemark"]
 
     # The consensus also patches in the transcript ORFs, whenever orf_finder left them.
     inputs = [
