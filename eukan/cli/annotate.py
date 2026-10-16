@@ -14,7 +14,6 @@ from eukan.cli._framework import (
     drop_none,
     genome_option,
     numcpu_option,
-    resolve_optional_path,
 )
 
 
@@ -26,7 +25,7 @@ from eukan.cli._framework import (
 )
 @optgroup.option(
     "--proteins", "-p", required=True, multiple=True,
-    type=click.Path(exists=True, path_type=Path),
+    type=click.Path(exists=True, resolve_path=True, path_type=Path),
     help="One or more protein FASTA files.",
 )
 @optgroup.group("Pipeline parameters")
@@ -51,19 +50,19 @@ from eukan.cli._framework import (
 @code_option(default=11)
 @optgroup.group("Override options")
 @optgroup.option(
-    "--transcripts-fasta", "-tf", type=click.Path(exists=True, path_type=Path),
+    "--transcripts-fasta", "-tf", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     help="Override auto-discovered transcript FASTA.",
 )
 @optgroup.option(
-    "--transcripts-gff", "-tg", type=click.Path(exists=True, path_type=Path),
+    "--transcripts-gff", "-tg", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     help="Override auto-discovered transcript GFF3.",
 )
 @optgroup.option(
-    "--rnaseq-hints", "-r", type=click.Path(exists=True, path_type=Path),
+    "--rnaseq-hints", "-r", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     help="Override auto-discovered RNA-seq hints GFF.",
 )
 @optgroup.option(
-    "--combinr-path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    "--combinr-path", type=click.Path(exists=True, dir_okay=False, resolve_path=True, path_type=Path),
     help="Path to the combinr binary (default: 'combinr' on PATH).",
 )
 @optgroup.option(
@@ -119,21 +118,21 @@ def annotate(
     # Only pass fields explicitly set by the user; pydantic-settings
     # fills the rest from env vars / defaults.
     config = PipelineConfig(**drop_none(
-        genome=genome.resolve(),
-        proteins=[p.resolve() for p in proteins],
+        genome=genome,
+        proteins=list(proteins),
         work_dir=step_work_dir("annotate"),
         manifest_dir=Path.cwd(),
         num_cpu=numcpu,
         genetic_code=str(code),
         weights=list(weights),
-        combinr_path=resolve_optional_path(combinr_path),
+        combinr_path=combinr_path,
         combinr_stringent_overlap=combinr_stringent_overlap,
         allow_noncanonical_splice=splice_permissive,
         spaln_ssp=spsp,
         kingdom=kingdom or None,
-        transcripts_fasta=resolve_optional_path(transcripts_fasta),
-        transcripts_gff=resolve_optional_path(transcripts_gff),
-        rnaseq_hints=resolve_optional_path(rnaseq_hints),
+        transcripts_fasta=transcripts_fasta,
+        transcripts_gff=transcripts_gff,
+        rnaseq_hints=rnaseq_hints,
     ))
     config.discover()
 

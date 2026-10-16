@@ -13,7 +13,7 @@ from eukan.cli._framework import force_option
 @click.command("db-fetch")
 @optgroup.group("Pipeline parameters")
 @optgroup.option(
-    "--output-dir", "-o", type=click.Path(path_type=Path), default="databases",
+    "--output-dir", "-o", type=click.Path(resolve_path=True, path_type=Path), default="databases",
     show_default=True, help="Directory to download databases into.",
 )
 @optgroup.option(
@@ -46,7 +46,6 @@ def db_fetch(
     """
     from eukan.functional.dbfetch import fetch_databases
 
-    output_dir = output_dir.resolve()
     fetch_databases(
         output_dir,
         force=force,

@@ -21,7 +21,7 @@ from eukan.cli._framework import PreformattedEpilogCommand
     help="Only check tools needed by these subcommands. If omitted, check all.",
 )
 @optgroup.option(
-    "--db-dir", type=click.Path(path_type=Path), default="databases",
+    "--db-dir", type=click.Path(resolve_path=True, path_type=Path), default="databases",
     show_default=True, help="Database directory to check.",
 )
 @optgroup.option(
@@ -38,7 +38,7 @@ def check(
 
     passed, failed, db_results, python_results = run_checks(
         list(subcommands) if subcommands else None,
-        db_dir=db_dir.resolve(),
+        db_dir=db_dir,
         homology_db=homology_db.lower() if homology_db else None,
     )
     click.echo(format_results(passed, failed, db_results, python_results))

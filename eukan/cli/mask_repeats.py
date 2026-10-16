@@ -13,7 +13,6 @@ from eukan.cli._framework import (
     force_option,
     genome_option,
     numcpu_option,
-    resolve_optional_path,
 )
 
 
@@ -28,7 +27,7 @@ from eukan.cli._framework import (
     help="Search engine for BuildDatabase / RepeatMasker.",
 )
 @optgroup.option(
-    "--lib", type=click.Path(exists=True, path_type=Path), default=None,
+    "--lib", type=click.Path(exists=True, resolve_path=True, path_type=Path), default=None,
     help="Pre-built repeat-family library FASTA. When set, RepeatModeler is skipped.",
 )
 @optgroup.group("Re-run steps")
@@ -62,12 +61,12 @@ def mask_repeats(
     from eukan.settings import RepeatsConfig
 
     config = RepeatsConfig(**drop_none(
-        genome=genome.resolve(),
+        genome=genome,
         work_dir=step_work_dir("mask-repeats"),
         manifest_dir=Path.cwd(),
         num_cpu=numcpu,
         engine=engine.lower(),
-        lib=resolve_optional_path(lib),
+        lib=lib,
     ))
 
     force_steps = force_steps_from_run_flags(

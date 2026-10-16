@@ -12,7 +12,6 @@ from eukan.cli._framework import (
     drop_none,
     force_option,
     numcpu_option,
-    resolve_optional_path,
 )
 
 
@@ -29,27 +28,27 @@ from eukan.cli._framework import (
 @optgroup.option("--evalue", "-e", type=str, default="1e-1", show_default=True, help="E-value cutoff.")
 @optgroup.group("Override options")
 @optgroup.option(
-    "--proteins", "-p", type=click.Path(exists=True, path_type=Path),
+    "--proteins", "-p", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     help="Amino acid sequences in FASTA format.",
 )
 @optgroup.option(
-    "--uniprot", type=click.Path(exists=True, path_type=Path),
+    "--uniprot", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     default=None, help="UniProt-SwissProt database FASTA.",
 )
 @optgroup.option(
-    "--kofam", type=click.Path(exists=True, path_type=Path),
+    "--kofam", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     default=None, help="KOfam pressed HMM database.",
 )
 @optgroup.option(
-    "--ko-list", type=click.Path(exists=True, path_type=Path),
+    "--ko-list", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     default=None, help="KOfam ko_list TSV (per-KO thresholds + definitions).",
 )
 @optgroup.option(
-    "--pfam", type=click.Path(exists=True, path_type=Path),
+    "--pfam", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     default=None, help="Pfam HMM database.",
 )
 @optgroup.option(
-    "--gff3", type=click.Path(exists=True, path_type=Path),
+    "--gff3", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     default=None, help="GFF3 file to annotate with functional info.",
 )
 @force_option
@@ -90,17 +89,17 @@ def func_annot(
         )
 
     config = FunctionalConfig(**drop_none(
-        proteins=proteins.resolve(),
+        proteins=proteins,
         work_dir=step_work_dir("func-annot"),
         manifest_dir=Path.cwd(),
         num_cpu=numcpu,
         evalue=evalue,
         homology_db=homology_db.lower(),
-        uniprot_db=resolve_optional_path(uniprot),
-        kofam_db=resolve_optional_path(kofam),
-        ko_list_path=resolve_optional_path(ko_list),
-        pfam_db=resolve_optional_path(pfam),
-        gff3_path=resolve_optional_path(gff3),
+        uniprot_db=uniprot,
+        kofam_db=kofam,
+        ko_list_path=ko_list,
+        pfam_db=pfam,
+        gff3_path=gff3,
     ))
     run_functional_annotation(config, force=force)
     click.echo("Done.")

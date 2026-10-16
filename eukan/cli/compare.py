@@ -34,9 +34,10 @@ def _derive_compare_labels(paths: tuple[Path, ...]) -> list[str]:
 @optgroup.group("Required input")
 @optgroup.option(
     "--reference", "-r", required=True,
-    type=click.Path(exists=True, path_type=Path),
+    type=click.Path(exists=True, resolve_path=True, path_type=Path),
     help="Reference GFF3 file.",
 )
+# Not resolve_path: the auto-derived labels are the stems of the names as given.
 @optgroup.option(
     "--predicted", "-p", required=True, multiple=True,
     type=click.Path(exists=True, path_type=Path),
@@ -51,7 +52,7 @@ def _derive_compare_labels(paths: tuple[Path, ...]) -> list[str]:
 )
 @optgroup.group("Output options")
 @optgroup.option(
-    "--output-file", "-o", type=click.Path(path_type=Path), default=None,
+    "--output-file", "-o", type=click.Path(resolve_path=True, path_type=Path), default=None,
     help="Write per-feature details to a TSV file. In multi-prediction mode "
          "a leading 'prediction' column is prepended.",
 )
@@ -98,10 +99,10 @@ def compare(
                 err=True,
             )
         pred = predicted[0]
-        single = compare_annotations(reference.resolve(), pred.resolve())
+        single = compare_annotations(reference, pred.resolve())
         click.echo(format_results(single))
         if output_file is not None:
-            tsv_path = write_details_tsv(single, output_file.resolve())
+            tsv_path = write_details_tsv(single, output_file)
             click.echo(f"\nDetails written to {tsv_path}")
         return
 
@@ -120,10 +121,10 @@ def compare(
             )
 
     multi = compare_multiple(
-        reference.resolve(),
+        reference,
         [(la, p.resolve()) for la, p in zip(labels, predicted, strict=True)],
     )
     click.echo(format_multi_results(multi))
     if output_file is not None:
-        tsv_path = write_details_tsv(multi, output_file.resolve())
+        tsv_path = write_details_tsv(multi, output_file)
         click.echo(f"\nDetails written to {tsv_path}")

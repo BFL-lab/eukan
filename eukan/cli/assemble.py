@@ -15,16 +15,15 @@ from eukan.cli._framework import (
     force_option,
     genome_option,
     numcpu_option,
-    resolve_optional_path,
 )
 
 
 @click.command(cls=PreformattedEpilogCommand, epilog=FULL_CODE_TABLE)
 @optgroup.group("Required input")
 @genome_option("Genome FASTA file.")
-@optgroup.option("--left", "-l", type=click.Path(exists=True, path_type=Path), help="Left paired-end reads.")
-@optgroup.option("--right", "-r", type=click.Path(exists=True, path_type=Path), help="Right paired-end reads.")
-@optgroup.option("--single", "-s", type=click.Path(exists=True, path_type=Path), help="Single-end reads.")
+@optgroup.option("--left", "-l", type=click.Path(exists=True, resolve_path=True, path_type=Path), help="Left paired-end reads.")
+@optgroup.option("--right", "-r", type=click.Path(exists=True, resolve_path=True, path_type=Path), help="Right paired-end reads.")
+@optgroup.option("--single", "-s", type=click.Path(exists=True, resolve_path=True, path_type=Path), help="Single-end reads.")
 @optgroup.group("Pipeline parameters")
 @numcpu_option
 @optgroup.option(
@@ -121,12 +120,12 @@ from eukan.cli._framework import (
     "disables it.",
 )
 @optgroup.option(
-    "--combinr-path", type=click.Path(exists=True, path_type=Path), default=None,
+    "--combinr-path", type=click.Path(exists=True, resolve_path=True, path_type=Path), default=None,
     help="Path to the combinr binary (else resolved from PATH or "
     "$EUKAN_ASSEMBLE_COMBINR_PATH).",
 )
 @optgroup.option(
-    "--uniprot", type=click.Path(exists=True, path_type=Path), default=None,
+    "--uniprot", type=click.Path(exists=True, resolve_path=True, path_type=Path), default=None,
     help="SwissProt FASTA (uniprot_sprot.faa) or prebuilt diamond .dmnd. Enables "
     "homology-based splice-strand correction on unstranded libraries (skipped "
     "when -S/--strand-specific is given), and homology de-fusion with --defuse. "
@@ -252,7 +251,7 @@ def assemble(
         raise click.UsageError("--defuse needs a protein DB; supply --uniprot.")
 
     config = AssemblyConfig(**drop_none(
-        genome=genome.resolve(),
+        genome=genome,
         work_dir=step_work_dir("assemble"),
         manifest_dir=Path.cwd(),
         min_intron_len=min_intron,
@@ -272,13 +271,13 @@ def assemble(
         sl_cluster_window=sl_cluster_window,
         adapter_sequences=list(adapter_sequence),
         sl_adapter_filter=sl_adapter_filter,
-        combinr_path=resolve_optional_path(combinr_path),
-        uniprot_db=resolve_optional_path(uniprot),
+        combinr_path=combinr_path,
+        uniprot_db=uniprot,
         diagnose_softclips=diagnose_softclips,
         genetic_code=str(code),
-        left_reads=resolve_optional_path(left),
-        right_reads=resolve_optional_path(right),
-        single_reads=resolve_optional_path(single),
+        left_reads=left,
+        right_reads=right,
+        single_reads=single,
         strand_specific=strand_specific,
         memory_gb=memory_gb,
     ))

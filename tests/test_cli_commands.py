@@ -44,3 +44,55 @@ class TestAssembleChecks:
         result = CliRunner().invoke(cli, ["assemble", "-g", "g.fa", *args])
         assert result.exit_code == 2
         assert message in result.output
+
+
+class TestPathsReachTheCommandAbsolute:
+    """Relative and symlinked paths reach the configs and helpers resolved."""
+
+    @pytest.fixture
+    def tree(self, run_dir):
+        real = run_dir / "real"
+        real.mkdir()
+        for name in ("g.fa", "p.faa", "x.sbt", "lib.fa", "ref.gff3"):
+            (real / name).write_text(">x\nACGT\n")
+            (run_dir / f"ln-{name}").symlink_to(real / name)
+        return real.resolve()
+
+    @pytest.mark.parametrize(("args", "target", "pick", "expected"), [
+        (["annotate", "-g", "ln-g.fa", "-p", "real/../ln-p.faa"],
+         ("eukan.annotation", "run_annotation_pipeline"),
+         lambda a, k: (a[0].genome, a[0].proteins[0]), ("g.fa", "p.faa")),
+        (["assemble", "-g", "ln-g.fa", "-s", "ln-p.faa", "--uniprot", "real/lib.fa"],
+         ("eukan.assembly", "run_assembly"),
+         lambda a, k: (a[0].genome, a[0].single_reads, a[0].uniprot_db),
+         ("g.fa", "p.faa", "lib.fa")),
+        (["func-annot", "-p", "ln-p.faa", "--pfam", "ln-lib.fa"],
+         ("eukan.functional", "run_functional_annotation"),
+         lambda a, k: (a[0].proteins, a[0].pfam_db), ("p.faa", "lib.fa")),
+        (["mask-repeats", "-g", "ln-g.fa", "--lib", "ln-lib.fa"],
+         ("eukan.repeats", "run_repeats"),
+         lambda a, k: (a[0].genome, a[0].lib), ("g.fa", "lib.fa")),
+        (["prep-submission", "-t", "ln-x.sbt", "--organism", "Foo bar", "-g", "ln-g.fa",
+          "-i", "ln-ref.gff3", "-d", "real/out"],
+         ("eukan.submission", "run_prep_submission"),
+         lambda a, k: (a[0].template, a[0].genome, a[0].gff3, a[0].output_dir),
+         ("x.sbt", "g.fa", "ref.gff3", "out")),
+        (["db-fetch", "-o", "real/db"], ("eukan.functional.dbfetch", "fetch_databases"),
+         lambda a, k: (a[0],), ("db",)),
+        (["check", "--db-dir", "real/db"], ("eukan.infra.health", "run_checks"),
+         lambda a, k: (k["db_dir"],), ("db",)),
+        (["status", "-d", "real"], ("eukan.infra.manifest", "load_manifest"),
+         lambda a, k: (a[0] / "x",), ("x",)),
+    ])
+    def test_resolved(self, tree, monkeypatch, args, target, pick, expected):
+        import importlib
+
+        seen = []
+
+        def stub(*a, **k):
+            seen.append(pick(a, k))
+            return ([], [], [], []) if args[0] == "check" else None
+
+        monkeypatch.setattr(importlib.import_module(target[0]), target[1], stub)
+        CliRunner().invoke(cli, args)
+        assert seen == [tuple(tree / name for name in expected)]
