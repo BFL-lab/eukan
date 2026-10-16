@@ -50,6 +50,6 @@ def db_fetch(
         output_dir,
         force=force,
         databases=list(database) if database else None,
-        homology_db=homology_db.lower(),
+        homology_db=homology_db,
     )
     click.echo("Done.")

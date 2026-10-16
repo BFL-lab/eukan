@@ -146,3 +146,23 @@ def test_db_fetch_help_has_no_options_header():
     result = CliRunner().invoke(cli, ["db-fetch", "-h"])
     assert "Options:" not in result.output
     assert "\nPipeline parameters: \n-o, --output-dir PATH" in result.output
+
+
+@pytest.mark.parametrize(("args", "target"), [
+    (["db-fetch", "--homology-db", "KOFAM", "-d", "PFam"],
+     ("eukan.functional.dbfetch", "fetch_databases")),
+    (["check", "--homology-db", "KOFAM", "--db-dir", "."], ("eukan.infra.health", "run_checks")),
+])
+def test_choices_arrive_as_declared(run_dir, monkeypatch, args, target):
+    """A case-insensitive Choice hands over the choice as declared (lower case)."""
+    import importlib
+
+    seen = []
+
+    def stub(*a, **k):
+        seen.append((k["homology_db"], k.get("databases")))
+        return ([], [], [], [])
+
+    monkeypatch.setattr(importlib.import_module(target[0]), target[1], stub)
+    CliRunner().invoke(cli, args)
+    assert seen == [("kofam", ["pfam"] if args[0] == "db-fetch" else None)]

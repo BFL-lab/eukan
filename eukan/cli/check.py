@@ -39,7 +39,7 @@ def check(
     passed, failed, db_results, python_results = run_checks(
         list(subcommands) if subcommands else None,
         db_dir=db_dir,
-        homology_db=homology_db.lower() if homology_db else None,
+        homology_db=homology_db,
     )
     click.echo(format_results(passed, failed, db_results, python_results))
 
