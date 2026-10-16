@@ -131,3 +131,11 @@ class TestOptionsAreConfigFields:
         assert (config.num_cpu, config.genetic_code) == (3, "6")
         assert (config.min_intron_len, config.max_intron_len) == (30, 900)
         assert (config.phred_quality, config.adapter_sequences) == (64, ["ACGT"])
+
+
+class TestCodeTableEpilog:
+    @pytest.mark.parametrize(("flag", "shown"), [("--help", True), ("-h", False)])
+    def test_only_long_help_lists_the_genetic_codes(self, flag, shown):
+        result = CliRunner().invoke(cli, ["gff3toseq", flag])
+        assert result.exit_code == 0
+        assert ("Genetic codes (NCBI translation tables):" in result.output) is shown

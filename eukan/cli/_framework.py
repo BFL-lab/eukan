@@ -76,19 +76,14 @@ class PreformattedEpilogCommand(click.Command):
     """
 
     def format_epilog(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        # ctx.obj.show_full_help is set by EukanGroup.parse_args based on
-        # whether --help (verbose) or -h (brief) was used. Walk up the
-        # context chain to find it (subcommand contexts inherit obj).
-        ctx_walk: click.Context | None = ctx
-        while ctx_walk is not None:
-            obj = getattr(ctx_walk, "obj", None)
-            if isinstance(obj, CLIState) and obj.show_full_help:
-                text = _resolve_epilog(self.epilog or "")
-                formatter.write("\n")
-                for line in text.split("\n"):
-                    formatter.write(f"  {line}\n")
-                return
-            ctx_walk = ctx_walk.parent
+        # show_full_help is set by EukanGroup.parse_args based on whether
+        # --help (verbose) or -h (brief) was used.
+        state = ctx.find_object(CLIState)
+        if state is not None and state.show_full_help:
+            text = _resolve_epilog(self.epilog or "")
+            formatter.write("\n")
+            for line in text.split("\n"):
+                formatter.write(f"  {line}\n")
 
     def format_options(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         from click_option_group import OptionGroup
