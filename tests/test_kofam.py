@@ -38,7 +38,8 @@ class TestParseKoList:
             k_number="K28880",
             threshold=443.33,
             score_type="full",
-            definition="peptidoglycan beta-N-acetylmuramidase [EC:3.2.1.92]",
+            description="peptidoglycan beta-N-acetylmuramidase",
+            ec_numbers=("3.2.1.92",),
         )
 
     def test_missing_threshold_becomes_none(self, tmp_path: Path):

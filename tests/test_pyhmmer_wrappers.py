@@ -63,13 +63,19 @@ class TestEvalueCutoff:
         assert run_hmmscan_search([q], hmms, 1, cutoff) == {}
         assert "K00001" in run_hmmscan_search([q], hmms, 1, 4 * cutoff)["q"]
 
-    def test_kofam(self, related_first, tmp_path):
+    @pytest.mark.parametrize("pressed", [False, True], ids=["unpressed", "pressed"])
+    def test_kofam(self, related_first, tmp_path, pressed):
+        # A pressed database is read straight into a block of profiles, an unpressed one
+        # is configured into one by hmmscan.
         query, targets = related_first
         builder, background = pyhmmer.plan7.Builder(AMINO), pyhmmer.plan7.Background(AMINO)
         db = tmp_path / "kofam.hmm"
         with open(db, "wb") as fh:
             for t in targets:
                 builder.build(t, background)[0].write(fh)
+        if pressed:
+            with pyhmmer.plan7.HMMFile(str(db)) as hf:
+                pyhmmer.hmmer.hmmpress(hf, str(db))
         ko_list = tmp_path / "ko_list.tsv"
         ko_list.write_text("knum\tthreshold\tscore_type" + "\tx" * 9 + "\n" + "".join(
             f"{t.name}\t-\tfull" + "\t-" * 8 + "\tsynthetic KO\n" for t in targets

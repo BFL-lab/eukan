@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pyhmmer
 
-from eukan.functional.search import HitResults, _decode, _load_digital_sequences
+from eukan.functional.search import HitResults, _decode, _load_digital_sequences, _open_hmm_db
 from eukan.infra.logging import get_logger
 
 log = get_logger(__name__)
@@ -38,21 +38,24 @@ class KOEntry:
     ``threshold`` is None when the KO has no curated cutoff (the file
     stores ``-`` in that column). Hits against such KOs can still appear
     in results, but ``above_threshold`` is always ``False`` for them.
+    ``description`` and ``ec_numbers`` are the KO's definition split by
+    :func:`extract_ec_numbers`, once per KO rather than once per hit.
     """
 
     k_number: str
     threshold: float | None
     score_type: str  # "full" or "domain"
-    definition: str
+    description: str  # the definition without its [EC:...] tags
+    ec_numbers: tuple[str, ...]  # the EC codes those tags carry
 
 
 def parse_ko_list(ko_list_path: Path) -> dict[str, KOEntry]:
     """Parse the KOfam ``ko_list`` TSV into a dict keyed by K-number.
 
     The file has a header row and 12 columns; we only keep K-number,
-    threshold, score_type, and definition. Lines with fewer columns
-    (truncated, malformed) are skipped silently — the file is large and
-    occasionally has stray rows.
+    threshold, score_type, and definition (split into its description and
+    EC numbers). Lines with fewer columns (truncated, malformed) are skipped
+    silently — the file is large and occasionally has stray rows.
     """
     entries: dict[str, KOEntry] = {}
     with open(ko_list_path) as f:
@@ -62,13 +65,14 @@ def parse_ko_list(ko_list_path: Path) -> dict[str, KOEntry]:
             if len(cols) < 12:
                 continue
             k_number, thr, score_type, _profile_type = cols[0], cols[1], cols[2], cols[3]
-            definition = cols[11]
+            description, ec_numbers = extract_ec_numbers(cols[11])
             threshold = float(thr) if thr not in ("-", "") else None
             entries[k_number] = KOEntry(
                 k_number=k_number,
                 threshold=threshold,
                 score_type=score_type,
-                definition=definition,
+                description=description,
+                ec_numbers=tuple(ec_numbers),
             )
     return entries
 
@@ -164,9 +168,9 @@ def run_kofam_search(
     )
 
     results: HitResults = {}
-    with pyhmmer.plan7.HMMFile(str(kofam_db)) as hf:
+    with _open_hmm_db(kofam_db) as profiles:
         for top_hits in pyhmmer.hmmer.hmmscan(
-            queries, hf, cpus=num_cpu, E=evalue_threshold,
+            queries, profiles, cpus=num_cpu, E=evalue_threshold,
         ):
             query_name = _decode(top_hits.query.name)
             if not top_hits:
@@ -185,20 +189,18 @@ def run_kofam_search(
                 score, evalue = _hit_score_and_evalue(hit, ko.score_type)
                 above = ko.threshold is not None and score >= ko.threshold
 
-                cleaned_def, ec_numbers = extract_ec_numbers(ko.definition)
-
                 per_query = results.setdefault(query_name, {})
                 prev = per_query.get(k_number)
                 if prev is not None and prev["score"] >= score:
                     continue
                 per_query[k_number] = {
-                    "description": cleaned_def,
+                    "description": ko.description,
                     "evalue": evalue,
                     "score": score,
                     "threshold": ko.threshold if ko.threshold is not None else 0.0,
                     "score_type": ko.score_type,
                     "above_threshold": above,
-                    "ec_numbers": ec_numbers,
+                    "ec_numbers": list(ko.ec_numbers),
                 }
 
     n_above = sum(
