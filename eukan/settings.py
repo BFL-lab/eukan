@@ -17,9 +17,10 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, computed_field, model_validator
+from pydantic import Field, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from eukan.exceptions import ConfigurationError
 from eukan.infra.logging import get_logger
 
 
@@ -97,6 +98,17 @@ class _StepRunSettings(BaseSettings):
     manifest_dir: Path = Field(default_factory=Path.cwd)
     num_cpu: int = Field(default_factory=lambda: os.cpu_count() or 1)
     genetic_code: str = "1"
+
+    @field_validator("genetic_code", mode="before")
+    @classmethod
+    def _known_genetic_code(cls, value: int | str) -> str:
+        # Fail at construction, not at the first step that translates (after
+        # minimap2 and Trinity in assembly). Stored as the canonical string.
+        from eukan.infra.genetic_code import GeneticCode
+        try:
+            return str(GeneticCode(value))
+        except ConfigurationError as exc:
+            raise ValueError(f"{exc}. {exc.hint}") from exc
 
     @model_validator(mode="before")
     @classmethod
@@ -506,21 +518,13 @@ class FunctionalConfig(_StepRunSettings):
     )
 
     proteins: Path
-    homology_db: str = "uniprot"  # "uniprot" → phmmer vs SwissProt; "kofam" → hmmscan vs KOfam
+    homology_db: Literal["uniprot", "kofam"] = "uniprot"  # phmmer vs SwissProt / hmmscan vs KOfam
     uniprot_db: Path = Path("databases/uniprot_sprot.faa")
     kofam_db: Path = Path("databases/kofam_eukaryote.hmm")
     ko_list_path: Path = Path("databases/ko_list.tsv")
     pfam_db: Path = Path("databases/Pfam-A.hmm")
     gff3_path: Path | None = None
-    evalue: str = "1e-1"
-
-    @model_validator(mode="after")
-    def _validate_homology_db(self) -> FunctionalConfig:
-        if self.homology_db not in ("uniprot", "kofam"):
-            raise ValueError(
-                f"homology_db must be 'uniprot' or 'kofam', got {self.homology_db!r}"
-            )
-        return self
+    evalue: float = 1e-1
 
     settings_customise_sources = _pyproject_settings_sources("func-annot")
 

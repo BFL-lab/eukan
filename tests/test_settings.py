@@ -2,6 +2,9 @@
 
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from eukan.settings import AssemblyConfig, FunctionalConfig, Kingdom, PipelineConfig
 
 
@@ -237,3 +240,33 @@ class TestFunctionalConfig:
 
         config = FunctionalConfig(proteins=proteins)
         assert config.uniprot_db == Path("/custom/uniprot.faa")
+
+
+class TestTypedFields:
+    """Values are checked when the config is built, not by the step that first reads them."""
+
+    def test_unknown_genetic_code_fails_at_construction(self, tmp_path):
+        with pytest.raises(ValidationError, match="genetic_code"):
+            AssemblyConfig(genome=tmp_path / "g.fa", work_dir=tmp_path, genetic_code="99")
+
+    def test_non_numeric_genetic_code_fails_at_construction(self, tmp_path):
+        genome = tmp_path / "g.fa"
+        with pytest.raises(ValidationError, match="genetic_code"):
+            PipelineConfig(genome=genome, proteins=[genome], work_dir=tmp_path, genetic_code="abc")
+
+    def test_genetic_code_accepts_an_int_and_stays_a_string(self, tmp_path):
+        config = AssemblyConfig(genome=tmp_path / "g.fa", work_dir=tmp_path, genetic_code=6)
+        assert config.genetic_code == "6"
+        assert config.genetic_code_obj.ncbi_id == 6
+
+    def test_evalue_is_a_float(self, tmp_path):
+        config = FunctionalConfig(proteins=tmp_path / "p.faa", work_dir=tmp_path, evalue="1e-5")
+        assert config.evalue == 1e-5
+
+    def test_non_numeric_evalue_fails_at_construction(self, tmp_path):
+        with pytest.raises(ValidationError, match="evalue"):
+            FunctionalConfig(proteins=tmp_path / "p.faa", work_dir=tmp_path, evalue="abc")
+
+    def test_unknown_homology_db_rejected(self, tmp_path):
+        with pytest.raises(ValidationError, match="homology_db"):
+            FunctionalConfig(proteins=tmp_path / "p.faa", work_dir=tmp_path, homology_db="pfam")
