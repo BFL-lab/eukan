@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import logging
 import shutil
 from dataclasses import replace
@@ -13,7 +14,7 @@ from eukan.annotation import pipeline as annotation_pipeline
 from eukan.annotation.pipeline import force_steps_from_run_flags
 from eukan.assembly import pipeline as assembly_pipeline
 from eukan.assembly.pipeline import (
-    _steps_for,
+    STEPS,
 )
 from eukan.assembly.pipeline import (
     force_steps_from_run_flags as assembly_force_steps_from_run_flags,
@@ -246,6 +247,51 @@ class TestAssemblyForceStepsFromRunFlags:
     def test_returned_keys_are_prefixed(self):
         result = assembly_force_steps_from_run_flags(run_minimap2=True, run_combinr=True)
         assert all(k.startswith("assembly/") for k in result)
+
+
+class TestAssemblyForceStepsMatchFlagDict:
+    """For every combination of the ten ``--run-X`` flags and ``--force``, the
+    generic driver with ``downstream=`` forces the steps the hand-written flag dict
+    and ``_expand_downstream`` forced before (f7c164c), frozen here as the oracle."""
+
+    ORDER = (
+        "minimap2", "trinity", "jaccard", "map_transcripts", "strand_correct",
+        "defuse", "max_intron_split", "sl_detect", "sl_cut", "combinr",
+    )
+    OLD_DOWNSTREAM: ClassVar[dict[str, tuple[str, ...]]] = {
+        "minimap2": ("trinity", "sl_detect"),
+        "trinity": ("jaccard",),
+        "jaccard": ("map_transcripts",),
+        "map_transcripts": ("strand_correct", "sl_detect"),
+        "strand_correct": ("defuse",),
+        "defuse": ("max_intron_split",),
+        "max_intron_split": ("sl_cut",),
+        "sl_detect": ("sl_cut",),
+        "sl_cut": ("combinr",),
+    }
+
+    def _old_answer(self, flags: dict[str, bool], force: bool) -> list[str]:
+        selected = {name for name, on in flags.items() if on}
+        if selected:
+            expanded, stack = set(selected), list(selected)
+            while stack:
+                for dep in self.OLD_DOWNSTREAM.get(stack.pop(), ()):
+                    if dep not in expanded:
+                        expanded.add(dep)
+                        stack.append(dep)
+            return [f"assembly/{n}" for n in self.ORDER if n in expanded]
+        if force:
+            return [f"assembly/{n}" for n in self.ORDER]
+        return []
+
+    def test_every_flag_combination(self):
+        assert tuple(s.name for s in STEPS) == self.ORDER
+        for *on, force in itertools.product((False, True), repeat=len(self.ORDER) + 1):
+            flags = dict(zip(self.ORDER, on, strict=True))
+            got = assembly_force_steps_from_run_flags(
+                force=force, **{f"run_{name}": v for name, v in flags.items()},
+            )
+            assert got == self._old_answer(flags, force), (flags, force)
 
 
 class TestRunOrchestratedStepOutput:
@@ -514,7 +560,7 @@ class TestAssemblyStepScalars:
             genome=tmp_path / "g.fa", work_dir=tmp_path, num_cpu=2,
             max_intron_len=max_intron,
         )
-        spec = next(s for s in _steps_for() if s.name == name)
+        spec = next(s for s in STEPS if s.name == name)
         return spec.scalars(cfg) if spec.scalars else None
 
     def test_combinr_tracks_max_intron_and_stringent_overlap(self, tmp_path):
@@ -553,7 +599,7 @@ class TestMaxIntronConsumersRerun:
 
     @pytest.mark.parametrize("name", ["minimap2", "trinity", "map_transcripts"])
     def test_changed_max_intron_reruns(self, tmp_path, name):
-        spec = next(s for s in _steps_for() if s.name == name)
+        spec = next(s for s in STEPS if s.name == name)
         runs: list[int] = []
 
         def fake(config):
@@ -601,7 +647,7 @@ class TestOutputlessAssemblyStepsResume:
     }
 
     def _driver(self, tmp_path, name):
-        spec = next(s for s in _steps_for() if s.name == name)
+        spec = next(s for s in STEPS if s.name == name)
         read, written = self.FILES[name]
         (tmp_path / read).write_text("v1")
         runs: list[int] = []
@@ -942,8 +988,8 @@ class TestMovedRunDir:
     def test_moved_assembly_run_dir_reruns_nothing(self, tmp_path, monkeypatch):
         # Before, every assemble step re-ran after a move, its outputs deleted first.
         ran: list[str] = []
-        specs = [replace(s, fn=lambda config, _n=s.name: ran.append(_n)) for s in _steps_for()]
-        monkeypatch.setattr(assembly_pipeline, "_steps_for", lambda: specs)
+        specs = [replace(s, fn=lambda config, _n=s.name: ran.append(_n)) for s in STEPS]
+        monkeypatch.setattr(assembly_pipeline, "STEPS", tuple(specs))
 
         def config(run_dir):
             return AssemblyConfig(
@@ -1140,7 +1186,7 @@ class TestTrinityTrackRerun:
             genome=tmp_path / "genome.fa", work_dir=tmp_path, num_cpu=2,
             left_reads=tmp_path / "R1.fq", right_reads=tmp_path / "R2.fq",
         )
-        steps = [s for s in _steps_for() if s.name in ("trinity", "map_transcripts")]
+        steps = [s for s in STEPS if s.name in ("trinity", "map_transcripts")]
 
         run_simple_pipeline(ASSEMBLY, steps, cfg)
         ran.clear()

@@ -26,7 +26,7 @@ import pysam
 
 from eukan.assembly.bam_reads import REF_CONSUMING
 from eukan.assembly.sl_acceptors import AcceptorSite, load_sl_acceptors
-from eukan.assembly.tracks import CUT_GFF3, MAXINTRON_GFF3, TRANSCRIPT_SETS, mapped_transcript_stems
+from eukan.assembly.tracks import CUT_GFF3, MAXINTRON_GFF3, mapped_transcript_stems
 from eukan.gff.transcripts import Transcript, split_at, stream_cut, write_transcript
 from eukan.infra.artifacts import Artifact
 from eukan.infra.logging import get_logger
@@ -36,10 +36,6 @@ log = get_logger(__name__)
 
 # Ref-consuming CIGAR ops that stay within one exon block (N splits exons).
 _EXON_REF = REF_CONSUMING - {pysam.CREF_SKIP}
-
-# The track BAMs (tracks.TRANSCRIPT_SETS), still imported from here by
-# assembly/pipeline.py.
-_DENOVO_BAMS = tuple(bam for _, bam in TRANSCRIPT_SETS)
 
 
 def _alignment_exons(read: pysam.AlignedSegment) -> list[tuple[int, int]]:

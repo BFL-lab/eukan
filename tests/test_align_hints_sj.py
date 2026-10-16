@@ -21,7 +21,7 @@ from eukan.assembly.align_hints import (
     sj_table_from_bam,
     write_intron_hints,
 )
-from eukan.assembly.pipeline import _steps_for, force_steps_from_run_flags
+from eukan.assembly.pipeline import STEPS, force_steps_from_run_flags
 from eukan.exceptions import ExternalToolError
 from eukan.settings import AssemblyConfig
 
@@ -157,8 +157,8 @@ _CHAIN = [
 ]
 
 
-def test_steps_for_lists_minimap2_first():
-    steps = _steps_for()
+def test_steps_list_minimap2_first():
+    steps = STEPS
     assert [s.name for s in steps] == _CHAIN
     assert steps[0].output == "minimap2_Aligned.sortedByCoord.out.bam"
 

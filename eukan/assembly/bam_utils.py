@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pysam
 
-from eukan.assembly.tracks import TRANSCRIPT_SETS, resolve_query
 from eukan.exceptions import ExternalToolError
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_piped
@@ -31,11 +30,6 @@ _SORT_DISK_HEADROOM = 2
 # fragments so we can translate the cryptic failure into a clear out-of-space
 # message instead of letting the user chase a phantom seek bug.
 _DISK_FULL_MARKERS = ("illegal seek", "no space", "failed writing", "write failed")
-
-# The old spellings of tracks.TRANSCRIPT_SETS / tracks.resolve_query, still
-# imported from here by assembly/pipeline.py.
-_TRANSCRIPT_SETS = TRANSCRIPT_SETS
-_resolve_query = resolve_query
 
 
 def _bam_is_complete(path: Path) -> bool:

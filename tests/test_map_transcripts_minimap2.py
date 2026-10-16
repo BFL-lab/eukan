@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from eukan.assembly import minimap2
-from eukan.assembly.pipeline import _steps_for
+from eukan.assembly.pipeline import STEPS
 from eukan.infra.artifacts import Artifact
 from eukan.infra.manifest import ASSEMBLY, step_key
 from eukan.infra.pipeline import run_simple_pipeline
@@ -245,7 +245,7 @@ def test_rerun_of_read_mapping_rebuilds_softclip_verdict(tmp_path, monkeypatch):
 
     monkeypatch.setattr(minimap2, "_emit_sj_and_hints", fake_emit)
     cfg = _config_reads(tmp_path)
-    steps = [s for s in _steps_for() if s.name == "minimap2"]
+    steps = [s for s in STEPS if s.name == "minimap2"]
     run_simple_pipeline(ASSEMBLY, steps, cfg)
     polya = tmp_path / Artifact.POLYA_DIAGNOSTIC.value
     polya.write_text(json.dumps({"transcripts": {"trinity-denovo": {}}}))
