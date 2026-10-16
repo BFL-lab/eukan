@@ -14,6 +14,7 @@ import gffutils
 import pandas as pd
 from Bio.Data import CodonTable
 
+from eukan.gff import create_gff_db
 from eukan.gff.concordance import merge_fully_overlapping_transcript_genes
 from eukan.gff.io import iter_assembled_sequences
 from eukan.gff.transforms import _swap_id_kind, derived_feature, gff3_it
@@ -308,15 +309,13 @@ def create_transcriptome_orf_db(
     """
     dialect = gffutils.DataIterator(str(gff)).dialect
     dialect["fmt"] = "gtf"
-    xcripts = gffutils.create_db(
-        str(gff), ":memory:", dialect=dialect,
+    xcripts = create_gff_db(
+        gff, dialect=dialect,
         gtf_transcript_key="Parent", gtf_gene_key="Parent",
     )
     dialect["fmt"] = "gff3"
     xcripts.dialect = dialect
-    xcripts = gffutils.create_db(
-        xcripts, ":memory:", dialect=dialect, transform=gff3_it,
-    )
+    xcripts = create_gff_db(xcripts, dialect=dialect, transform=gff3_it)
 
     seqs = fetch_aligned_sequences(xcripts, genome)
     starts_stops = find_starts_stops(seqs, genetic_code=genetic_code)

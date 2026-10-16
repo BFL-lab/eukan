@@ -6,6 +6,7 @@ from pathlib import Path
 
 import gffutils
 
+from eukan.gff import create_gff_db, transform_db
 from eukan.gff import transforms as gff_transforms
 from eukan.gff.normalize import normalize_to_gff3
 from eukan.gff.rows import iter_gff3_rows
@@ -38,10 +39,9 @@ def _read_genemark_gtf(path: Path) -> gffutils.FeatureDB:
     type to its identifying attributes; the second pass converts GTF to
     GFF3 conventions via ``gff_transforms.gtf2gff3``.
     """
-    gmgtf = gffutils.create_db(
-        str(path), ":memory:", verbose=False,
+    gmgtf = create_gff_db(
+        path,
         disable_infer_genes=True, disable_infer_transcripts=True,
-        merge_strategy="create_unique",
         id_spec={
             "gene": "gene_id",
             "mRNA": "transcript_id",
@@ -52,7 +52,6 @@ def _read_genemark_gtf(path: Path) -> gffutils.FeatureDB:
             "stop_codon": ["gene_id", "transcript_id"],
         },
     )
-    from eukan.gff import transform_db
     return transform_db(gmgtf, gff_transforms.gtf2gff3)
 
 

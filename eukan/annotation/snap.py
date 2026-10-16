@@ -35,8 +35,8 @@ def _read_snap_output(snap_gff: Path) -> gffutils.FeatureDB:
     )
     dialect = gffutils.DataIterator(str(snap_gff)).dialect
     dialect["fmt"] = "gtf"
-    snap = gffutils.create_db(
-        snap, ":memory:", dialect=dialect,
+    snap = create_gff_db(
+        snap, dialect=dialect,
         gtf_transcript_key="Parent", gtf_gene_key="Parent",
     )
     snap.dialect = GFF3_DIALECT
