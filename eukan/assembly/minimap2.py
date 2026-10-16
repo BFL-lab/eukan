@@ -95,7 +95,7 @@ def _use_non_canonical(config: AssemblyConfig) -> bool:
     return _non_canonical_call(config.work_dir) == _NON_CANONICAL_CALL
 
 
-def _log_mapping_rate(bam: Path, wd: Path) -> None:
+def _log_mapping_rate(bam: Path) -> None:
     """Log the read mapping rate from the coordinate-sorted, indexed BAM.
 
     Replaces STAR's ``Log.final.out`` parse: minimap2 emits no such log, so the
@@ -176,7 +176,7 @@ def map_reads_minimap2(config: AssemblyConfig) -> None:
     wd = config.work_dir
     log.info("Running minimap2 read mapping (splice:sr)...")
     _map_reads_once(config, non_canonical=config.non_canonical == "force")
-    _log_mapping_rate(wd / _BAM, wd)
+    _log_mapping_rate(wd / _BAM)
     _emit_sj_and_hints(config)
 
     if config.non_canonical == "auto" and _non_canonical_call(wd) == _NON_CANONICAL_CALL:
@@ -187,7 +187,7 @@ def map_reads_minimap2(config: AssemblyConfig) -> None:
             "Pass --non-canonical off to skip this."
         )
         _map_reads_once(config, non_canonical=True)
-        _log_mapping_rate(wd / _BAM, wd)
+        _log_mapping_rate(wd / _BAM)
         _emit_sj_and_hints(config)
 
 

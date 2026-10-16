@@ -38,15 +38,6 @@ _TRANSCRIPT_SETS = TRANSCRIPT_SETS
 _resolve_query = resolve_query
 
 
-def _is_gzipped(path: Path) -> bool:
-    """Check if a file is gzip-compressed by reading the magic bytes."""
-    try:
-        with open(path, "rb") as f:
-            return f.read(2) == b"\x1f\x8b"
-    except OSError:
-        return False
-
-
 def _bam_is_complete(path: Path) -> bool:
     """True if *path* is a non-empty BAM with a valid BGZF EOF (``quickcheck``).
 

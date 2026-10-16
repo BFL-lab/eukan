@@ -14,7 +14,6 @@ from eukan.assembly.jaccard import (
     _candidate_troughs,
     _group_and_pick_best,
     _require_hills,
-    clip_gff3,
     coverage_array,
     find_clip_points,
     iter_fragment_spans,
@@ -301,6 +300,21 @@ def _orig_spliced(gff, genome):
     )["t1"]
 
 
+def _clip_gff3(gff, genome, clip_map, out_gff, out_fa):
+    # Split at clip_map (25 bp floor), write the models, re-extract them with gffutils.
+    from eukan.gff import create_gff_db
+    from eukan.gff.io import iter_assembled_sequences
+    from eukan.gff.transcripts import write_transcripts
+
+    out_models, _ = j._split_models_at_clips(gff, clip_map, 25)
+    write_transcripts(out_models, out_gff)
+    with open(out_fa, "w") as fh:
+        for m, s in iter_assembled_sequences(
+            create_gff_db(str(out_gff)), genome, child_featuretype="exon"
+        ):
+            fh.write(f">{m.id}\n{s}\n")
+
+
 @pytest.mark.parametrize("strand", ["+", "-"])
 def test_clip_gff3_splits_and_reextracts(tmp_path, strand):
     (tmp_path / "genome.fa").write_text(f">chr1\n{GENOME}\n")
@@ -312,7 +326,7 @@ def test_clip_gff3_splits_and_reextracts(tmp_path, strand):
 
     out_gff = tmp_path / "clipped.gff3"
     out_fa = tmp_path / "clipped.fasta"
-    clip_gff3(gff, tmp_path / "genome.fa", {"t1": [45]}, out_gff, out_fa)
+    _clip_gff3(gff, tmp_path / "genome.fa", {"t1": [45]}, out_gff, out_fa)
 
     recs = _read_fasta(out_fa)
     assert set(recs) == {"t1.j1", "t1.j2"}
@@ -509,7 +523,7 @@ def test_clip_gff3_passthrough_when_no_clip(tmp_path):
     gff.write_text(_GFF_TEMPLATE.format(s="+"))
     out_gff = tmp_path / "out.gff3"
     out_fa = tmp_path / "out.fasta"
-    clip_gff3(gff, tmp_path / "genome.fa", {}, out_gff, out_fa)  # no clips
+    _clip_gff3(gff, tmp_path / "genome.fa", {}, out_gff, out_fa)  # no clips
     assert set(_read_fasta(out_fa)) == {"t1"}
 
 

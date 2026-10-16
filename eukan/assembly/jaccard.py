@@ -49,8 +49,6 @@ from Bio import SeqIO
 
 from eukan.assembly.minimap2 import map_reads_to_transcripts
 from eukan.assembly.tracks import TRANSCRIPT_SETS, jaccard_output_name
-from eukan.gff import create_gff_db
-from eukan.gff.io import iter_assembled_sequences
 from eukan.gff.transcripts import Transcript, read_transcripts, split_at, stitch, write_transcripts
 from eukan.infra.genome import ContigIndex
 from eukan.infra.logging import get_logger
@@ -67,7 +65,6 @@ _MAX_TROUGH_VAL = 0.05     # a trough must dip to <= this jaccard
 _MIN_JACCARD_DELTA = 0.35  # flanking "hills" must rise this far above the trough
 _MIN_INSERT = 100          # proper-pair insert-size floor
 _MAX_INSERT = 500          # proper-pair insert-size ceiling
-_MIN_SEGMENT = 25          # shortest split segment kept (Trinity's k-mer floor)
 _REPOSITION_HALF_WIN = _TROUGH_WIN // 2  # coverage-reposition search radius (100)
 # Ceiling for the coverage-adapted trough gate: below the depth where a clean
 # junction would need a jaccard above this, the bridging signal is too weak to
@@ -491,27 +488,6 @@ def _split_models_at_clips(
         else:
             out_models.append(tx)
     return out_models, n_split
-
-
-def clip_gff3(
-    gff: str | Path,
-    genome: str | Path,
-    clip_map: dict[str, list[int]],
-    out_gff: str | Path,
-    out_fasta: str | Path,
-) -> None:
-    """Split fused transcripts in a transcript>exon GFF3/GTF at *clip_map* positions.
-
-    Writes the split models to *out_gff* (gene>mRNA>exon) and their re-spliced
-    sequences to *out_fasta* (minus-strand reverse-complement handled by
-    ``iter_assembled_sequences``). Transcripts with no clips pass through unchanged.
-    """
-    out_models, _ = _split_models_at_clips(gff, clip_map, _MIN_SEGMENT)
-    write_transcripts(out_models, out_gff)
-    db = create_gff_db(str(out_gff))
-    with open(out_fasta, "w") as fh:
-        for mrna, seq in iter_assembled_sequences(db, genome, child_featuretype="exon"):
-            fh.write(f">{mrna.id}\n{seq}\n")
 
 
 # ---------------------------------------------------------------------------
