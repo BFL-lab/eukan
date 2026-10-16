@@ -153,8 +153,9 @@ class EukanGroup(click.Group):
             if isinstance(exc, PydanticValidationError):
                 click.secho("Error: invalid configuration", fg="red", err=True)
                 for err in exc.errors():
+                    # Model-level checks (cross-field) have no location.
                     loc = " → ".join(str(part) for part in err["loc"])
-                    click.echo(f"  {loc}: {err['msg']}", err=True)
+                    click.echo(f"  {loc}: {err['msg']}" if loc else f"  {err['msg']}", err=True)
                 raise SystemExit(1) from exc
 
             from eukan.exceptions import EukanError

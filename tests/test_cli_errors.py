@@ -7,6 +7,7 @@ import errno
 import click
 import pytest
 from click.testing import CliRunner
+from pydantic import BaseModel, ValidationError, model_validator
 
 from eukan.cli._framework import CONTEXT_SETTINGS, EukanGroup, _format_disk_full
 from eukan.exceptions import ExternalToolError
@@ -148,3 +149,33 @@ class TestCliBoundary:
         # EACCES is not one of our domain errors, so it propagates as-is.
         assert result.exit_code != 0
         assert "no space left on device" not in result.output.lower()
+
+
+class _Reads(BaseModel):
+    left: int = 0
+
+    @model_validator(mode="after")
+    def _paired(self) -> _Reads:
+        if self.left < 0:
+            raise ValueError("Paired-end mode requires both --left and --right.")
+        return self
+
+
+def _validation_error(**kwargs) -> ValidationError:
+    with pytest.raises(ValidationError) as info:
+        _Reads(**kwargs)
+    return info.value
+
+
+class TestConfigErrors:
+    def test_model_level_error_prints_without_an_empty_location(self, app_factory):
+        result = CliRunner().invoke(app_factory(_validation_error(left=-1)), ["boom"])
+        assert result.exit_code == 1
+        assert "Error: invalid configuration" in result.output
+        assert "  Value error, Paired-end mode requires both" in result.output
+        assert "  : " not in result.output
+
+    def test_field_error_keeps_its_location(self, app_factory):
+        result = CliRunner().invoke(app_factory(_validation_error(left="x")), ["boom"])
+        assert result.exit_code == 1
+        assert "  left: Input should be a valid integer" in result.output
