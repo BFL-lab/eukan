@@ -615,6 +615,32 @@ class TestMaxIntronConsumersRerun:
         assert runs == [5000, 2000]
 
 
+class TestDefuseTracksProteinDb:
+    """defuse blasts every transcript against the --uniprot DB, so a changed DB
+    re-runs it on resume, as it re-runs strand_correct. On a stranded library
+    strand_correct's models do not change with the DB, so nothing else would."""
+
+    def test_changed_uniprot_db_reruns_defuse(self, tmp_path):
+        spec = next(s for s in STEPS if s.name == "defuse")
+        db = tmp_path / "uniprot.dmnd"
+        db.write_text("v1")
+        runs: list[int] = []
+
+        def fake(config):
+            runs.append(1)
+            (config.work_dir / spec.output).write_text(_GFF3)
+
+        cfg = AssemblyConfig(
+            genome=tmp_path / "g.fa", work_dir=tmp_path, num_cpu=2,
+            uniprot_db=db, defuse=True,
+        )
+        for _ in range(2):
+            run_simple_pipeline(ASSEMBLY, [replace(spec, fn=fake)], cfg)
+        db.write_text("v2")
+        run_simple_pipeline(ASSEMBLY, [replace(spec, fn=fake)], cfg)
+        assert runs == [1, 1]
+
+
 class TestOutputlessAssemblyStepsResume:
     """Through the driver, the assemble steps with no declared output (jaccard,
     strand_correct, sl_detect, sl_cut) are skipped on an unchanged resume and re-run

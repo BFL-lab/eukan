@@ -102,11 +102,14 @@ def _sl_detect_inputs(config: AssemblyConfig) -> list[Path]:
 def _defuse_inputs(config: AssemblyConfig) -> list[Path]:
     # The models de-fusion reads per track: the homology-stranded models when
     # strand_correct produced them, else the raw genome GFF3. Whichever exist are
-    # fingerprinted, so re-running strand_correct re-runs defuse.
+    # fingerprinted, so re-running strand_correct re-runs defuse. defuse blasts them
+    # against the protein DB, so a changed DB re-runs it too.
     wd = config.work_dir
     paths: list[Path] = []
     for stem in mapped_transcript_stems():
         paths += [wd / f"{stem}{STRANDED_GFF3}", wd / f"{stem}{RAW_GFF3}"]
+    if config.uniprot_db is not None:
+        paths.append(config.uniprot_db)
     return paths
 
 
