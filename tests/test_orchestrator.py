@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from dataclasses import replace
 from typing import ClassVar
 
@@ -10,6 +11,7 @@ import pytest
 
 from eukan.annotation import pipeline as annotation_pipeline
 from eukan.annotation.pipeline import force_steps_from_run_flags
+from eukan.assembly import pipeline as assembly_pipeline
 from eukan.assembly.pipeline import (
     _steps_for,
 )
@@ -19,9 +21,11 @@ from eukan.assembly.pipeline import (
 from eukan.infra.manifest import (
     ANNOTATION,
     ASSEMBLY,
+    MANIFEST_FILE,
     RunManifest,
     StepRecord,
     StepStatus,
+    load_manifest,
     step_key,
 )
 from eukan.infra.pipeline import (
@@ -32,7 +36,8 @@ from eukan.infra.pipeline import (
 from eukan.infra.pipeline import (
     force_steps_from_run_flags as generic_force_steps_from_run_flags,
 )
-from eukan.infra.steps import fingerprint_inputs
+from eukan.infra.steps import fingerprint_inputs, is_step_complete
+from eukan.infra.utils import md5_file
 from eukan.settings import AssemblyConfig, PipelineConfig
 
 
@@ -288,7 +293,7 @@ class TestRunOrchestratedStepOutput:
         )
         assert result == out
         record = manifest.steps["annotation/thing"]
-        assert record.output_file == str(out)
+        assert record.output_file == "step/expected.gff3"  # relative to the run dir
         assert record.output_md5 is None  # nothing to checksum
 
     def test_existing_declared_output_is_recorded_and_checksummed(self, tmp_path):
@@ -308,7 +313,7 @@ class TestRunOrchestratedStepOutput:
         )
         assert result == out
         record = manifest.steps["annotation/thing2"]
-        assert record.output_file == str(out)
+        assert record.output_file == "step/expected.gff3"
         assert record.output_md5 is not None
 
 
@@ -902,6 +907,93 @@ class TestRerunFromScratch:
             config, force_steps=[step_key(ANNOTATION, "genemark")],
         )
         assert ran == ["fresh", "fresh"]
+
+
+class TestMovedRunDir:
+    """A run dir moved elsewhere resumes where it left off: the manifest records
+    outputs, and keys input fingerprints, relative to the run dir."""
+
+    @staticmethod
+    def _step(run_dir, manifest, runs):
+        out = run_dir / "x" / "out.txt"
+
+        def fn():
+            runs.append(1)
+            out.write_text("done")
+
+        return run_orchestrated_step(
+            run_dir, manifest, "assembly/x", fn,
+            step_dir=run_dir / "x", output_file=out,
+            input_files=[run_dir / "in.txt"], input_scalars=["k=1"],
+        )
+
+    def test_moved_run_dir_resumes(self, tmp_path):
+        run_a, run_b = tmp_path / "runA", tmp_path / "runB"
+        run_a.mkdir()
+        (run_a / "in.txt").write_text("v1")
+        runs: list[int] = []
+        self._step(run_a, RunManifest(), runs)
+        shutil.move(run_a, run_b)
+
+        assert self._step(run_b, load_manifest(run_b), runs) == run_b / "x" / "out.txt"
+        assert runs == [1]
+        assert (run_b / "x" / "out.txt").read_text() == "done"
+
+    def test_moved_assembly_run_dir_reruns_nothing(self, tmp_path, monkeypatch):
+        # Before, every assemble step re-ran after a move, its outputs deleted first.
+        ran: list[str] = []
+        specs = [replace(s, fn=lambda config, _n=s.name: ran.append(_n)) for s in _steps_for()]
+        monkeypatch.setattr(assembly_pipeline, "_steps_for", lambda: specs)
+
+        def config(run_dir):
+            return AssemblyConfig(
+                genome=run_dir / "g.fa", left_reads=run_dir / "l.fq",
+                right_reads=run_dir / "r.fq", work_dir=run_dir / "assemble",
+                manifest_dir=run_dir, num_cpu=2,
+            )
+
+        run_a, run_b = tmp_path / "runA", tmp_path / "runB"
+        cfg = config(run_a)
+        for name in ("g.fa", "l.fq", "r.fq"):
+            (run_a / name).write_text("x")
+        for spec in specs:
+            for name in [*([spec.output] if spec.output else []), *spec.clears]:
+                (cfg.work_dir / name).write_text(_GFF3 if name.endswith(".gff3") else "x")
+        assembly_pipeline.run_assembly(cfg)
+        assert ran
+        files = [p.relative_to(run_a) for p in run_a.rglob("*") if p.name != MANIFEST_FILE]
+        shutil.move(run_a, run_b)
+        ran.clear()
+
+        assembly_pipeline.run_assembly(config(run_b))
+
+        assert ran == []
+        assert all((run_b / f).exists() for f in files)
+
+    def test_record_from_before_run_dir_relative_paths_is_reused(self, tmp_path):
+        # Older manifests hold the absolute output path and a fingerprint keyed by
+        # absolute input path; in place, the step is still complete.
+        inp = tmp_path / "in.txt"
+        inp.write_text("v1")
+        out = tmp_path / "x" / "out.txt"
+        out.parent.mkdir()
+        out.write_text("done")
+        manifest = RunManifest(steps={
+            "assembly/x": StepRecord(
+                name="assembly/x", status=StepStatus.completed, output_file=str(out),
+                output_md5=md5_file(out), input_md5=fingerprint_inputs([inp], ["k=1"]),
+            ),
+            "assembly/y": StepRecord(
+                name="assembly/y", status=StepStatus.completed,
+                input_md5=fingerprint_inputs([inp]),
+            ),
+        })
+        runs: list[int] = []
+
+        assert self._step(tmp_path, manifest, runs) == out
+        assert runs == []
+        assert out.read_text() == "done"
+        assert is_step_complete(tmp_path, manifest, "assembly/y", [inp]) is True
 
 
 class _FakeAnnotation:

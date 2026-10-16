@@ -27,10 +27,11 @@ from eukan.infra.manifest import (
 )
 from eukan.infra.steps import (
     clean_interrupted_step,
-    fingerprint_inputs,
+    fingerprint_matches,
     is_step_complete,
     is_step_interrupted,
     pipeline_step,
+    run_dir_relative,
 )
 
 log = get_logger(__name__)
@@ -246,7 +247,8 @@ def run_orchestrated_step(
     prior = manifest.steps.get(step_name)
     if not force:
         cached = is_step_complete(
-            manifest, step_name, input_files=input_files, input_scalars=input_scalars
+            manifest_dir, manifest, step_name,
+            input_files=input_files, input_scalars=input_scalars,
         )
         if cached:
             log.info("[%s] Already complete, skipping.", step_name)
@@ -269,7 +271,9 @@ def run_orchestrated_step(
         if (
             (input_files or input_scalars)
             and prior.input_md5 is not None
-            and fingerprint_inputs(input_files, input_scalars) != prior.input_md5
+            and not fingerprint_matches(
+                prior.input_md5, input_files, input_scalars, manifest_dir,
+            )
         ):
             reason = "inputs changed"
         elif output_file is not None:
@@ -309,9 +313,9 @@ def run_orchestrated_step(
             # completed step whose recorded output is missing/empty on the next
             # run (rebuilding it) — instead of silently recording "no output"
             # and returning the path as if the step had succeeded.
-            step.output_file = str(output_file)
+            step.output_file = str(run_dir_relative(output_file, manifest_dir))
             return output_file
         if isinstance(result, (str, Path)):
-            step.output_file = str(result)
+            step.output_file = str(run_dir_relative(Path(result), manifest_dir))
             return Path(result)
         return None

@@ -102,7 +102,10 @@ def run_repeats(
             families = config.lib
         else:
             modeler_key = step_key(REPEATS, "modeler")
-            cached = is_step_complete(manifest, modeler_key) if modeler_key not in forced else None
+            cached = (
+                is_step_complete(config.manifest_dir, manifest, modeler_key)
+                if modeler_key not in forced else None
+            )
             if isinstance(cached, Path):
                 families = cached
             else:
@@ -121,7 +124,9 @@ def run_repeats(
             if config.lib:
                 families = config.lib
             else:
-                cached = is_step_complete(manifest, step_key(REPEATS, "modeler"))
+                cached = is_step_complete(
+                    config.manifest_dir, manifest, step_key(REPEATS, "modeler"),
+                )
                 if not isinstance(cached, Path):
                     from eukan.exceptions import ConfigurationError
                     raise ConfigurationError(

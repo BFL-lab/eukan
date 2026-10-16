@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
+import shutil
 
 import pytest
 
@@ -324,7 +324,7 @@ class TestSearchCache:
         work_dir = tmp_path / "func-annot"
         cfg = _config(prot, work_dir)
         fpipe.run_functional_annotation(cfg)
-        tracked = Path(self._search_record(load_manifest(work_dir)).output_file)
+        tracked = work_dir / self._search_record(load_manifest(work_dir)).output_file
         for path in tmp_path.glob("speciesA.*.json"):
             if path != tracked:
                 path.unlink()
@@ -369,6 +369,29 @@ class TestSearchCache:
 
         assert searches == ["phmmer", "hmmscan"] * 2
         assert cache.exists()
+
+
+class TestMovedRunDir:
+    def test_moved_run_dir_resumes(self, tmp_path, monkeypatch):
+        """A proteome inside a run dir moved elsewhere keeps its step keys, cache
+        and fingerprints: the resume is a no-op."""
+        counts = _install_counts(monkeypatch)
+
+        def config(run_dir):
+            return FunctionalConfig(
+                proteins=run_dir / "speciesA.faa", work_dir=run_dir / "func-annot",
+                manifest_dir=run_dir, num_cpu=1,
+            )
+
+        run_a, run_b = tmp_path / "runA", tmp_path / "runB"
+        run_a.mkdir()
+        (run_a / "speciesA.faa").write_text(">s1\nMACE\n")
+        fpipe.run_functional_annotation(config(run_a))
+        shutil.move(run_a, run_b)
+
+        fpipe.run_functional_annotation(config(run_b))
+
+        assert counts == {"search": 1, "annotate_fasta": 1, "annotate_gff3": 0}
 
 
 # --- manifest location --------------------------------------------------------

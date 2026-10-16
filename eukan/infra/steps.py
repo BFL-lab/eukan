@@ -65,13 +65,25 @@ def _resolve_step_dir(work_dir: Path, step_name: str, step_dir: Path | None) -> 
     return step_dir if step_dir else work_dir / step_name
 
 
+def run_dir_relative(path: Path, run_dir: Path) -> Path:
+    """*path* relative to *run_dir* when it lies inside it, else absolute.
+
+    The manifest records paths this way, so a run dir moved elsewhere (from
+    scratch to project space, say) still finds its outputs and inputs.
+    """
+    path, run_dir = path.absolute(), run_dir.absolute()
+    return path.relative_to(run_dir) if path.is_relative_to(run_dir) else path
+
+
 # ---------------------------------------------------------------------------
 # Input fingerprinting
 # ---------------------------------------------------------------------------
 
 
 def fingerprint_inputs(
-    paths: list[Path] | None, extra: list[str] | None = None
+    paths: list[Path] | None,
+    extra: list[str] | None = None,
+    base: Path | None = None,
 ) -> str | None:
     """A stable digest of a step's declared inputs, or ``None`` if none.
 
@@ -79,7 +91,9 @@ def fingerprint_inputs(
     file is absent/empty), keyed by path so presence *and* content both matter:
     a stranded GFF3 that only appears once strand-correction runs, or a BAM that
     a re-run rewrote, both flip the digest. Paths are sorted so the result is
-    order-independent.
+    order-independent. With *base* (the run dir), each path is keyed as
+    :func:`run_dir_relative` records it, so moving the run dir leaves the digest
+    unchanged; without it, each path is keyed as given.
 
     *extra* folds in scalar inputs that aren't files — e.g. ``max_intron_len=2000``
     — so a step whose behaviour depends on a config value (not just its input
@@ -89,14 +103,31 @@ def fingerprint_inputs(
     """
     if not paths and not extra:
         return None
+    keyed = [(str(run_dir_relative(p, base) if base is not None else p), p) for p in paths or []]
     parts: list[str] = []
-    for path in sorted(paths or [], key=str):
+    for key, path in sorted(keyed, key=lambda kp: kp[0]):
         if path.exists() and path.stat().st_size > 0:
-            parts.append(f"{path}={md5_file(path)}")
+            parts.append(f"{key}={md5_file(path)}")
         else:
-            parts.append(f"{path}=MISSING")
+            parts.append(f"{key}=MISSING")
     parts.extend(sorted(extra or []))
     return hashlib.md5("\n".join(parts).encode()).hexdigest()
+
+
+def fingerprint_matches(
+    recorded: str,
+    paths: list[Path] | None,
+    extra: list[str] | None,
+    base: Path,
+) -> bool:
+    """Whether *recorded* is still the fingerprint of these inputs in run dir *base*.
+
+    A fingerprint recorded before paths were keyed relative to the run dir keyed
+    them as given, and still matches while the run dir stays where it was.
+    """
+    return recorded == fingerprint_inputs(paths, extra, base) or (
+        recorded == fingerprint_inputs(paths, extra)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +178,9 @@ def pipeline_step(
             step.output_file = str(result)
 
     Args:
-        work_dir: Directory containing eukan-run.json.
+        work_dir: Directory containing eukan-run.json; the step's
+            ``output_file`` is recorded relative to it (see
+            :func:`run_dir_relative`).
         manifest: The shared manifest to update.
         step_name: Unique step identifier (used as manifest key).
         step_dir: Directory for the .running sentinel. Defaults to
@@ -185,11 +218,11 @@ def pipeline_step(
         _compute_duration(record)
 
         if record.output_file:
-            output_path = Path(record.output_file)
+            output_path = work_dir / record.output_file
             if output_path.exists():
                 record.output_md5 = md5_file(output_path)
 
-        record.input_md5 = fingerprint_inputs(input_files, input_scalars)
+        record.input_md5 = fingerprint_inputs(input_files, input_scalars, work_dir)
 
         log.info("[%s] Done (%.1fs)", step_name, record.duration_seconds or 0)
 
@@ -221,6 +254,7 @@ def pipeline_step(
 
 
 def is_step_complete(
+    manifest_dir: Path,
     manifest: RunManifest,
     step_name: str,
     input_files: list[Path] | None = None,
@@ -230,8 +264,9 @@ def is_step_complete(
 ) -> Path | Literal[True] | None:
     """Check if a step was completed in a previous run *and is still current*.
 
-    Returns the recorded output path if the step is complete and its output is
-    still intact, else ``None`` so the caller re-runs it. "Intact" means the
+    Returns the recorded output path (resolved against *manifest_dir*, the dir
+    holding the manifest) if the step is complete and its output is still
+    intact, else ``None`` so the caller re-runs it. "Intact" means the
     output exists, is non-empty, matches its recorded md5 (for cheap-to-hash
     artifacts — see :func:`_should_verify_md5`), and parses as GFF when it has a
     ``.gff``/``.gff3`` suffix. A lost or corrupted output is rebuilt rather than
@@ -253,13 +288,12 @@ def is_step_complete(
     if not record or record.status != StepStatus.completed:
         return None
     if not record.output_file:
-        if (
-            record.input_md5 is None
-            or fingerprint_inputs(input_files, input_scalars) != record.input_md5
+        if record.input_md5 is None or not fingerprint_matches(
+            record.input_md5, input_files, input_scalars, manifest_dir,
         ):
             return None
         return True
-    path = Path(record.output_file)
+    path = manifest_dir / record.output_file
 
     if not path.exists():
         log.warning(
@@ -297,7 +331,7 @@ def is_step_complete(
     if (
         (input_files or input_scalars)
         and record.input_md5 is not None
-        and fingerprint_inputs(input_files, input_scalars) != record.input_md5
+        and not fingerprint_matches(record.input_md5, input_files, input_scalars, manifest_dir)
     ):
         return None
     return path

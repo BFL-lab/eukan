@@ -116,16 +116,16 @@ class TestIsStepComplete:
             name="test", status=StepStatus.completed,
             output_file=str(output),
         )
-        assert is_step_complete(manifest, "test") == output
+        assert is_step_complete(tmp_path, manifest, "test") == output
 
     def test_incomplete_step(self, tmp_path):
         manifest = RunManifest()
         manifest.steps["test"] = StepRecord(name="test", status=StepStatus.running)
-        assert is_step_complete(manifest, "test") is None
+        assert is_step_complete(tmp_path, manifest, "test") is None
 
-    def test_missing_step(self):
+    def test_missing_step(self, tmp_path):
         manifest = RunManifest()
-        assert is_step_complete(manifest, "nonexistent") is None
+        assert is_step_complete(tmp_path, manifest, "nonexistent") is None
 
     def test_missing_output_file(self, tmp_path):
         manifest = RunManifest()
@@ -133,7 +133,7 @@ class TestIsStepComplete:
             name="test", status=StepStatus.completed,
             output_file=str(tmp_path / "deleted.gff3"),
         )
-        assert is_step_complete(manifest, "test") is None
+        assert is_step_complete(tmp_path, manifest, "test") is None
 
 
 class TestIsStepCompleteIntegrity:
@@ -152,34 +152,34 @@ class TestIsStepCompleteIntegrity:
 
     def test_empty_output_rebuilds(self, tmp_path):
         manifest, output = self._completed(tmp_path, content="")
-        assert is_step_complete(manifest, "test") is None
+        assert is_step_complete(tmp_path, manifest, "test") is None
 
     def test_checksum_mismatch_rebuilds(self, tmp_path):
         manifest, output = self._completed(tmp_path, content="v1")
         manifest.steps["test"].output_md5 = md5_file(output)
         output.write_text("v2-corrupted")  # same path, different bytes
-        assert is_step_complete(manifest, "test") is None
+        assert is_step_complete(tmp_path, manifest, "test") is None
 
     def test_checksum_match_is_reused(self, tmp_path):
         manifest, output = self._completed(tmp_path, content="v1")
         manifest.steps["test"].output_md5 = md5_file(output)
-        assert is_step_complete(manifest, "test") == output
+        assert is_step_complete(tmp_path, manifest, "test") == output
 
     def test_verify_md5_false_skips_checksum(self, tmp_path):
         manifest, output = self._completed(tmp_path, content="v1")
         manifest.steps["test"].output_md5 = md5_file(output)
         output.write_text("v2-corrupted")
         # Opt-out: existence/non-empty still pass, checksum is not checked.
-        assert is_step_complete(manifest, "test", verify_md5=False) == output
+        assert is_step_complete(tmp_path, manifest, "test", verify_md5=False) == output
 
     def test_unparseable_gff_rebuilds(self, tmp_path):
         manifest, _ = self._completed(tmp_path, name="out.gff3", content="not gff")
-        assert is_step_complete(manifest, "test") is None
+        assert is_step_complete(tmp_path, manifest, "test") is None
 
     def test_valid_gff_is_reused(self, tmp_path):
         gff = "##gff-version 3\nchr1\teukan\tgene\t1\t100\t.\t+\t.\tID=g1\n"
         manifest, output = self._completed(tmp_path, name="out.gff3", content=gff)
-        assert is_step_complete(manifest, "test") == output
+        assert is_step_complete(tmp_path, manifest, "test") == output
 
     def test_md5_skipped_when_policy_declines(self, tmp_path, monkeypatch):
         # When _should_verify_md5 declines (e.g. a large BAM over the size
@@ -194,7 +194,7 @@ class TestIsStepCompleteIntegrity:
             output_file=str(out), output_md5="not-the-real-md5",
         )
         monkeypatch.setattr(steps_mod, "_should_verify_md5", lambda p: False)
-        assert is_step_complete(manifest, "test") == out
+        assert is_step_complete(tmp_path, manifest, "test") == out
 
 
 class TestShouldVerifyMd5:

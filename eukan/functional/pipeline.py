@@ -41,7 +41,7 @@ from eukan.infra.manifest import (
     step_key,
 )
 from eukan.infra.pipeline import run_orchestrated_step
-from eukan.infra.steps import is_step_complete
+from eukan.infra.steps import is_step_complete, run_dir_relative
 from eukan.settings import FunctionalConfig
 
 log = get_logger(__name__)
@@ -71,12 +71,15 @@ def _step_scope(config: FunctionalConfig) -> str:
     resume correct for each proteome+mode while still skipping a genuine
     re-run of the same one. The path hash disambiguates two proteomes that
     share a stem but live in different directories (they have distinct cache
-    files, so they must not share a manifest record either). Scoping handles
+    files, so they must not share a manifest record either). It hashes the
+    path as the manifest records it, relative to the run dir when the proteome
+    lies inside it, so a moved run dir keeps its keys. Scoping handles
     *which* proteome+mode; the input fingerprints (see
     :func:`_func_step_fingerprints`) handle *content* changes within one scope.
     """
     suffix = "kofam" if config.homology_db == "kofam" else "phmmer"
-    digest = hashlib.md5(str(config.proteins.resolve()).encode()).hexdigest()[:8]
+    path = run_dir_relative(config.proteins, config.manifest_dir)
+    digest = hashlib.md5(str(path).encode()).hexdigest()[:8]
     return f"{config.proteins.stem}.{suffix}.{digest}"
 
 
@@ -226,7 +229,7 @@ def run_functional_annotation(
     # the guard falls through to a normal run without needing -f.
     if not force and all(
         is_step_complete(
-            manifest, _key(name),
+            manifest_dir, manifest, _key(name),
             input_files=ifiles, input_scalars=iscalars,
         ) is not None
         for name, (ifiles, iscalars) in fingerprints.items()

@@ -77,6 +77,8 @@ class StepRecord(BaseModel):
     started_at: str | None = None
     finished_at: str | None = None
     duration_seconds: float | None = None
+    # Relative to the run dir when inside it (see steps.run_dir_relative); older
+    # manifests hold absolute paths, which still resolve.
     output_file: str | None = None
     output_md5: str | None = None
     # Fingerprint of the step's declared *inputs* at the time it last completed.
