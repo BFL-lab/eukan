@@ -93,6 +93,8 @@ eukan/
 │   ├── hierarchy.py    # gene>mRNA>CDS hierarchy fixers, prettify_gff3()
 │   ├── normalize.py    # GFF3 cleanup before downstream tools (e.g., table2asn)
 │   ├── _compat.py      # Workarounds for gffutils API quirks
+│   ├── rows.py         # iter_gff3_rows(), parse_attrs() — stdlib line-level GFF3/GTF reading
+│   ├── transcripts.py  # Transcript record + read/write/split_at/stitch/stream_cut (shared by the assembly cut steps)
 │   └── io.py           # featuredb2gff3_file(), count_gff3_features(), iter_assembled_sequences()
 │
 ├── annotation/         # Genome annotation pipeline
@@ -111,12 +113,13 @@ eukan/
 ├── assembly/           # Transcriptome assembly pipeline
 │   ├── pipeline.py     # run_assembly() dispatch (StepSpec-driven); _DOWNSTREAM cascade
 │   ├── minimap2.py     # minimap2 read/transcript mapping — the single aligner for the assembly pipeline
-│   ├── bam_utils.py    # Shared BAM helpers and the mapped-transcript track definitions (_TRANSCRIPT_SETS)
+│   ├── bam_utils.py    # Shared BAM helpers (quickcheck, unmapped FASTA, FASTA record count)
+│   ├── bam_reads.py    # Per-read BAM primitives: primary filter, soft-clip extraction, intron walk, dinucleotides
 │   ├── align_hints.py  # RNA-seq intron/coverage hint emission from the read BAM
 │   ├── bam_diagnostic.py # Post-mapping soft-clip + intron BAM walk → trans-splicing / non-canonical-splice verdict
 │   ├── bam_introns.py  # Max-intron-bounded BAM filtering primitive
 │   ├── trinity.py      # Trinity genome-guided + de novo assembly (the active assembler, both modes)
-│   ├── tracks.py       # Single source of truth for the mapped Trinity track stems + per-track filenames
+│   ├── tracks.py       # Single source of truth: TRANSCRIPT_SETS + every per-track filename/suffix
 │   ├── jaccard.py      # In-house jaccard fusion-clip (replaces Trinity --jaccard_clip; minimap2-based, tunable)
 │   ├── strand_correction.py # Homology-calibrated per-transcript splice-strand flip (diamond blastx, opt-in --uniprot)
 │   ├── defuse.py       # Homology-grounded chimera splitting (opt-in --defuse + --uniprot)
