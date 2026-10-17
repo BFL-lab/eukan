@@ -26,7 +26,7 @@ from eukan.infra.logging import get_logger
 
 log = get_logger(__name__)
 
-DATA_DIR = Path("tests/data")
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 GENOME_ACCESSION_FILE = DATA_DIR / "test-genome-accession.txt"
 GENOME_ASSEMBLY_ACCESSION_FILE = DATA_DIR / "test-genome-assembly-accession.txt"
