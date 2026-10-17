@@ -56,11 +56,11 @@ A few tools aren't on conda and are installed by a helper script after creating 
 ```bash
 # Download GeneMark (license required) from:
 #   https://topaz.gatech.edu/GeneMark/license_download.cgi
-# Place gmes_linux_64*.tar.gz and gm_key_64.gz in the current directory, then:
+# Place gmes_linux_64_4.tar.gz and gm_key_64.gz in the repository root, then:
 ./scripts/install-extras.sh
 
-# Or point to a GeneMark archive elsewhere:
-./scripts/install-extras.sh --genemark-tar /path/to/gmes_linux_64_4.tar.gz
+# Or install only some of fitild, combinr and genemark:
+./scripts/install-extras.sh combinr
 ```
 
 `eukan check` will tell you exactly what's missing and how to install it.
