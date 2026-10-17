@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pysam
 
+from eukan.assembly.bam_diagnostic import TransSplicingLevel
 from eukan.assembly.bam_reads import QUERY_CONSUMING, REF_CONSUMING, iter_primary_alignments
 from eukan.assembly.sl_depletion import (
     _BUILTIN_ADAPTERS,
@@ -149,7 +150,7 @@ def _read_verdict_consensus(wd: Path, adapters: list[str]) -> str | None:
     if not summary.exists():
         return None
     ts = json.loads(summary.read_text()).get("verdict", {}).get("trans_splicing", {})
-    if ts.get("call") not in ("STRONG", "MODERATE"):
+    if ts.get("call") not in (TransSplicingLevel.STRONG, TransSplicingLevel.MODERATE):
         return None
     motif = (
         ts.get("top_non_trivial_cluster_consensus")

@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 import pysam
@@ -284,11 +285,27 @@ class DiagnosticReport:
     polya: PolyAStats = field(default_factory=PolyAStats)
 
 
+class TransSplicingLevel(StrEnum):
+    """:attr:`TransSplicingCall.call`, as the summary JSON spells it."""
+
+    STRONG = "STRONG"
+    MODERATE = "MODERATE"
+    ABSENT = "ABSENT"
+
+
+class NonCanonicalSpliceLevel(StrEnum):
+    """:attr:`NonCanonicalSpliceCall.call`, as the summary JSON spells it."""
+
+    EXTENSIVE = "EXTENSIVE"
+    MODERATE = "MODERATE"
+    ABSENT = "ABSENT"
+
+
 @dataclass
 class TransSplicingCall:
     """Categorical verdict on whether trans-splicing is present."""
 
-    call: str  # "STRONG" | "MODERATE" | "ABSENT"
+    call: TransSplicingLevel
     top_non_trivial_cluster_key: str
     top_non_trivial_cluster_consensus: str
     top_non_trivial_cluster_n_loci: int
@@ -300,7 +317,7 @@ class TransSplicingCall:
 class NonCanonicalSpliceCall:
     """Categorical verdict on non-canonical splice prevalence."""
 
-    call: str  # "EXTENSIVE" | "MODERATE" | "ABSENT"
+    call: NonCanonicalSpliceLevel
     canonical_pct: float
     top_non_canonical_dinuc: str
 
@@ -724,25 +741,25 @@ def compute_verdict(report: DiagnosticReport) -> Verdict:
     if top is not None:
         key, n_loci, n_reads = top
         if n_loci >= _TS_STRONG_MIN_LOCI and n_reads >= _TS_STRONG_MIN_READS:
-            ts_call = "STRONG"
+            ts_call = TransSplicingLevel.STRONG
         elif n_loci >= _TS_MODERATE_MIN_LOCI and n_reads >= _TS_MODERATE_MIN_READS:
-            ts_call = "MODERATE"
+            ts_call = TransSplicingLevel.MODERATE
         else:
-            ts_call = "ABSENT"
+            ts_call = TransSplicingLevel.ABSENT
     else:
         key, n_loci, n_reads = "", 0, 0
-        ts_call = "ABSENT"
+        ts_call = TransSplicingLevel.ABSENT
 
     sl_bucket_pct = 0.0
     if lc.n_loci_consistent:
         sl_bucket_pct = 100.0 * lc.motif_share_histogram.get(">1000", 0) / lc.n_loci_consistent
 
     if intron.canonical_pct < _NC_CANONICAL_PCT_EXTENSIVE:
-        nc_call = "EXTENSIVE"
+        nc_call = NonCanonicalSpliceLevel.EXTENSIVE
     elif intron.canonical_pct < _NC_CANONICAL_PCT_MODERATE:
-        nc_call = "MODERATE"
+        nc_call = NonCanonicalSpliceLevel.MODERATE
     else:
-        nc_call = "ABSENT"
+        nc_call = NonCanonicalSpliceLevel.ABSENT
 
     nc_top_label = "none above 1%"
     for dinuc, n in intron.by_dinucleotide.items():

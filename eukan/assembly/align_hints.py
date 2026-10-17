@@ -24,7 +24,9 @@ from pathlib import Path
 import pysam
 
 from eukan.assembly.bam_diagnostic import (
+    NonCanonicalSpliceLevel,
     TransSplicingCall,
+    TransSplicingLevel,
     compute_verdict,
     diagnose_bam,
     to_summary_dict,
@@ -210,7 +212,7 @@ def _log_trans_splicing_verdict(ts: TransSplicingCall) -> None:
     ):
         note = (
             f"; the {ts.call} trans-splicing signal is attributable to it"
-            if ts.call in ("STRONG", "MODERATE")
+            if ts.call in (TransSplicingLevel.STRONG, TransSplicingLevel.MODERATE)
             else ""
         )
         log.warning(
@@ -221,7 +223,7 @@ def _log_trans_splicing_verdict(ts: TransSplicingCall) -> None:
             label, note,
         )
         return
-    if ts.call in ("STRONG", "MODERATE"):
+    if ts.call in (TransSplicingLevel.STRONG, TransSplicingLevel.MODERATE):
         log.warning(
             "Trans-splicing signal %s: top motif %s spans %d loci (%d reads). "
             "Reads may need splice-leader trimming before annotation.",
@@ -273,7 +275,7 @@ def run_softclip_diagnostic(bam: Path, genome: Path, wd: Path) -> None:
     _log_trans_splicing_verdict(verdict.trans_splicing)
 
     nc = verdict.non_canonical_splice
-    if nc.call in ("EXTENSIVE", "MODERATE"):
+    if nc.call in (NonCanonicalSpliceLevel.EXTENSIVE, NonCanonicalSpliceLevel.MODERATE):
         log.warning(
             "Non-canonical splice signal %s: canonical fraction %.2f%% "
             "(top non-canonical %s). Consider --splice-permissive on the annotate step.",

@@ -29,6 +29,7 @@ from pathlib import Path
 import pysam
 
 from eukan.assembly.align_hints import generate_rnaseq_hints, sj_table_from_bam
+from eukan.assembly.bam_diagnostic import NonCanonicalSpliceLevel
 from eukan.assembly.bam_utils import (
     _bam_is_complete,
     _coordinate_sort_and_filter,
@@ -55,7 +56,7 @@ _SJ = "minimap2_SJ.out.tab"
 # Non-canonical-splice verdict (softclip_diagnostic_summary.json →
 # verdict.non_canonical_splice.call) at which mapping escalates to the
 # non-canonical minimap2 flags.
-_NON_CANONICAL_CALL = "EXTENSIVE"
+_NON_CANONICAL_CALL = NonCanonicalSpliceLevel.EXTENSIVE
 
 # Layered onto the splice preset when non-canonical splicing is extensive:
 # -J 0 selects minimap2's original splice model (required for -C to take effect),
