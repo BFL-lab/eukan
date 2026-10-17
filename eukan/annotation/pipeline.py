@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from eukan.annotation.alignment import align_proteins
@@ -14,6 +13,7 @@ from eukan.annotation.orf import create_transcriptome_orf_db
 from eukan.annotation.snap import run_codingquarry, run_snap
 from eukan.gff.io import count_gff3_features, featuredb2gff3_file
 from eukan.infra.artifacts import Artifact, find, masked_genome
+from eukan.infra.concurrency import parallel_map
 from eukan.infra.logging import get_logger
 from eukan.infra.manifest import (
     ANNOTATION,
@@ -93,17 +93,13 @@ def _run_concurrent_steps(
     forced: frozenset[str],
 ) -> dict[str, Path]:
     """Run multiple independent steps concurrently."""
-    results: dict[str, Path] = {}
-    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
-        future_to_name = {
-            pool.submit(
-                _run_step, config, manifest, name, fn, *args, forced=forced, **kwargs,
-            ): name
-            for name, fn, args, kwargs in tasks
-        }
-        for future in as_completed(future_to_name):
-            results[future_to_name[future]] = future.result()
-    return results
+
+    def run(task: tuple[str, Callable, tuple, dict]) -> Path:
+        name, fn, args, kwargs = task
+        return _run_step(config, manifest, name, fn, *args, forced=forced, **kwargs)
+
+    paths = parallel_map(run, tasks)
+    return {name: path for (name, *_), path in zip(tasks, paths, strict=True)}
 
 
 # ---------------------------------------------------------------------------
