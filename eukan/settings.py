@@ -145,17 +145,6 @@ class PipelineConfig(_StepRunSettings):
     transcripts_gff: Path | None = None
     rnaseq_hints: Path | None = None
 
-    # Well-known assembly output filenames — sourced from the cross-pipeline
-    # artifact registry so renaming an artifact only edits one file.
-    @staticmethod
-    def _assembly_files() -> dict[str, str]:
-        from eukan.infra.artifacts import Artifact
-        return {
-            "transcripts_fasta": Artifact.NR_TRANSCRIPTS_FASTA.value,
-            "transcripts_gff": Artifact.NR_TRANSCRIPTS_GFF.value,
-            "rnaseq_hints": Artifact.RNASEQ_HINTS.value,
-        }
-
     # --- Validators ------------------------------------------------------
 
     @model_validator(mode="after")
