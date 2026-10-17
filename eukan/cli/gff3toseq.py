@@ -39,6 +39,9 @@ def gff3toseq(
 ) -> None:
     """Extract protein or cDNA sequences from GFF3 + genome."""
     from eukan.gff.io import extract_sequences  # lazy: startup cost
+    from eukan.infra.genetic_code import GeneticCode  # lazy: startup cost
 
-    for record in extract_sequences(gff3, genome, extract_to=output_format, genetic_code=genetic_code):
+    # GeneticCode raises ConfigurationError for a code NCBI does not define.
+    code = GeneticCode(genetic_code).ncbi_id
+    for record in extract_sequences(gff3, genome, extract_to=output_format, genetic_code=code):
         output_file.write(record.format("fasta"))

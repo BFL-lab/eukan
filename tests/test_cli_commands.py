@@ -146,6 +146,22 @@ class TestCodeTableEpilog:
         assert ("Genetic codes (NCBI translation tables):" in result.output) is shown
 
 
+def test_gff3toseq_rejects_an_unknown_genetic_code(run_dir):
+    """-c 99 is a configuration error, not a KeyError out of the translation."""
+    (run_dir / "chr1.fa").write_text(">chr1\nATGAAATAG\n")
+    (run_dir / "genes.gff3").write_text(
+        "chr1\tt\tgene\t1\t9\t.\t+\t.\tID=g1\n"
+        "chr1\tt\tmRNA\t1\t9\t.\t+\t.\tID=m1;Parent=g1\n"
+        "chr1\tt\tCDS\t1\t9\t.\t+\t0\tID=c1;Parent=m1\n"
+    )
+    result = CliRunner().invoke(
+        cli, ["gff3toseq", "-g", "chr1.fa", "-i", "genes.gff3", "-c", "99"],
+    )
+    assert result.exit_code == 1
+    assert "Error: Unknown NCBI genetic code: 99" in result.output
+    assert "Hint: Valid codes: 1, 2, 3," in result.output
+
+
 def test_db_fetch_help_has_no_options_header():
     """db-fetch lays out its option groups like every other command."""
     result = CliRunner().invoke(cli, ["db-fetch", "-h"])
