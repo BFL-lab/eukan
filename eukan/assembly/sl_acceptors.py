@@ -22,14 +22,13 @@ unaffected.
 
 from __future__ import annotations
 
-import json
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
 import pysam
 
-from eukan.assembly.bam_diagnostic import TransSplicingLevel
+from eukan.assembly.bam_diagnostic import TransSplicingLevel, load_verdict
 from eukan.assembly.bam_reads import QUERY_CONSUMING, REF_CONSUMING, iter_primary_alignments
 from eukan.assembly.sl_depletion import (
     _BUILTIN_ADAPTERS,
@@ -146,17 +145,13 @@ def _read_verdict_consensus(wd: Path, adapters: list[str]) -> str | None:
     Rejected when the recovered motif is just sequencing adapter, so residual
     adapter read-through can never be promoted to the SL consensus.
     """
-    summary = wd / Artifact.SOFTCLIP_DIAGNOSTIC.value
-    if not summary.exists():
+    verdict = load_verdict(wd)
+    if verdict is None:
         return None
-    ts = json.loads(summary.read_text()).get("verdict", {}).get("trans_splicing", {})
-    if ts.get("call") not in (TransSplicingLevel.STRONG, TransSplicingLevel.MODERATE):
+    ts = verdict.trans_splicing
+    if ts.call not in (TransSplicingLevel.STRONG, TransSplicingLevel.MODERATE):
         return None
-    motif = (
-        ts.get("top_non_trivial_cluster_consensus")
-        or ts.get("top_non_trivial_cluster_key")
-        or ""
-    ).upper()
+    motif = (ts.top_non_trivial_cluster_consensus or ts.top_non_trivial_cluster_key).upper()
     if len(motif) < _MIN_MOTIF_LEN or is_adapter(motif, adapters):
         return None
     return motif

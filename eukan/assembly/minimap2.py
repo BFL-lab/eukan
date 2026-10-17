@@ -23,13 +23,12 @@ escalation is gated by ``--non-canonical`` (``auto`` = on the EXTENSIVE verdict,
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pysam
 
 from eukan.assembly.align_hints import generate_rnaseq_hints, sj_table_from_bam
-from eukan.assembly.bam_diagnostic import NonCanonicalSpliceLevel
+from eukan.assembly.bam_diagnostic import NonCanonicalSpliceLevel, load_verdict
 from eukan.assembly.bam_utils import (
     _bam_is_complete,
     _coordinate_sort_and_filter,
@@ -43,7 +42,6 @@ from eukan.assembly.polya import (
     write_polya_section,
 )
 from eukan.assembly.tracks import GENOME_BAM_SUFFIX, TRANSCRIPT_SETS, resolve_query
-from eukan.infra.artifacts import Artifact
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_piped
 from eukan.settings import AssemblyConfig
@@ -66,20 +64,14 @@ _NON_CANONICAL_CALL = NonCanonicalSpliceLevel.EXTENSIVE
 _NON_CANONICAL_FLAGS = ["-J", "0", "-C", "3", "--splice-flank=no"]
 
 
-def _non_canonical_call(work_dir: Path) -> str | None:
+def _non_canonical_call(work_dir: Path) -> NonCanonicalSpliceLevel | None:
     """The ``non_canonical_splice`` verdict from the soft-clip diagnostic, if any.
 
     Reads ``softclip_diagnostic_summary.json`` (written after read mapping when
-    ``--diagnose-softclips`` is on). Returns the call string
-    (``EXTENSIVE`` / ``MODERATE`` / ``ABSENT``) or ``None`` when the file is
-    absent or unreadable.
+    ``--diagnose-softclips`` is on); ``None`` when the file is absent or unreadable.
     """
-    path = work_dir / Artifact.SOFTCLIP_DIAGNOSTIC.value
-    try:
-        data = json.loads(path.read_text())
-        return data["verdict"]["non_canonical_splice"]["call"]
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
+    verdict = load_verdict(work_dir)
+    return verdict.non_canonical_splice.call if verdict else None
 
 
 def _use_non_canonical(config: AssemblyConfig) -> bool:

@@ -17,9 +17,10 @@ Extracts and aggregates:
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from eukan.assembly.bam_reads import (
     walk_introns,
 )
 from eukan.assembly.polya import PolyAStats, tally_clip
+from eukan.infra.artifacts import Artifact
 from eukan.infra.genome import ContigIndex
 
 # Per-locus key cap. Statistically the dominant key arrives among the
@@ -828,35 +830,21 @@ def to_summary_dict(report: DiagnosticReport, verdict: Verdict) -> dict:
             "n_loci_inconsistent": lc.n_loci_inconsistent,
             "n_loci_short_only": lc.n_loci_short_only,
             "motif_share_histogram": lc.motif_share_histogram,
-            "deepest_loci": [
-                {
-                    "chrom": r.chrom, "pos": r.pos, "side": r.side,
-                    "n_clips": r.n_clips, "status": r.status,
-                    "motif_key": r.motif_key, "motif_share": r.motif_share,
-                    "longest_clip": r.longest_clip,
-                }
-                for r in lc.deepest_loci
-            ],
+            "deepest_loci": [asdict(r) for r in lc.deepest_loci],
         },
-        "verdict": {
-            "trans_splicing": {
-                "call": verdict.trans_splicing.call,
-                "top_non_trivial_cluster_key":
-                    verdict.trans_splicing.top_non_trivial_cluster_key,
-                "top_non_trivial_cluster_consensus":
-                    verdict.trans_splicing.top_non_trivial_cluster_consensus,
-                "top_non_trivial_cluster_n_loci":
-                    verdict.trans_splicing.top_non_trivial_cluster_n_loci,
-                "top_non_trivial_cluster_n_reads":
-                    verdict.trans_splicing.top_non_trivial_cluster_n_reads,
-                "sl_bucket_pct_of_consistent":
-                    verdict.trans_splicing.sl_bucket_pct_of_consistent,
-            },
-            "non_canonical_splice": {
-                "call": verdict.non_canonical_splice.call,
-                "canonical_pct": verdict.non_canonical_splice.canonical_pct,
-                "top_non_canonical_dinuc":
-                    verdict.non_canonical_splice.top_non_canonical_dinuc,
-            },
-        },
+        "verdict": asdict(verdict),
     }
+
+
+def load_verdict(wd: Path) -> Verdict | None:
+    """The verdict :func:`to_summary_dict` wrote to *wd*'s soft-clip summary, or
+    ``None`` when there is no summary or it does not hold a whole verdict."""
+    try:
+        v = json.loads((wd / Artifact.SOFTCLIP_DIAGNOSTIC.value).read_text())["verdict"]
+        ts, nc = v["trans_splicing"], v["non_canonical_splice"]
+        return Verdict(
+            TransSplicingCall(**(ts | {"call": TransSplicingLevel(ts["call"])})),
+            NonCanonicalSpliceCall(**(nc | {"call": NonCanonicalSpliceLevel(nc["call"])})),
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None

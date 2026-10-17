@@ -11,6 +11,7 @@ Builds tiny in-memory BAMs + small FASTA fixtures to exercise:
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -21,17 +22,22 @@ from eukan.assembly.bam_diagnostic import (
     DiagnosticReport,
     IntronStats,
     LocusConsistencyStats,
+    NonCanonicalSpliceLevel,
     SoftClipStats,
+    TransSplicingLevel,
     _cluster_consensus,
     _cluster_key,
     _hamming_distance,
     _is_low_complexity,
     compute_verdict,
     diagnose_bam,
+    load_verdict,
+    to_summary_dict,
 )
 from eukan.assembly.bam_reads import dinucleotide as _dinucleotide
 from eukan.assembly.bam_reads import extract_clips as _extract_clips
 from eukan.assembly.bam_reads import walk_introns as _walk_introns
+from eukan.infra.artifacts import Artifact
 from eukan.infra.genome import ContigIndex
 from eukan.infra.genome import reverse_complement as _reverse_complement
 
@@ -776,6 +782,40 @@ def test_compute_verdict_skips_low_complexity_top_cluster():
     verdict = compute_verdict(report)
     assert verdict.trans_splicing.top_non_trivial_cluster_key == "ATCGATCGATCG"
     assert verdict.trans_splicing.call == "MODERATE"
+
+
+def test_load_verdict_reads_back_the_summary(tmp_path):
+    """load_verdict returns the verdict to_summary_dict wrote, calls as members."""
+    report = _make_report(
+        top_clusters=[("ATCGATCGATCG", 500, 5_000)], canonical_pct=85.0,
+        by_dinucleotide={"GT-AG": 850, "CG-AG": 150},
+    )
+    verdict = compute_verdict(report)
+    (tmp_path / Artifact.SOFTCLIP_DIAGNOSTIC.value).write_text(
+        json.dumps(to_summary_dict(report, verdict), indent=2)
+    )
+
+    loaded = load_verdict(tmp_path)
+
+    assert loaded == verdict
+    assert loaded.trans_splicing.call is TransSplicingLevel.MODERATE
+    assert loaded.non_canonical_splice.call is NonCanonicalSpliceLevel.MODERATE
+
+
+@pytest.mark.parametrize("damage", ["absent", "truncated", "field_missing", "unknown_call"])
+def test_load_verdict_none_without_a_whole_verdict(tmp_path, damage):
+    report = _make_report(top_clusters=[], canonical_pct=99.0)
+    summary = to_summary_dict(report, compute_verdict(report))
+    if damage == "field_missing":
+        del summary["verdict"]["trans_splicing"]["sl_bucket_pct_of_consistent"]
+    elif damage == "unknown_call":
+        summary["verdict"]["non_canonical_splice"]["call"] = "SEVERE"
+    text = json.dumps(summary)
+    if damage != "absent":
+        path = tmp_path / Artifact.SOFTCLIP_DIAGNOSTIC.value
+        path.write_text(text[:20] if damage == "truncated" else text)
+
+    assert load_verdict(tmp_path) is None
 
 
 def test_hamming_distance_helper():

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 
 from eukan.assembly import minimap2
+from eukan.assembly.bam_diagnostic import NonCanonicalSpliceCall, TransSplicingCall, Verdict
 from eukan.assembly.pipeline import STEPS
 from eukan.infra.artifacts import Artifact
 from eukan.infra.manifest import ASSEMBLY, step_key
@@ -26,8 +28,16 @@ def _config_reads(tmp_path, **kw):
 
 
 def _write_verdict(work_dir, call):
+    verdict = Verdict(
+        TransSplicingCall(
+            call="ABSENT", top_non_trivial_cluster_key="", top_non_trivial_cluster_consensus="",
+            top_non_trivial_cluster_n_loci=0, top_non_trivial_cluster_n_reads=0,
+            sl_bucket_pct_of_consistent=0.0,
+        ),
+        NonCanonicalSpliceCall(call=call, canonical_pct=50.0, top_non_canonical_dinuc=""),
+    )
     (work_dir / Artifact.SOFTCLIP_DIAGNOSTIC.value).write_text(
-        json.dumps({"verdict": {"non_canonical_splice": {"call": call}}})
+        json.dumps({"verdict": asdict(verdict)})
     )
 
 
