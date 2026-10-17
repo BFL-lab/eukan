@@ -94,20 +94,13 @@ RUN git clone --depth 1 https://github.com/ogotoh/spaln /tmp/spaln_src \
 #
 # combinr provides `combinr assemble` (transcript consolidation) and
 # `combinr consensus` (weighted consensus gene models), both required by the
-# assemble/annotate pipelines. Pull the pinned, statically-linked musl build
-# from the GitHub release, verify its SHA-256, and install onto PATH (the conda
-# env's bin/, already first on PATH in the runtime stage). Bump VERSION and
-# SHA256 together to upgrade; they are validated against each other at build.
+# assemble/annotate pipelines. scripts/install-extras.sh, the local
+# installer, holds the pinned release and its SHA-256s; it downloads the
+# statically-linked musl build, verifies it, and installs it into the conda
+# env's bin/ (already first on PATH in the runtime stage).
 # ---------------------------------------------------------------------------
-ARG COMBINR_VERSION=0.3.0
-ARG COMBINR_SHA256=f937ec44aa28d2ab50f98995a5d879c42a303d347f112c5fbdde479f113dde14
-RUN combinr_dir="combinr-x86_64-unknown-linux-musl" \
-    && curl -fsSL -o "/tmp/${combinr_dir}.tar.xz" \
-       "https://github.com/BFL-lab/combinr/releases/download/v${COMBINR_VERSION}/${combinr_dir}.tar.xz" \
-    && echo "${COMBINR_SHA256}  /tmp/${combinr_dir}.tar.xz" | sha256sum -c - \
-    && tar xJf "/tmp/${combinr_dir}.tar.xz" -C /tmp \
-    && install -m 0755 "/tmp/${combinr_dir}/combinr" /opt/conda/envs/eukan/bin/combinr \
-    && rm -rf "/tmp/${combinr_dir}.tar.xz" "/tmp/${combinr_dir}" \
+COPY scripts/install-extras.sh /opt/eukan/scripts/
+RUN bash scripts/install-extras.sh combinr \
     && combinr --version
 
 # ---------------------------------------------------------------------------

@@ -4,10 +4,14 @@
 # Run this after `conda activate eukan`. The script installs into
 # $CONDA_PREFIX/ so everything stays inside the conda environment.
 #
+# With no arguments it installs all three; name components to install only
+# those, e.g. `install-extras.sh combinr` (which is how the Docker image
+# installs combinr).
+#
 # fitild is always built from source (GitHub).
 #
-# combinr is downloaded as a pinned pre-built release binary (the same one the
-# Docker image installs) and dropped onto PATH.
+# combinr is downloaded as a pinned pre-built release binary and dropped onto
+# PATH.
 #
 # GeneMark requires a license — if gmes_linux_64_4.tar.gz and
 # gm_key_64.gz are present in the project root, GeneMark is installed
@@ -209,9 +213,17 @@ install_genemark() {
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-install_fitild
-install_combinr
-install_genemark
+if [[ $# -eq 0 ]]; then
+    set -- fitild combinr genemark
+fi
+for component in "$@"; do
+    case "$component" in
+        fitild|combinr|genemark) "install_${component}" ;;
+        *)
+            echo "Error: unknown component '${component}' (choose from fitild, combinr, genemark)." >&2
+            exit 2 ;;
+    esac
+done
 
 echo ""
 echo "Done. Verify with: eukan check"
