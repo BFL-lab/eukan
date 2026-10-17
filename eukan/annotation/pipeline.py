@@ -270,12 +270,19 @@ def _phase_orf_and_genemark(
 ) -> dict[str, Path]:
     """Phase 1: ORF finding (transcripts only) + GeneMark, run concurrently."""
     genome = config.genome
+    # GeneMark takes --fungus from the kingdom and its --gcode from the genetic code.
+    genemark_scalars = [f"is_fungus={config.is_fungus}", f"genetic_code={config.genetic_code}"]
     if config.has_transcripts:
         assert config.transcripts_gff is not None and config.rnaseq_hints is not None
         trans, hints = config.transcripts_gff, config.rnaseq_hints
         results = _run_concurrent_steps(config, manifest, [
-            ("orf_finder", find_orfs, (trans,), {"input_files": [genome, trans]}),
-            ("genemark", run_genemark, (hints,), {"input_files": [genome, hints]}),
+            ("orf_finder", find_orfs, (trans,), {
+                "input_files": [genome, trans],
+                "input_scalars": [f"genetic_code={config.genetic_code}"],
+            }),
+            ("genemark", run_genemark, (hints,), {
+                "input_files": [genome, hints], "input_scalars": genemark_scalars,
+            }),
         ], forced)
         ev = {**ev, "transcriptORFs": results["orf_finder"], "genemark": results["genemark"]}
     else:
@@ -283,7 +290,7 @@ def _phase_orf_and_genemark(
             **ev,
             "genemark": _run_step(
                 config, manifest, "genemark", run_genemark,
-                input_files=[genome], forced=forced,
+                input_files=[genome], input_scalars=genemark_scalars, forced=forced,
             ),
         }
     _log_prediction_count("GeneMark", ev["genemark"])
@@ -308,7 +315,8 @@ def _phase_protein_alignment(
     spaln_path = _run_step(
         config, manifest, prot_step, align_proteins,
         ev["genemark"], config.proteins, *spaln_extra,
-        input_files=inputs, forced=forced,
+        input_files=inputs, input_scalars=[f"genetic_code={config.genetic_code}"],
+        forced=forced,
     )
     _log_prediction_count("spaln", spaln_path)
     return {**ev, "spaln": spaln_path}
@@ -332,9 +340,15 @@ def _phase_augustus(
         found = find(config.work_dir, artifact)
         if found is not None:
             inputs.append(found)
+    # The genetic code sets the stop codon frequencies (code 6); the splice summary
+    # is read under --splice-permissive's thresholds.
+    scalars = [
+        f"genetic_code={config.genetic_code}",
+        f"allow_noncanonical_splice={config.allow_noncanonical_splice}",
+    ]
     aug_path = _run_step(
         config, manifest, "augustus", run_augustus, *evidence,
-        input_files=inputs, forced=forced,
+        input_files=inputs, input_scalars=scalars, forced=forced,
     )
     _log_prediction_count("AUGUSTUS", aug_path)
     return {**ev, "augustus": aug_path}
@@ -387,11 +401,12 @@ def _consensus_scalars(config: PipelineConfig) -> list[str]:
     step's resume fingerprint so a change re-runs it on resume (in addition to the
     explicit ``--run-consensus``). ``combinr_stringent_overlap`` tunes the
     ``--alt-splice`` isoform grouping; weights and the genetic code feed the consensus
-    engine directly."""
+    engine directly; ``combinr_path`` picks the binary that runs it."""
     return [
         f"weights={config.weights}",
         f"genetic_code={config.genetic_code}",
         f"combinr_stringent_overlap={config.combinr_stringent_overlap}",
+        f"combinr_path={config.combinr_path}",
     ]
 
 

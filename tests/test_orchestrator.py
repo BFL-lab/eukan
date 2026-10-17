@@ -6,6 +6,7 @@ import itertools
 import logging
 import shutil
 from dataclasses import replace
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -39,7 +40,7 @@ from eukan.infra.pipeline import (
 )
 from eukan.infra.steps import fingerprint_inputs, is_step_complete
 from eukan.infra.utils import md5_file
-from eukan.settings import AssemblyConfig, PipelineConfig
+from eukan.settings import AssemblyConfig, Kingdom, PipelineConfig
 
 
 class TestForceStepsFromRunFlags:
@@ -1167,6 +1168,23 @@ class TestAnnotationInputFingerprints:
         fake.run()
         (tmp_path / Artifact.REPEATMASK_HINTS.value).write_text("hints\n")
         assert fake.run() == ["augustus"]
+
+    @pytest.mark.parametrize(("field", "value", "reruns"), [
+        ("genetic_code", "4", ["genemark", "prot_align", "augustus", "consensus_models"]),
+        ("allow_noncanonical_splice", True, ["augustus"]),
+        # GeneMark reads only whether the kingdom is fungus; a fungus run adds CodingQuarry.
+        ("kingdom", Kingdom.fungus, ["genemark", "codingquarry", "consensus_models"]),
+        ("kingdom", Kingdom.plant, []),
+        ("combinr_path", Path("/opt/combinr/combinr"), ["consensus_models"]),
+    ])
+    def test_changed_scalar_reruns_the_steps_that_read_it(
+        self, tmp_path, monkeypatch, field, value, reruns,
+    ):
+        fake = _FakeAnnotation(monkeypatch, tmp_path)
+        monkeypatch.setattr(annotation_pipeline, "run_codingquarry", fake._step("codingquarry"))
+        fake.run()
+        fake.config = fake.config.model_copy(update={field: value})
+        assert fake.run() == reruns
 
 
 class TestTrinityTrackRerun:
