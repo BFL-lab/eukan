@@ -2,6 +2,8 @@
 
 from eukan.infra.databases import (
     DATABASES,
+    HOMOLOGY_DB_TARGETS,
+    HOMOLOGY_DBS,
     DatabaseEntry,
     check_databases,
     is_current,
@@ -99,3 +101,7 @@ class TestCheckDatabases:
         results = check_databases(tmp_path, homology_db="kofam")
         names = {n for n, _, _ in results}
         assert names == {"kofam", "ko_list", "pfam"}
+
+
+def test_every_homology_db_has_fetch_targets():
+    assert tuple(HOMOLOGY_DB_TARGETS) == HOMOLOGY_DBS

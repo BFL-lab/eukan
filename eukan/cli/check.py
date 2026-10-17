@@ -9,7 +9,7 @@ import click
 from click_option_group import optgroup
 
 from eukan.cli._framework import PreformattedEpilogCommand
-from eukan.infra.databases import DEFAULT_DB_DIR
+from eukan.infra.databases import DEFAULT_DB_DIR, HOMOLOGY_DBS
 
 if TYPE_CHECKING:
     from eukan.infra.health import CheckResult, PythonCheckResult
@@ -110,7 +110,7 @@ def format_results(
     show_default=True, help="Database directory to check.",
 )
 @optgroup.option(
-    "--homology-db", type=click.Choice(["uniprot", "kofam"], case_sensitive=False),
+    "--homology-db", type=click.Choice(HOMOLOGY_DBS, case_sensitive=False),
     default=None,
     help="When set, only check the chosen homology DB (plus Pfam). Without "
          "it, every registered database is checked.",

@@ -19,7 +19,7 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from eukan.exceptions import ConfigurationError
-from eukan.infra.databases import DATABASES, DEFAULT_DB_DIR
+from eukan.infra.databases import DATABASES, DEFAULT_DB_DIR, HomologyDb
 from eukan.infra.logging import get_logger
 from eukan.infra.utils import available_cpus
 
@@ -470,7 +470,7 @@ class FunctionalConfig(_StepRunSettings):
     )
 
     proteins: Path
-    homology_db: Literal["uniprot", "kofam"] = "uniprot"  # phmmer vs SwissProt / hmmscan vs KOfam
+    homology_db: HomologyDb = "uniprot"
     uniprot_db: Path = DEFAULT_DB_DIR / DATABASES["uniprot"].file
     kofam_db: Path = DEFAULT_DB_DIR / DATABASES["kofam"].file
     ko_list_path: Path = DEFAULT_DB_DIR / DATABASES["ko_list"].file

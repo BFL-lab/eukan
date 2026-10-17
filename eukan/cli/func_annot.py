@@ -14,6 +14,7 @@ from eukan.cli._framework import (
     force_option,
     numcpu_option,
 )
+from eukan.infra.databases import HOMOLOGY_DBS
 from eukan.infra.layout import step_work_dir
 
 
@@ -21,7 +22,7 @@ from eukan.infra.layout import step_work_dir
 @optgroup.group("Pipeline parameters")
 @numcpu_option
 @optgroup.option(
-    "--homology-db", type=click.Choice(["uniprot", "kofam"], case_sensitive=False),
+    "--homology-db", type=click.Choice(HOMOLOGY_DBS, case_sensitive=False),
     default="uniprot", show_default=True,
     help="Homology source: 'uniprot' runs phmmer vs SwissProt (broad coverage); "
          "'kofam' runs hmmscan vs the KOfam HMM database with per-KO bit-score "

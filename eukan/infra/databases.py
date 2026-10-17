@@ -12,6 +12,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal, get_args
 
 from eukan.infra.logging import get_logger
 from eukan.infra.utils import md5_file
@@ -46,6 +47,12 @@ DATABASES: dict[str, Database] = {
 DEFAULT_DB_DIR = Path("databases")
 """Where ``eukan db-fetch`` puts the databases and func-annot and ``eukan check``
 look for them by default, relative to the current directory."""
+
+HomologyDb = Literal["uniprot", "kofam"]
+"""A homology database func-annot searches: phmmer against SwissProt, or
+hmmscan against KOfam. Pfam hmmscan runs with either."""
+
+HOMOLOGY_DBS: tuple[str, ...] = get_args(HomologyDb)
 
 HOMOLOGY_DB_TARGETS: dict[str, list[str]] = {
     "uniprot": ["uniprot"],

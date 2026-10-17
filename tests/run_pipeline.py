@@ -32,7 +32,7 @@ if _PROJECT_ROOT not in sys.path:
 
 import click
 
-from eukan.infra.databases import DATABASES
+from eukan.infra.databases import DATABASES, HOMOLOGY_DBS
 from eukan.infra.utils import available_cpus
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
@@ -141,7 +141,7 @@ def setup_test_data_cmd(output_dir: Path) -> None:
     help="Skip assembly, annotate using only protein + genome evidence.",
 )
 @click.option(
-    "--homology-db", type=click.Choice(["uniprot", "kofam"], case_sensitive=False),
+    "--homology-db", type=click.Choice(HOMOLOGY_DBS, case_sensitive=False),
     default="uniprot", show_default=True,
     help="Homology DB for db-fetch + func-annot. 'uniprot' uses SwissProt "
          "phmmer; 'kofam' uses KEGG Orthology HMMs with per-KO thresholds.",

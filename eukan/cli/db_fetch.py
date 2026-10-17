@@ -8,7 +8,7 @@ import click
 from click_option_group import optgroup
 
 from eukan.cli._framework import PreformattedEpilogCommand, force_option
-from eukan.infra.databases import DATABASES, DEFAULT_DB_DIR
+from eukan.infra.databases import DATABASES, DEFAULT_DB_DIR, HOMOLOGY_DBS
 
 
 @click.command("db-fetch", cls=PreformattedEpilogCommand)
@@ -19,7 +19,7 @@ from eukan.infra.databases import DATABASES, DEFAULT_DB_DIR
     show_default=True, help="Directory to download databases into.",
 )
 @optgroup.option(
-    "--homology-db", type=click.Choice(["uniprot", "kofam"], case_sensitive=False),
+    "--homology-db", type=click.Choice(HOMOLOGY_DBS, case_sensitive=False),
     default="uniprot", show_default=True,
     help="Which homology DB to fetch alongside Pfam. 'uniprot' downloads "
          "SwissProt; 'kofam' downloads the KOfam HMM profiles + ko_list "
