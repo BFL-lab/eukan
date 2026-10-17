@@ -20,7 +20,9 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from pathlib import Path
 
+import pyhmmer
 import pytest
 
 from eukan.functional import pipeline as fpipe
@@ -432,3 +434,22 @@ class TestManifestLocation:
         # A resume reads the same manifest back: an identical re-run is a no-op.
         fpipe.run_functional_annotation(cfg)
         assert counts == {"search": 1, "annotate_fasta": 1, "annotate_gff3": 1}
+
+
+# pyhmmer's bundled RRE family HMMs (10 models), unpressed and pressed.
+RREFAM = Path(pyhmmer.__file__).parent / "tests" / "data" / "hmms" / "txt" / "RREFam.hmm"
+PRESSED_RREFAM = RREFAM.parents[1] / "db" / "RREFam.hmm"
+
+
+@pytest.mark.skipif(not PRESSED_RREFAM.exists(), reason="pyhmmer installed without its test HMMs")
+class TestPfamLogLine:
+    @pytest.mark.parametrize(("db", "target"), [
+        (PRESSED_RREFAM, "10 profiles"), (RREFAM, "the unpressed HMMs"),
+    ], ids=["pressed", "unpressed"])
+    def test_names_what_hmmscan_scans(self, tmp_path, caplog, db, target):
+        proteins = tmp_path / "p.faa"
+        proteins.write_text(">q1\nMKVLAAGIVGLLLAGCSSQ\n>q2\nMSTNPKPQRKTKRNTNRRPQDVKFPGG\n")
+        with caplog.at_level(logging.INFO, logger="eukan.functional.pipeline"):
+            fpipe._run_pfam_hmmscan(proteins, db, 1, 1e-3)
+        assert f"Loading Pfam HMMs from {db}" in caplog.text
+        assert f"Running hmmscan (2 queries vs {target}, 1 CPUs)..." in caplog.text

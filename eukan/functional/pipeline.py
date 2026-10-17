@@ -29,6 +29,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import pyhmmer
+
 from eukan.functional.kofam import run_kofam_search
 from eukan.functional.search import (
     HitApplier,
@@ -147,11 +149,15 @@ def _run_pfam_hmmscan(
 ) -> HitResults:
     log.info("Loading proteome from %s", proteins)
     queries = _load_digital_sequences(proteins)
-    log.info(
-        "Running hmmscan (%d queries vs the Pfam HMMs in %s, %d CPUs)...",
-        len(queries), pfam_db, num_cpu,
-    )
+    log.info("Loading Pfam HMMs from %s", pfam_db)
     with _open_hmm_db(pfam_db) as profiles:
+        # A pressed database arrives as one block of profiles; hmmscan reads an
+        # unpressed one itself, so its size is not known here.
+        if isinstance(profiles, pyhmmer.plan7.OptimizedProfileBlock):
+            target = f"{len(profiles)} profiles"
+        else:
+            target = "the unpressed HMMs"
+        log.info("Running hmmscan (%d queries vs %s, %d CPUs)...", len(queries), target, num_cpu)
         return run_hmmscan_search(queries, profiles, num_cpu, evalue)
 
 
