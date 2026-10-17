@@ -3,6 +3,7 @@
 Reads the tool registry from tools.toml (via :mod:`tools_registry`) and
 verifies that each tool is installed, on PATH, and responds to a
 version/help probe. Also checks database integrity via the manifest.
+The report is rendered by :mod:`eukan.cli.check`.
 """
 
 from __future__ import annotations
@@ -74,6 +75,25 @@ class CheckResult:
     version_output: str
     env_ok: bool
     crash_signal: str | None = None
+
+    @property
+    def problems(self) -> list[str]:
+        """Why the tool is unusable, one reason per entry; empty when it is fine."""
+        problems = []
+        if not self.found:
+            problems.append(f"`{self.tool.binary}` not found on PATH")
+        elif self.crash_signal in _FATAL_SIGNALS:
+            problems.append(f"crashed with {self.crash_signal}")
+        elif not self.version_ok:
+            problems.append(f"version check failed: {self.version_output or 'no output'}")
+        if not self.env_ok:
+            missing = ", ".join(f"${v}" for v in _missing_env_vars(self.tool))
+            problems.append(f"env not set: {missing}")
+        return problems
+
+    @property
+    def ok(self) -> bool:
+        return not self.problems
 
 
 def check_tool(tool: Tool) -> CheckResult:
@@ -375,10 +395,7 @@ def run_checks(
 
     for tool in tools:
         result = check_tool(tool)
-        if result.found and result.version_ok and result.env_ok:
-            passed.append(result)
-        else:
-            failed.append(result)
+        (passed if result.ok else failed).append(result)
 
     # Database checks
     db_results: list[tuple[str, str, bool]] = []
@@ -391,108 +408,3 @@ def run_checks(
         db_results = check_databases(db_dir, homology_db=homology_db)
 
     return passed, failed, db_results, python_results
-
-
-# ---------------------------------------------------------------------------
-# Formatting
-# ---------------------------------------------------------------------------
-
-
-def format_results(
-    passed: list[CheckResult],
-    failed: list[CheckResult],
-    db_results: list[tuple[str, str, bool]] | None = None,
-    python_results: list[PythonCheckResult] | None = None,
-) -> str:
-    """Format check results as a human-readable report."""
-    lines: list[str] = []
-
-    # --- Python dependencies ---
-    if python_results:
-        py_ok = [pr for pr in python_results if pr.ok]
-        py_fail = [pr for pr in python_results if not pr.ok]
-
-        if py_ok:
-            lines.append(f"  {len(py_ok)} Python checks OK:")
-            for pr in py_ok:
-                lines.append(f"    \u2713 {pr.name:<30s} {pr.detail}")
-        if py_fail:
-            lines.append(f"\n  {len(py_fail)} Python checks FAILED:")
-            for pr in py_fail:
-                lines.append(f"    \u2717 {pr.name:<30s} {pr.detail}")
-        lines.append("")
-
-    # --- External tools ---
-    if passed:
-        lines.append(f"  {len(passed)} tools OK:")
-        for tr in passed:
-            lines.append(f"    \u2713 {tr.tool.name:<30s} {tr.version_output}")
-
-    if failed:
-        lines.append(f"\n  {len(failed)} tools MISSING or BROKEN:")
-        for tr in failed:
-            issues = []
-            if not tr.found:
-                issues.append(f"`{tr.tool.binary}` not found on PATH")
-            elif tr.crash_signal in _FATAL_SIGNALS:
-                issues.append(f"crashed with {tr.crash_signal}")
-            elif not tr.version_ok:
-                issues.append(f"version check failed: {tr.version_output or 'no output'}")
-            if not tr.env_ok:
-                missing = ", ".join(f"${v}" for v in _missing_env_vars(tr.tool))
-                issues.append(f"env not set: {missing}")
-            lines.append(f"    \u2717 {tr.tool.name:<30s} {'; '.join(issues)}")
-            lines.append(f"      used by: {', '.join(tr.tool.required_by)}")
-            if tr.tool.install_hint and not tr.found:
-                lines.append(f"      hint: {tr.tool.install_hint}")
-
-    total = len(passed) + len(failed)
-    lines.append(f"\n  Checked {total} external tools total.")
-
-    # When any tool died from a fatal signal, surface the CPU baseline so
-    # the user can see whether the binary is built for a newer CPU than
-    # they have. SIGILL on the same set of bioconda packages (augustus,
-    # spaln, STAR) is almost always a CPU baseline mismatch \u2014 bioconda
-    # ships x86-64-v3 (Haswell+) builds.
-    crashed = [tr for tr in failed if tr.crash_signal in _FATAL_SIGNALS]
-    if crashed:
-        baseline = cpu_baseline()
-        if baseline is not None:
-            level, _ = baseline
-            lines.append("")
-            lines.append(f"  CPU baseline: {level}")
-            sigill_tools = [tr.tool.name for tr in crashed if tr.crash_signal == "SIGILL"]
-            if sigill_tools and level in ("x86-64", "x86-64-v2"):
-                lines.append(
-                    "    SIGILL crashes typically mean the binary requires a newer"
-                )
-                lines.append(
-                    "    CPU baseline than this machine provides. Bioconda ships"
-                )
-                lines.append(
-                    "    x86-64-v3 (AVX2/FMA/BMI2) builds for many tools. To fix:"
-                )
-                lines.append(
-                    "    rebuild from source on this host, run inside Docker on a"
-                )
-                lines.append(
-                    "    newer CPU, or pin to an older bioconda build."
-                )
-
-    # --- Databases ---
-    if db_results:
-        lines.append("")
-        db_ok = [r for r in db_results if r[2]]
-        db_fail = [r for r in db_results if not r[2]]
-
-        if db_ok:
-            lines.append(f"  {len(db_ok)} databases OK:")
-            for name, msg, _ in db_ok:
-                lines.append(f"    \u2713 {name:<30s} {msg}")
-        if db_fail:
-            lines.append(f"\n  {len(db_fail)} databases MISSING or INVALID:")
-            for name, msg, _ in db_fail:
-                lines.append(f"    \u2717 {name:<30s} {msg}")
-            lines.append("      run: eukan db-fetch")
-
-    return "\n".join(lines)

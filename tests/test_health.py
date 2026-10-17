@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import eukan
+from eukan.cli.check import format_results
 from eukan.infra import health
 from eukan.infra.health import (
     PythonCheckResult,
@@ -13,7 +14,6 @@ from eukan.infra.health import (
     _crash_signal,
     check_tool,
     cpu_baseline,
-    format_results,
     run_checks,
 )
 from eukan.infra.tools_registry import EnvVarSpec, Tool, load_tools
