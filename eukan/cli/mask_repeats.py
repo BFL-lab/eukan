@@ -15,6 +15,7 @@ from eukan.cli._framework import (
     genome_option,
     numcpu_option,
 )
+from eukan.infra.layout import step_work_dir
 
 
 @click.command("mask-repeats", cls=PreformattedEpilogCommand)
@@ -48,10 +49,9 @@ def mask_repeats(**opts: Any) -> None:
     \b
     Pass the masked genome to `eukan annotate -g <stem>.masked.fasta`.
     """
-    from eukan.infra.layout import step_work_dir
-    from eukan.repeats import run_repeats
-    from eukan.repeats.pipeline import force_steps_from_run_flags
-    from eukan.settings import RepeatsConfig
+    from eukan.repeats import run_repeats  # lazy: startup cost
+    from eukan.repeats.pipeline import force_steps_from_run_flags  # lazy: startup cost
+    from eukan.settings import RepeatsConfig  # lazy: startup cost
 
     run_flags = {k: opts.pop(k) for k in list(opts) if k.startswith("run_") or k == "force"}
     config = RepeatsConfig(**drop_none(

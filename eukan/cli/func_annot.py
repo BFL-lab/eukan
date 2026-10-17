@@ -14,6 +14,7 @@ from eukan.cli._framework import (
     force_option,
     numcpu_option,
 )
+from eukan.infra.layout import step_work_dir
 
 
 @click.command("func-annot", cls=PreformattedEpilogCommand)
@@ -69,9 +70,8 @@ def func_annot(**opts: Any) -> None:
     and emits product=<KO definition>, ec_number=<EC>, Dbxref=KEGG:K...,
     inference=protein motif:KOFAM:K... when score >= the per-KO threshold.
     """
-    from eukan.functional import run_functional_annotation
-    from eukan.infra.layout import step_work_dir
-    from eukan.settings import FunctionalConfig
+    from eukan.functional import run_functional_annotation  # lazy: startup cost
+    from eukan.settings import FunctionalConfig  # lazy: startup cost
 
     if opts["proteins"] is None:
         raise click.UsageError(

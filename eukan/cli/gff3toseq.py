@@ -38,7 +38,7 @@ def gff3toseq(
     genome: Path, gff3: Path, output_format: str, output_file: IO[str], genetic_code: int,
 ) -> None:
     """Extract protein or cDNA sequences from GFF3 + genome."""
-    from eukan.gff.io import extract_sequences
+    from eukan.gff.io import extract_sequences  # lazy: startup cost
 
     for record in extract_sequences(gff3, genome, extract_to=output_format, genetic_code=genetic_code):
         output_file.write(record.format("fasta"))

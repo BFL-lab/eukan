@@ -7,6 +7,8 @@ resolves to :data:`cli` below.
 
 from __future__ import annotations
 
+import signal
+
 import click
 
 from eukan.cli._framework import (
@@ -48,11 +50,9 @@ def cli(verbose: bool, quiet: bool) -> None:
          eukan gff3toseq    Extract sequences from annotation
          eukan status       View progress of a pipeline run
     """
-    import signal
-
-    from eukan.infra.environ import configure_process_env
-    from eukan.infra.logging import setup_logging
-    from eukan.infra.runner import terminate_all_children
+    from eukan.infra.environ import configure_process_env  # lazy: startup cost
+    from eukan.infra.logging import setup_logging  # lazy: startup cost
+    from eukan.infra.runner import terminate_all_children  # lazy: startup cost
 
     verbosity = 1 if verbose else (-1 if quiet else 0)
     setup_logging(verbosity)

@@ -9,7 +9,8 @@ from typing import Any
 import click
 from click_option_group import optgroup
 
-from eukan.cli._framework import PreformattedEpilogCommand
+from eukan.cli._framework import PreformattedEpilogCommand, drop_none
+from eukan.infra.layout import step_work_dir
 
 
 @click.command("prep-submission", cls=PreformattedEpilogCommand)
@@ -111,10 +112,12 @@ def prep_submission(**opts: Any) -> None:
     Use --print-command to inspect the exact table2asn invocation, or
     --extra-args to append flags not exposed here.
     """
-    from eukan.cli._framework import drop_none
-    from eukan.infra.layout import step_work_dir
-    from eukan.settings import SubmissionConfig
-    from eukan.submission import run_prep_submission
+    from eukan.settings import SubmissionConfig  # lazy: startup cost
+    from eukan.submission import (  # lazy: startup cost
+        build_command,
+        run_prep_submission,
+        shell_repr,
+    )
 
     print_command = opts.pop("print_command")
     dry_run = opts.pop("dry_run")
@@ -127,7 +130,6 @@ def prep_submission(**opts: Any) -> None:
     sqn = run_prep_submission(config, print_only=print_command, dry_run=dry_run)
 
     if print_command:
-        from eukan.submission import build_command, shell_repr
         click.echo(shell_repr(build_command(config)))
         return
 

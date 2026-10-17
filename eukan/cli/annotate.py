@@ -16,6 +16,7 @@ from eukan.cli._framework import (
     genome_option,
     numcpu_option,
 )
+from eukan.infra.layout import step_work_dir
 
 
 @click.command(cls=PreformattedEpilogCommand, epilog=FULL_CODE_TABLE)
@@ -92,10 +93,9 @@ def annotate(**opts: Any) -> None:
     (FASTA, GFF3, RNA-seq hints) is discovered automatically. Use the override
     options to supply your own files or to replace the auto-discovered values.
     """
-    from eukan.annotation import run_annotation_pipeline
-    from eukan.annotation.pipeline import force_steps_from_run_flags
-    from eukan.infra.layout import step_work_dir
-    from eukan.settings import PipelineConfig
+    from eukan.annotation import run_annotation_pipeline  # lazy: startup cost
+    from eukan.annotation.pipeline import force_steps_from_run_flags  # lazy: startup cost
+    from eukan.settings import PipelineConfig  # lazy: startup cost
 
     run_flags = {k: opts.pop(k) for k in list(opts) if k.startswith("run_")}
     # Only pass fields explicitly set by the user; pydantic-settings

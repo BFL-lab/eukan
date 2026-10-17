@@ -44,7 +44,7 @@ def db_fetch(
     Use --database to fetch an explicit subset (e.g. -d pfam to refresh
     only Pfam, or -d kofam -d ko_list to fetch KOfam without touching Pfam).
     """
-    from eukan.functional.dbfetch import fetch_databases
+    from eukan.functional.dbfetch import fetch_databases  # lazy: startup cost
 
     fetch_databases(
         output_dir,

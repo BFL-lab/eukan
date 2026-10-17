@@ -15,6 +15,8 @@ The manifest enables:
 
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 import threading
 from datetime import UTC, datetime
@@ -153,7 +155,7 @@ def save_manifest(work_dir: Path, manifest: RunManifest) -> None:
 
     with _manifest_lock:
         try:
-            import fcntl
+            import fcntl  # lazy: absent on Windows, which falls back below
         except ImportError:
             _write_merged(work_dir, manifest)
             return
@@ -241,8 +243,6 @@ def get_or_create_manifest(work_dir: Path, config: Any = None) -> RunManifest:
 
 def _tool_versions_cache_path() -> Path:
     """Per-user cache file for the conda tool-version snapshot."""
-    import os
-
     base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
     return Path(base) / "eukan" / "tool-versions.json"
 
@@ -256,9 +256,6 @@ def _snapshot_tool_versions() -> dict[str, str]:
     manifest costs hundreds of milliseconds, and the result only changes
     when packages are installed or upgraded.
     """
-    import json
-    import os
-
     prefix = os.environ.get("CONDA_PREFIX", "")
     if not prefix:
         return {}

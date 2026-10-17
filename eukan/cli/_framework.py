@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import NoReturn
 
 import click
-from click_option_group import optgroup
+from click_option_group import OptionGroup, optgroup
 
+from eukan.exceptions import EukanError
 from eukan.infra.utils import available_cpus
 
 try:
@@ -45,7 +46,7 @@ def _resolve_epilog(value: str) -> str:
 
 
 def _full_code_table_text() -> str:
-    from Bio.Data import CodonTable
+    from Bio.Data import CodonTable  # lazy: startup cost
 
     lines = ["Genetic codes (NCBI translation tables):", ""]
     for cid, table in sorted(CodonTable.unambiguous_dna_by_id.items()):
@@ -87,8 +88,6 @@ class PreformattedEpilogCommand(click.Command):
                 formatter.write(f"  {line}\n")
 
     def format_options(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        from click_option_group import OptionGroup
-
         # Group help records into sections separated by option-group headers.
         sections: list[list[tuple[str, str]]] = [[]]
         for param in self.get_params(ctx):
@@ -135,7 +134,7 @@ class EukanGroup(click.Group):
         except click.exceptions.Abort:
             raise
         except Exception as exc:
-            from pydantic import ValidationError as PydanticValidationError
+            from pydantic import ValidationError as PydanticValidationError  # lazy: startup cost
 
             disk_full = _format_disk_full(exc)
             if disk_full is not None:
@@ -149,7 +148,6 @@ class EukanGroup(click.Group):
                     details.append(f"{loc}: {err['msg']}" if loc else err["msg"])
                 _fail("Error: invalid configuration", details, exc)
 
-            from eukan.exceptions import EukanError
             if not isinstance(exc, EukanError):
                 raise
 

@@ -17,6 +17,7 @@ from eukan.cli._framework import (
     genome_option,
     numcpu_option,
 )
+from eukan.infra.layout import step_work_dir
 
 
 @click.command(cls=PreformattedEpilogCommand, epilog=FULL_CODE_TABLE)
@@ -198,10 +199,9 @@ def assemble(**opts: Any) -> None:
     single-end reads (--single). If using paired-end reads, both --left
     and --right are required.
     """
-    from eukan.assembly import run_assembly
-    from eukan.assembly.pipeline import force_steps_from_run_flags
-    from eukan.infra.layout import step_work_dir
-    from eukan.settings import AssemblyConfig
+    from eukan.assembly import run_assembly  # lazy: startup cost
+    from eukan.assembly.pipeline import force_steps_from_run_flags  # lazy: startup cost
+    from eukan.settings import AssemblyConfig  # lazy: startup cost
 
     if not opts["left_reads"] and not opts["right_reads"] and not opts["single_reads"]:
         raise click.UsageError("Provide --left/--right (paired) or --single reads.")

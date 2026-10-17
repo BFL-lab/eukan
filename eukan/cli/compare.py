@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 
 import click
@@ -12,8 +13,6 @@ from eukan.cli._framework import PreformattedEpilogCommand
 
 def _derive_compare_labels(paths: tuple[Path, ...]) -> list[str]:
     """Default labels for --predicted: file stems, dedup'd by numeric suffix."""
-    from collections import Counter
-
     stems = [p.stem for p in paths]
     counts = Counter(stems)
     if all(c == 1 for c in counts.values()):
@@ -76,7 +75,7 @@ def compare(
     \b
     Use --output-file to write a per-feature TSV for further analysis.
     """
-    from eukan.compare import (
+    from eukan.compare import (  # lazy: startup cost
         compare_annotations,
         compare_multiple,
         format_multi_results,

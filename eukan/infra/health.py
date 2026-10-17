@@ -9,16 +9,19 @@ The report is rendered by :mod:`eukan.cli.check`.
 from __future__ import annotations
 
 import importlib
+import io
 import os
 import pkgutil
 import shutil
 import signal
 import subprocess
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import eukan
+from eukan.infra.environ import subprocess_env
 from eukan.infra.tools_registry import Tool, load_tools
 
 # ---------------------------------------------------------------------------
@@ -115,7 +118,6 @@ def check_tool(tool: Tool) -> CheckResult:
         # Use subprocess_env() so tools that depend on LD_LIBRARY_PATH
         # (e.g. fitild needs liblbfgs from $CONDA_PREFIX/lib) load their
         # shared libs without requiring the user to export LD_LIBRARY_PATH.
-        from eukan.infra.environ import subprocess_env
         result = subprocess.run(
             tool.version_cmd,
             capture_output=True,
@@ -287,8 +289,8 @@ def _check_module_imports() -> PythonCheckResult:
 
 
 def _probe_pyhmmer() -> str:
-    import pyhmmer.easel
-    import pyhmmer.hmmer
+    import pyhmmer.easel  # lazy: the import is part of the probe
+    import pyhmmer.hmmer  # lazy: the import is part of the probe
     alpha = pyhmmer.easel.Alphabet.amino()
     seq = pyhmmer.easel.TextSequence(
         name=b"test", sequence="MKFLILLFNILCLFPVLAADNH"
@@ -300,7 +302,7 @@ def _probe_pyhmmer() -> str:
 
 
 def _probe_gffutils() -> str:
-    import gffutils
+    import gffutils  # lazy: the import is part of the probe
     gff = "chr1\ttest\tgene\t100\t500\t.\t+\t.\tID=g1"
     db = gffutils.create_db(gff, ":memory:", from_string=True)
     genes = len(list(db.features_of_type("gene")))
@@ -310,11 +312,9 @@ def _probe_gffutils() -> str:
 
 
 def _probe_biopython() -> str:
-    import io
-
-    from Bio import SeqIO
-    from Bio.Seq import Seq
-    from Bio.SeqRecord import SeqRecord
+    from Bio import SeqIO  # lazy: the import is part of the probe
+    from Bio.Seq import Seq  # lazy: the import is part of the probe
+    from Bio.SeqRecord import SeqRecord  # lazy: the import is part of the probe
     record = SeqRecord(Seq("ATGAAATAA"), id="test")
     buf = io.StringIO()
     SeqIO.write(record, buf, "fasta")
@@ -326,9 +326,7 @@ def _probe_biopython() -> str:
 
 
 def _probe_pydantic_settings() -> str:
-    import tempfile
-
-    from eukan.settings import PipelineConfig
+    from eukan.settings import PipelineConfig  # lazy: the import is part of the probe
     with tempfile.NamedTemporaryFile(suffix=".fa") as f:
         config = PipelineConfig(genome=Path(f.name), proteins=[Path(f.name)])
     if config.num_cpu < 1:
@@ -337,7 +335,7 @@ def _probe_pydantic_settings() -> str:
 
 
 def _probe_scipy() -> str:
-    from scipy.optimize import linear_sum_assignment
+    from scipy.optimize import linear_sum_assignment  # lazy: the import is part of the probe
     _, cols = linear_sum_assignment([[1, 5], [4, 1]], maximize=True)
     if cols.tolist() != [1, 0]:
         raise RuntimeError(f"linear_sum_assignment returned {cols.tolist()}, expected [1, 0]")
@@ -403,6 +401,7 @@ def run_checks(
         s in ("func-annot", "annotate", "db-fetch") for s in subcommands
     )
     if db_relevant:
+        # lazy: dbfetch pulls in pyhmmer and requests, which the probes must be able to report broken
         from eukan.functional.dbfetch import check_databases
         db_dir = db_dir or Path("databases")
         db_results = check_databases(db_dir, homology_db=homology_db)
