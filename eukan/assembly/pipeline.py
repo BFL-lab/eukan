@@ -379,6 +379,7 @@ def run_assembly(
     force_steps: list[str] | None = None,
 ) -> None:
     """Run the assembly pipeline with manifest tracking."""
+    config.ensure_dirs()
     jaccard_on = config.jaccard_clip
     defuse_on = config.defuse and config.uniprot_db is not None
 

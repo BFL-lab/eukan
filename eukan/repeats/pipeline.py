@@ -83,6 +83,7 @@ def run_repeats(
     extra argument. This loop is a small custom driver around the same
     ``run_orchestrated_step`` primitive.
     """
+    config.ensure_dirs()
     manifest = get_or_create_manifest(config.manifest_dir, config)
     forced = set(force_steps or ())
 

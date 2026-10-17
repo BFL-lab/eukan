@@ -5,6 +5,10 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from eukan.annotation.pipeline import run_annotation_pipeline
+from eukan.assembly.pipeline import run_assembly
+from eukan.functional.pipeline import run_functional_annotation
+from eukan.repeats.pipeline import run_repeats
 from eukan.settings import (
     AssemblyConfig,
     FunctionalConfig,
@@ -13,6 +17,7 @@ from eukan.settings import (
     RepeatsConfig,
     SubmissionConfig,
 )
+from eukan.submission.pipeline import run_prep_submission
 
 
 class TestPipelineConfig:
@@ -360,3 +365,39 @@ class TestUnknownFields:
         monkeypatch.setenv("EUKAN_NO_SUCH_FIELD", "1")
         monkeypatch.setenv("EUKAN_ASSEMBLE_NUM_CPU", "3")
         PipelineConfig(genome="g.fa", proteins=["p.faa"], work_dir=tmp_path)
+
+
+_DRIVERS = [
+    (run_annotation_pipeline, PipelineConfig, {"genome": "g.fa", "proteins": ["p.faa"]}),
+    (run_assembly, AssemblyConfig, {"genome": "g.fa"}),
+    (run_repeats, RepeatsConfig, {"genome": "g.fa"}),
+    (run_functional_annotation, FunctionalConfig, {"proteins": "p.faa"}),
+    (run_prep_submission, SubmissionConfig, {"template": "t.sbt", "genome": "g.fa", "gff3": "a.gff3"}),
+]
+
+
+class TestRunDirs:
+    """Building a config creates nothing; each pipeline driver creates work_dir and
+    manifest_dir first (ensure_dirs), so a config built by a test or a health probe
+    leaves the filesystem alone."""
+
+    @pytest.mark.parametrize(("cls", "required"), [(cls, req) for _, cls, req in _DRIVERS])
+    def test_building_a_config_creates_nothing(self, tmp_path, cls, required):
+        config = cls(work_dir=tmp_path / "run" / "step", manifest_dir=tmp_path / "run", **required)
+        assert list(tmp_path.iterdir()) == []
+        config.ensure_dirs()
+        assert config.work_dir.is_dir()
+        assert config.manifest_dir.is_dir()
+
+    @pytest.mark.parametrize(("driver", "cls", "required"), _DRIVERS)
+    def test_drivers_create_the_dirs_first(self, tmp_path, monkeypatch, driver, cls, required):
+        # None of the inputs exist: a driver that read one first would fail on it.
+        class DirsCreated(Exception):
+            pass
+
+        def ensure_dirs(self):
+            raise DirsCreated
+
+        monkeypatch.setattr(cls, "ensure_dirs", ensure_dirs)
+        with pytest.raises(DirsCreated):
+            driver(cls(work_dir=tmp_path / "step", manifest_dir=tmp_path, **required))

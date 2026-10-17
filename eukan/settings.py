@@ -74,13 +74,15 @@ class _StepRunSettings(BaseSettings):
             data["manifest_dir"] = data.get("work_dir") or Path.cwd()
         return data
 
-    @model_validator(mode="after")
-    def _ensure_dirs_exist(self) -> _StepRunSettings:
-        # Each step's CLI now points work_dir at a subdir under cwd
-        # (e.g. ./annotate/, ./repeats/) which may not exist yet.
+    def ensure_dirs(self) -> None:
+        """Create work_dir and manifest_dir.
+
+        Building a config creates nothing; each pipeline driver calls this
+        first. The CLI points work_dir at a subdir under cwd (e.g. ./annotate/,
+        ./repeats/) which may not exist yet.
+        """
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self.manifest_dir.mkdir(parents=True, exist_ok=True)
-        return self
 
     @cached_property
     def genetic_code_obj(self):

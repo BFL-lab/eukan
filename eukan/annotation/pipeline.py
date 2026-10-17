@@ -126,6 +126,7 @@ def run_annotation_pipeline(
     Returns:
         Path to the final GFF3 output.
     """
+    config.ensure_dirs()
     validate_fasta(config.genome)
 
     # If the user ran `eukan mask-repeats` previously and is now passing the

@@ -118,6 +118,7 @@ def run_prep_submission(
         Path to the produced ``.sqn`` file (or the planned path under
         ``--print-command``/``--dry-run``).
     """
+    config.ensure_dirs()
     _, gff3, sqn = config.required_paths()
 
     if print_only:

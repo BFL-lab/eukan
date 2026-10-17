@@ -1027,6 +1027,7 @@ class TestMovedRunDir:
 
         run_a, run_b = tmp_path / "runA", tmp_path / "runB"
         cfg = config(run_a)
+        cfg.ensure_dirs()
         for name in ("g.fa", "l.fq", "r.fq"):
             (run_a / name).write_text("x")
         for spec in specs:

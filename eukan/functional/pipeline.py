@@ -220,6 +220,7 @@ def run_functional_annotation(
     config: FunctionalConfig, *, force: bool = False,
 ) -> None:
     """Run the full functional annotation pipeline."""
+    config.ensure_dirs()
     work_dir = config.work_dir
     # The manifest lives in manifest_dir (the run-dir root), shared with the other
     # pipelines; step outputs and sentinels stay under work_dir.
