@@ -143,7 +143,7 @@ def _emit_sj_and_hints(config: AssemblyConfig) -> None:
     if config.diagnose_softclips:
         run_softclip_diagnostic(wd / _BAM, config.genome, wd)
     write_intron_hints(sj, wd, "minimap2")
-    write_coverage_hints(wd / _BAM, wd)
+    write_coverage_hints(wd / _BAM, wd, config.num_cpu)
 
 
 def _minimap2_cmd(

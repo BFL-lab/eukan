@@ -170,16 +170,14 @@ def analyze_splice_sites(sj_file: Path, genome: Path, wd: Path) -> None:
         )
 
 
-def write_coverage_hints(bam: Path, wd: Path) -> None:
+def write_coverage_hints(bam: Path, wd: Path, num_cpu: int) -> None:
     """Write ``hints_coverage.gff``: AUGUSTUS exonpart hints from the BAM's per-strand
     read coverage (samtools view -> bam2wig -> wig2hints.pl)."""
+    # One pass splits the reads by strand: -U takes every read the 0x10 filter rejects.
     run_cmd(
-        ["samtools", "view", "-b", "-f", "0x10", str(bam)],
-        cwd=wd, out_file="cov_reverse.bam", binary=True,
-    )
-    run_cmd(
-        ["samtools", "view", "-b", "-F", "0x10", str(bam)],
-        cwd=wd, out_file="cov_forward.bam", binary=True,
+        ["samtools", "view", "-@", str(num_cpu), "-b", "-f", "0x10",
+         "-o", "cov_reverse.bam", "-U", "cov_forward.bam", str(bam)],
+        cwd=wd,
     )
 
     for direction, _strand, wig in [
