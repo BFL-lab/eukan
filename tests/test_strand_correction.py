@@ -185,6 +185,42 @@ def test_decide_ambiguous_left_alone(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# bam_to_transcript_gff3
+# --------------------------------------------------------------------------- #
+
+
+def test_bam_to_gff3_splits_at_intron(tmp_path):
+    bam = tmp_path / "tx.bam"
+    _make_bam(bam, [("q1", 0, 100, [(0, 10), (3, 50), (0, 10)], "A" * 20)])
+    out = tmp_path / "tx.gff3"
+    assert sc.bam_to_transcript_gff3(bam, out, "trinity-denovo.genome") == 1
+    (m,) = _parse_transcript_models(out)
+    assert m.exons == [(101, 110), (161, 170)]
+    assert m.strand == "+"
+
+
+def test_bam_to_gff3_minus_strand(tmp_path):
+    bam = tmp_path / "tx.bam"
+    _make_bam(bam, [("q1", 16, 100, [(0, 10), (3, 50), (0, 10)], "A" * 20)])
+    out = tmp_path / "tx.gff3"
+    sc.bam_to_transcript_gff3(bam, out, "trinity-denovo.genome")
+    (m,) = _parse_transcript_models(out)
+    assert m.strand == "-" and m.exons == [(101, 110), (161, 170)]
+
+
+def test_bam_to_gff3_unique_ids_for_multimaps(tmp_path):
+    bam = tmp_path / "tx.bam"
+    _make_bam(bam, [
+        ("q1", 0, 100, [(0, 20)], "A" * 20),
+        ("q1", 256, 500, [(0, 20)], "A" * 20),  # secondary: a second locus
+    ])
+    out = tmp_path / "tx.gff3"
+    assert sc.bam_to_transcript_gff3(bam, out, "trinity-gg.genome") == 2
+    ids = {m.tid for m in _parse_transcript_models(out)}
+    assert ids == {"q1.m1", "q1.m2"}  # no Parent collision → loci stay distinct
+
+
+# --------------------------------------------------------------------------- #
 # run_strand_correction
 # --------------------------------------------------------------------------- #
 

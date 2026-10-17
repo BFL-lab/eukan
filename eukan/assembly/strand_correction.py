@@ -41,9 +41,10 @@ import csv
 from collections import Counter
 from pathlib import Path
 
-from eukan.assembly.bam_reads import dinucleotide
+import pysam
+
+from eukan.assembly.bam_reads import REF_CONSUMING, dinucleotide
 from eukan.assembly.diamond import coding_strand, run_blastx
-from eukan.assembly.sl_cut import bam_to_transcript_gff3
 from eukan.assembly.tracks import (
     GENOME_BAM_SUFFIX,
     RAW_GFF3,
@@ -51,7 +52,7 @@ from eukan.assembly.tracks import (
     TRANSCRIPT_SETS,
     mapped_transcript_stems,
 )
-from eukan.gff.transcripts import Transcript, read_transcripts, write_transcripts
+from eukan.gff.transcripts import Transcript, read_transcripts, write_transcript, write_transcripts
 from eukan.infra.genome import ContigIndex, reverse_complement
 from eukan.infra.logging import get_logger
 from eukan.settings import AssemblyConfig
@@ -173,6 +174,64 @@ def _decide(
     if new == tx.strand:
         return new, "keep"
     return new, ("assign" if tx.strand not in ("+", "-") else "flip")
+
+
+# ---------------------------------------------------------------------------
+# Trinity transcript->genome BAM -> models
+# ---------------------------------------------------------------------------
+
+# Ref-consuming CIGAR ops that stay within one exon block (N splits exons).
+_EXON_REF = REF_CONSUMING - {pysam.CREF_SKIP}
+
+
+def _alignment_exons(read: pysam.AlignedSegment) -> list[tuple[int, int]]:
+    """Genomic 1-based exon blocks for one alignment (split at CIGAR N)."""
+    cigar = read.cigartuples
+    if cigar is None:
+        return []
+    blocks: list[tuple[int, int]] = []
+    cur_start = read.reference_start  # 0-based
+    pos = cur_start
+    for op, length in cigar:
+        if op == pysam.CREF_SKIP:
+            blocks.append((cur_start + 1, pos))
+            pos += length
+            cur_start = pos
+        elif op in _EXON_REF:
+            pos += length
+    blocks.append((cur_start + 1, pos))
+    return [b for b in blocks if b[1] >= b[0]]
+
+
+def bam_to_transcript_gff3(bam_path: Path, out_gff: Path, source: str) -> int:
+    """Stream one mRNA per mapped alignment (exons from CIGAR N) to *out_gff*.
+
+    Each alignment gets a unique mRNA id (``<qname>.m<n>``) — an aligner reporting
+    a transcript at every locus it maps to would otherwise collide ids, and combinr
+    groups exons by ``Parent``, silently fusing distinct loci. Secondary alignments
+    are kept (extra loci of multi-copy genes); supplementary/unmapped are skipped.
+    Writes incrementally so a genome-wide BAM never builds a full in-memory list.
+    """
+    seen: Counter[str] = Counter()
+    n = 0
+    with pysam.AlignmentFile(str(bam_path), "rb") as bam, open(out_gff, "w") as fh:
+        fh.write("##gff-version 3\n")
+        for read in bam:
+            if read.is_unmapped or read.is_supplementary or read.cigartuples is None:
+                continue
+            chrom = read.reference_name
+            if chrom is None:
+                continue
+            exons = _alignment_exons(read)
+            if not exons:
+                continue
+            qname = read.query_name or "tx"
+            seen[qname] += 1
+            strand = "-" if read.is_reverse else "+"
+            write_transcript(fh, Transcript(f"{qname}.m{seen[qname]}", chrom, strand, source,
+                                            exons))
+            n += 1
+    return n
 
 
 # ---------------------------------------------------------------------------
