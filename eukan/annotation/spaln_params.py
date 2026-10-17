@@ -16,7 +16,7 @@ from pathlib import Path
 
 from eukan.exceptions import ExternalToolError
 from eukan.infra.logging import get_logger
-from eukan.infra.runner import run_cmd, run_shell
+from eukan.infra.runner import run_cmd
 from eukan.infra.utils import symlink
 from eukan.settings import PipelineConfig
 
@@ -115,14 +115,14 @@ def build_ssp(config: PipelineConfig, sdir: Path) -> str:
     # requires the fitild binary; if fitild is absent the script exits 1
     # but the critical output (Splice3/5, IntronPotTab) from levels 9 and
     # 13 has already been written.  We therefore tolerate a non-zero exit
-    # code as long as the required files were produced.
-    # Run via shell to ensure Perl's system() calls and shell redirects
-    # inside make_ssp.pl work correctly.
+    # code as long as the required files were produced. No outer shell is
+    # needed: Perl hands its own system() strings, redirects included, to
+    # /bin/sh.
     with contextlib.suppress(ExternalToolError):
         # check for output files below — non-zero exit is tolerated when
         # the level 9/13 outputs (Splice3/5, IntronPotTab) were produced
-        run_shell(
-            f"perl {_make_ssp} -d{genome_name} -S {transcript_name}.eij",
+        run_cmd(
+            ["perl", _make_ssp, f"-d{genome_name}", "-S", f"{transcript_name}.eij"],
             cwd=ssp_dir,
         )
 

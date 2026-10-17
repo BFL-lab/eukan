@@ -50,7 +50,7 @@ def _signal_group(proc: subprocess.Popen, sig: int) -> None:
 
 @contextmanager
 def _tracked_popen(
-    cmd: list[str] | str,
+    cmd: list[str],
     *,
     cwd: Path,
     env: dict[str, str] | None,
@@ -281,45 +281,3 @@ def run_piped(
 
     return output
 
-
-def run_shell(
-    cmd_str: str,
-    *,
-    cwd: Path,
-) -> subprocess.CompletedProcess:
-    """Run a shell command string with proper error handling.
-
-    Use this only when the command requires shell features (redirections,
-    pipes built by external tools, etc.) that cannot be expressed as a
-    list.  Prefer :func:`run_cmd` wherever possible.
-
-    Raises:
-        ExternalToolError: If the command exits non-zero.
-    """
-    log.debug("Running (shell): %s (cwd=%s)", cmd_str, cwd)
-
-    with _tracked_popen(
-        cmd_str, cwd=cwd, env=_subprocess_env(),
-        shell=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        errors="replace",
-    ) as proc:
-        stdout, stderr = proc.communicate()
-
-    if stderr:
-        log.debug("stderr (shell):\n%s", stderr)
-
-    if proc.returncode != 0:
-        tool = cmd_str.split()[0] if cmd_str.strip() else "shell"
-        log.error("Shell command failed (exit %d): %s", proc.returncode, cmd_str[:200])
-        raise ExternalToolError(
-            f"Shell command failed (exit {proc.returncode})",
-            tool=tool,
-            returncode=proc.returncode,
-            cmd=[cmd_str],
-            stderr_snippet=stderr,
-        )
-
-    return subprocess.CompletedProcess(
-        args=cmd_str, returncode=proc.returncode, stdout=stdout, stderr=stderr,
-    )
