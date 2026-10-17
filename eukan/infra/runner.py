@@ -128,7 +128,6 @@ def run_cmd(
     cwd: Path,
     in_file: str | None = None,
     out_file: str | None = None,
-    binary: bool = False,
     extra_env: dict[str, str] | None = None,
 ) -> None:
     """Run an external command safely.
@@ -143,8 +142,6 @@ def run_cmd(
             within *cwd* via the child's fd (no in-process capture);
             otherwise stdout goes to ``/dev/null``. Stdout is never
             captured, so nothing is returned.
-        binary: Read the child's stderr as bytes and decode it here,
-            instead of opening the pipe in text mode.
         extra_env: Additional environment variables merged on top of
             the current environment for this subprocess only.
 
@@ -168,12 +165,7 @@ def run_cmd(
         tool = _tool_name(cmd)
         # External tools occasionally emit non-UTF-8 bytes on stderr (e.g.
         # AUGUSTUS surfaces raw locale-encoded bytes from its C++ layer); a
-        # strict decoder would crash before we ever see the message. errors
-        # only applies in text mode — pass it only when text=True; binary
-        # mode reads raw bytes, decoded the same way below.
-        text_kwargs: dict[str, object] = (
-            {"text": True, "errors": "replace"} if not binary else {"text": False}
-        )
+        # strict decoder would crash before we ever see the message.
         with _tracked_popen(
             cmd,
             cwd=cwd,
@@ -182,11 +174,11 @@ def run_cmd(
             stdin=stdin_target,
             stdout=stdout_target,
             stderr=subprocess.PIPE,
-            **text_kwargs,
+            text=True,
+            errors="replace",
         ) as proc:
-            _, stderr = proc.communicate()
+            _, stderr_text = proc.communicate()
 
-    stderr_text = stderr if isinstance(stderr, str) else stderr.decode(errors="replace")
     if stderr_text:
         log.debug("stderr from %s:\n%s", tool, stderr_text)
 
