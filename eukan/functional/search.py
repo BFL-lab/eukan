@@ -32,9 +32,14 @@ class HitInfo(TypedDict, total=False):
 
 
 # E-value at or below which an hmmscan/phmmer hit is treated as a confident
-# ("good") functional assignment; above it the hit is marginal (e.g. product
-# falls back to "hypothetical protein").
+# ("good") functional assignment in the annotated GFF3; above it the hit is
+# marginal (e.g. product falls back to "hypothetical protein").
 _EVALUE_GOOD_HIT = 1e-2
+
+# The annotated FASTA headers are stricter: from this E-value up a UniProt hit
+# reads "hypothetical protein [<description>]" and a Pfam hit
+# "<description> [marginal domain hit]".
+_EVALUE_MARGINAL_IN_FASTA = 1e-3
 
 _PFAM_VERSION_RE = re.compile(r"\.\d+$")
 
@@ -219,7 +224,7 @@ def _format_hits(results: HitResults, format_hit: HitFormatter) -> dict[str, str
 def _format_evalue_hit(hit_id: str, info: HitInfo, marginal_label: str) -> str:
     """A UniProt or Pfam hit; a marginal one's description becomes ``marginal_label``."""
     desc, ev = info["description"], info["evalue"]
-    if ev >= 1e-3:
+    if ev >= _EVALUE_MARGINAL_IN_FASTA:
         desc = marginal_label.format(desc=desc)
     return f"{hit_id}: {desc} ({ev:.2e})"
 
