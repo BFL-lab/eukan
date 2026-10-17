@@ -460,6 +460,6 @@ def validate_test_data(output_dir: Path) -> list[tuple[str, str, bool]]:
         if old_files > 0:
             results.append(("reads", "found _1/_3 files (need _1/_2 pairs — delete and re-download)", False))
         else:
-            results.append(("reads", "no FASTQ files found (run: eukan dev setup-test-data)", False))
+            results.append(("reads", "no FASTQ files found (run: python tests/run_pipeline.py setup-test-data)", False))
 
     return results
