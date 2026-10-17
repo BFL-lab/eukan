@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pysam
 
+from eukan.assembly import diamond
 from eukan.assembly import strand_correction as sc
 from eukan.gff.transcripts import Transcript as _Tx
 from eukan.gff.transcripts import read_transcripts as _parse_transcript_models
@@ -74,15 +75,6 @@ def test_parse_hits(tmp_path):
         "shortrow\n"
     )
     assert sc.parse_hits(p) == {"trinity-gg.genome:T1": 2, "trinity-denovo.genome:N2": -3}
-
-
-def test_coding_strand():
-    assert sc._coding_strand("+", 2) == "+"
-    assert sc._coding_strand("+", -1) == "-"
-    assert sc._coding_strand("-", 1) == "-"   # reverse-labelled query, forward frame
-    assert sc._coding_strand("-", -2) == "+"  # antisense-assembled rescue
-    assert sc._coding_strand(".", 3) == "+"   # '.' stitched forward, like '+'
-    assert sc._coding_strand(".", -3) == "-"
 
 
 def test_introns_of():
@@ -227,7 +219,7 @@ def test_run_corrects_strands(tmp_path, monkeypatch):
                 "trinity-gg.genome:T_antisense\tsp|P2\t140.0\t-1\n"      # reverse on '-' -> flip '+'
             )
 
-    monkeypatch.setattr(sc, "run_cmd", fake_run_cmd)
+    monkeypatch.setattr(diamond, "run_cmd", fake_run_cmd)
 
     config = _config(tmp_path, uniprot_db=tmp_path / "db.dmnd", min_strand_consensus=1)
     sc.run_strand_correction(config)
@@ -259,7 +251,7 @@ def test_run_converts_denovo_bam_then_gates_on_no_uniprot(tmp_path, monkeypatch)
         [("q1", 0, 100, [(0, 10), (3, 50), (0, 10)], "A" * 20)],
     )
     called: list[list[str]] = []
-    monkeypatch.setattr(sc, "run_cmd", lambda cmd, **kw: called.append(cmd))
+    monkeypatch.setattr(diamond, "run_cmd", lambda cmd, **kw: called.append(cmd))
 
     config = _config(tmp_path, uniprot_db=None)  # disabled
     sc.run_strand_correction(config)
@@ -274,7 +266,7 @@ def test_run_clears_stale_stranded_on_noop(tmp_path, monkeypatch):
     """A no-op run removes prior *.stranded.gff3 for BOTH Trinity tracks so sl_cut
     falls back to the fresh raw genome GFF3 instead of a stale stranded file from a
     run that had --uniprot."""
-    monkeypatch.setattr(sc, "run_cmd", lambda cmd, **kw: None)
+    monkeypatch.setattr(diamond, "run_cmd", lambda cmd, **kw: None)
     (tmp_path / "trinity-gg.genome.stranded.gff3").write_text("##gff-version 3\n")
     (tmp_path / "trinity-denovo.genome.stranded.gff3").write_text("##gff-version 3\n")
 
@@ -291,7 +283,7 @@ def test_run_gates_on_strand_specific(tmp_path, monkeypatch):
         _gtf_tx("chrA", "T1", "+", [(1, 40), (51, 90)])
     )
     called: list[list[str]] = []
-    monkeypatch.setattr(sc, "run_cmd", lambda cmd, **kw: called.append(cmd))
+    monkeypatch.setattr(diamond, "run_cmd", lambda cmd, **kw: called.append(cmd))
 
     config = _config(tmp_path, uniprot_db=tmp_path / "db.dmnd", strand_specific="RF")
     sc.run_strand_correction(config)

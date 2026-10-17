@@ -11,7 +11,7 @@ This is :mod:`eukan.assembly.jaccard` with a *homology* clip signal instead of a
 *read-coverage* one: it reuses the shared exon split
 (:func:`eukan.gff.transcripts.split_at`) and writer, feeding it spliced cut offsets
 derived from the inter-hit gaps rather than read-pair troughs. Each split piece takes the
-coding strand implied by the hit inside it (:func:`strand_correction._coding_strand`),
+coding strand implied by the hit inside it (:func:`eukan.assembly.diamond.coding_strand`),
 so an opposite-strand fusion is re-oriented correctly.
 
 Runs **after** ``strand_correct`` (so it splits the homology-stranded models) and
@@ -31,17 +31,11 @@ from typing import TextIO
 
 import pysam
 
-from eukan.assembly.strand_correction import (
-    _DIAMOND_BLOCK_SIZE,
-    _DIAMOND_INDEX_CHUNKS,
-    _coding_strand,
-    _resolve_diamond_db,
-)
+from eukan.assembly.diamond import coding_strand, run_blastx
 from eukan.assembly.tracks import DEFUSE_GFF3, RAW_GFF3, STRANDED_GFF3, mapped_transcript_stems
-from eukan.gff.transcripts import Transcript, read_transcripts, split_at, stitch, write_transcripts
+from eukan.gff.transcripts import Transcript, read_transcripts, split_at, write_transcripts
 from eukan.infra.genome import ContigIndex
 from eukan.infra.logging import get_logger
-from eukan.infra.runner import run_cmd
 from eukan.settings import AssemblyConfig
 
 log = get_logger(__name__)
@@ -133,7 +127,7 @@ def _piece_strand(label: str, chosen: list[_Hit], lo: int, hi: int) -> str:
         ov = min(hi, h.qhi) - max(lo, h.qlo) + 1
         if ov > best_ov:
             best_ov, best = ov, h
-    return _coding_strand(label, best.qframe) if best is not None else label
+    return coding_strand(label, best.qframe) if best is not None else label
 
 
 def split_fused(
@@ -254,31 +248,13 @@ def run_defuse(config: AssemblyConfig) -> None:
         return
 
     models_by_tag = {tag: read_transcripts(inp) for tag, inp, _ in sets}
-    db = _resolve_diamond_db(config)
-
-    query = wd / _QUERY_FASTA
-    with ContigIndex(config.genome) as contigs, open(query, "w") as fh:
-        for tag, models in models_by_tag.items():
-            for tx in sorted(models, key=lambda t: (t.chrom, t.exons[0][0])):
-                fh.write(f">{tag}:{tx.tid}\n{stitch(tx, contigs)}\n")
-
-    run_cmd(
-        ["diamond", "blastx",
-         "--db", db,
-         "--query", str(query),
-         "--out", str(wd / _HITS_TSV),
-         "--ultra-sensitive",
-         "--strand", "both",
-         "--query-gencode", str(config.genetic_code_obj.ncbi_id),
-         "--evalue", f"{config.defuse_blastx_evalue:g}",
-         "--max-target-seqs", "25",
-         "--outfmt", "6", "qseqid", "sseqid", "qstart", "qend", "bitscore", "qframe",
-         "--block-size", _DIAMOND_BLOCK_SIZE,
-         "--index-chunks", _DIAMOND_INDEX_CHUNKS,
-         "--threads", str(config.num_cpu),
-         "--quiet"],
-        cwd=wd,
-    )
+    with ContigIndex(config.genome) as contigs:
+        run_blastx(
+            config, models_by_tag, contigs, wd / _QUERY_FASTA, wd / _HITS_TSV,
+            evalue=config.defuse_blastx_evalue, max_target_seqs=25,
+            fields=("qseqid", "sseqid", "qstart", "qend", "bitscore", "qframe"),
+            ultra_sensitive=True,
+        )
 
     hits_by_query = parse_positional_hits(wd / _HITS_TSV)
     bam = _open_indexed_bam(wd / config.aligner_bam)

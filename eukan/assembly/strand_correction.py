@@ -38,11 +38,11 @@ which fits the one-strand-per-transcript model output.
 from __future__ import annotations
 
 import csv
-import os
 from collections import Counter
 from pathlib import Path
 
 from eukan.assembly.bam_reads import dinucleotide
+from eukan.assembly.diamond import coding_strand, run_blastx
 from eukan.assembly.sl_cut import bam_to_transcript_gff3
 from eukan.assembly.tracks import (
     GENOME_BAM_SUFFIX,
@@ -51,10 +51,9 @@ from eukan.assembly.tracks import (
     TRANSCRIPT_SETS,
     mapped_transcript_stems,
 )
-from eukan.gff.transcripts import Transcript, read_transcripts, stitch, write_transcripts
+from eukan.gff.transcripts import Transcript, read_transcripts, write_transcripts
 from eukan.infra.genome import ContigIndex, reverse_complement
 from eukan.infra.logging import get_logger
-from eukan.infra.runner import run_cmd
 from eukan.settings import AssemblyConfig
 
 log = get_logger(__name__)
@@ -62,11 +61,6 @@ log = get_logger(__name__)
 _QUERY_FASTA = "strand_query.fasta"
 _HITS_TSV = "strand_blastx.tsv"
 _AUDIT_TSV = "strand_correction.tsv"
-
-# diamond memory caps for the 15 GB / 0-swap box (block-size in billions of query
-# letters; index-chunks splits the reference load).
-_DIAMOND_BLOCK_SIZE = "1.0"
-_DIAMOND_INDEX_CHUNKS = "4"
 
 # Fallback consensus when too few confirmed introns calibrate one. The canonical
 # pair is always strand-informative (GT-AG on +genome => + coding; its +genome
@@ -102,19 +96,6 @@ def parse_hits(path: Path) -> dict[str, int]:
             if qid not in best or bitscore > best[qid][0]:
                 best[qid] = (bitscore, qframe)
     return {qid: qframe for qid, (_bs, qframe) in best.items()}
-
-
-def _coding_strand(label: str, qframe: int) -> str:
-    """The coding strand implied by a blastx hit's query frame on a labelled query.
-
-    The query was stitched in its labelled orientation (``.`` forward, like ``+``),
-    so a positive ``qframe`` means that orientation is coding and a negative one
-    means its reverse complement is. Returns ``"+"`` or ``"-"``.
-    """
-    base = label if label in ("+", "-") else "+"
-    if qframe > 0:
-        return base
-    return "-" if base == "+" else "+"
 
 
 def introns_of(exons: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -195,38 +176,6 @@ def _decide(
 
 
 # ---------------------------------------------------------------------------
-# diamond DB resolution
-# ---------------------------------------------------------------------------
-
-
-def _resolve_diamond_db(config: AssemblyConfig) -> str:
-    """Return the diamond ``--db`` base (no ``.dmnd``); build it from a FASTA if needed.
-
-    A ``.dmnd`` path is used directly. A FASTA is compiled with ``diamond makedb``,
-    cached as ``<stem>.dmnd`` beside the FASTA when that dir is writable, else in the
-    work dir, and reused while it is at least as new as the source.
-    """
-    src = config.uniprot_db
-    assert src is not None  # gated by the caller
-    if src.suffix == ".dmnd":
-        return str(src.with_suffix(""))  # diamond --db wants the base name
-
-    base = src.with_suffix("")
-    out = Path(f"{base}.dmnd")
-    if not (src.parent.exists() and os.access(src.parent, os.W_OK)):
-        base = config.work_dir / "uniprot_sprot"
-        out = Path(f"{base}.dmnd")
-    if not (out.exists() and out.stat().st_mtime >= src.stat().st_mtime):
-        log.info("Building diamond DB %s from %s ...", out.name, src.name)
-        run_cmd(
-            ["diamond", "makedb", "--in", str(src), "--db", str(base),
-             "--threads", str(config.num_cpu), "--quiet"],
-            cwd=config.work_dir,
-        )
-    return str(base)
-
-
-# ---------------------------------------------------------------------------
 # Step entry point
 # ---------------------------------------------------------------------------
 
@@ -277,32 +226,14 @@ def run_strand_correction(config: AssemblyConfig) -> None:
         return
     models_by_tag = {tag: read_transcripts(inp) for tag, inp, _ in sets}
 
-    db = _resolve_diamond_db(config)
-
     with ContigIndex(config.genome) as contigs:
         # 4. Both-strand blastx -> per-hit query frame -> the coding strand of each
         #    confirmed transcript (positive frame = label is coding, negative = its
         #    reverse complement is). This both confirms and flips labels.
-        query = wd / _QUERY_FASTA
-        with open(query, "w") as fh:
-            for tag, models in models_by_tag.items():
-                for tx in sorted(models, key=lambda t: (t.chrom, t.exons[0][0])):
-                    fh.write(f">{tag}:{tx.tid}\n{stitch(tx, contigs)}\n")
-        run_cmd(
-            ["diamond", "blastx",
-             "--db", db,
-             "--query", str(query),
-             "--out", str(wd / _HITS_TSV),
-             "--strand", "both",
-             "--query-gencode", str(config.genetic_code_obj.ncbi_id),
-             "--evalue", f"{config.strand_blastx_evalue:g}",
-             "--max-target-seqs", "1",
-             "--outfmt", "6", "qseqid", "sseqid", "bitscore", "qframe",
-             "--block-size", _DIAMOND_BLOCK_SIZE,
-             "--index-chunks", _DIAMOND_INDEX_CHUNKS,
-             "--threads", str(config.num_cpu),
-             "--quiet"],
-            cwd=wd,
+        run_blastx(
+            config, models_by_tag, contigs, wd / _QUERY_FASTA, wd / _HITS_TSV,
+            evalue=config.strand_blastx_evalue, max_target_seqs=1,
+            fields=("qseqid", "sseqid", "bitscore", "qframe"),
         )
         frames = parse_hits(wd / _HITS_TSV)
         coding: dict[str, str] = {}
@@ -310,7 +241,7 @@ def run_strand_correction(config: AssemblyConfig) -> None:
             for tx in models:
                 qid = f"{tag}:{tx.tid}"
                 if qid in frames:
-                    coding[qid] = _coding_strand(tx.strand, frames[qid])
+                    coding[qid] = coding_strand(tx.strand, frames[qid])
 
         # 5. Learn the dominant splice consensus from confirmed introns, read on the
         #    homology-determined coding strand (not the original label).
