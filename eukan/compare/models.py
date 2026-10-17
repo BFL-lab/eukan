@@ -249,6 +249,11 @@ class ComparisonResult:
     # may override with a user-supplied label.
     label: str = ""
 
+    @property
+    def subfeature_stats(self) -> tuple[SubfeatureStats, SubfeatureStats, SubfeatureStats]:
+        """The mRNA, CDS and intron stats, in report order."""
+        return self.mrna_stats, self.cds_stats, self.intron_stats
+
 
 # ---------------------------------------------------------------------------
 # Multi-prediction result
