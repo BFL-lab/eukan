@@ -38,7 +38,8 @@ channels:
   - defaults
 
 dependencies:
-  # Python
+  # Python. Capped below 3.13 because bioconda's codingquarry 2.0 has no
+  # Python 3.13 build (checked 2026-10-16); eukan itself runs on 3.13 (CI).
   - python>=3.11,<3.13
 
   # External tools
