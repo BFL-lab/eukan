@@ -12,8 +12,7 @@ from pathlib import Path
 
 import gffutils
 
-from eukan.gff import create_gff_db
-from eukan.gff._compat import empty_db
+from eukan.gff import create_gff_db, create_gff_db_from_features
 from eukan.gff.intervals import IntervalIndex
 from eukan.gff.io import count_gff3_features, featuredb2gff3_file
 from eukan.infra.logging import get_logger
@@ -274,7 +273,7 @@ def _concordant_models(
         except gffutils.FeatureNotFoundError:
             continue
 
-    return create_gff_db(features) if features else empty_db()
+    return create_gff_db_from_features(features)
 
 
 def find_concordant_models(
@@ -332,7 +331,7 @@ def combine_nonredundant_models(
             all_features.extend(db.children(gene))
 
     log.debug("Combined %d non-redundant gene models from %d sources", len(seen_ids), len(feature_dbs))
-    return create_gff_db(all_features) if all_features else empty_db()
+    return create_gff_db_from_features(all_features)
 
 
 # ---------------------------------------------------------------------------
