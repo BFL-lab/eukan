@@ -16,7 +16,7 @@ from Bio.Data import CodonTable
 from eukan.gff import create_gff_db
 from eukan.gff.concordance import merge_fully_overlapping_transcript_genes
 from eukan.gff.io import iter_assembled_sequences
-from eukan.gff.transforms import _swap_id_kind, derived_feature, gff3_it
+from eukan.gff.transforms import derived_feature, gff3_it, swap_id_kind
 
 # ---------------------------------------------------------------------------
 # Sequence extraction from FeatureDB
@@ -133,7 +133,7 @@ def _make_cds_from_exon(
 ) -> gffutils.Feature:
     """Create a CDS feature derived from an exon."""
     attrs = dict(exon.attributes)
-    attrs["ID"] = [_swap_id_kind(exon.attributes["ID"][0], "exon", "CDS")]
+    attrs["ID"] = [swap_id_kind(exon.attributes["ID"][0], "exon", "CDS")]
     return derived_feature(
         exon, "CDS", attrs, frame=phase, start=start, end=end,
     )

@@ -6,7 +6,7 @@ from collections.abc import Iterator
 
 import gffutils
 
-from eukan.gff.transforms import _swap_id_kind, derived_feature
+from eukan.gff.transforms import derived_feature, swap_id_kind
 
 # ---------------------------------------------------------------------------
 # Feature hierarchy completion
@@ -38,7 +38,7 @@ def add_missing_feats_to_gff3(
         for exon in gff3.features_of_type("exon"):
             phase = (exon.start - 1) % 3 if exon.strand == "-" else (exon.end + 1) % 3
             attrs = dict(exon.attributes)
-            attrs["ID"] = [_swap_id_kind(exon.id, "exon", "CDS")]
+            attrs["ID"] = [swap_id_kind(exon.id, "exon", "CDS")]
             yield derived_feature(exon, "CDS", attrs, frame=phase)
 
     # CDS but no exon → derive exons from CDS
@@ -46,7 +46,7 @@ def add_missing_feats_to_gff3(
         for cds in gff3.features_of_type("CDS"):
             cds_id = cds.attributes["ID"][0]
             attrs = dict(cds.attributes)
-            attrs["ID"] = [_swap_id_kind(cds_id, r"CDS|cds", "exon")]
+            attrs["ID"] = [swap_id_kind(cds_id, r"CDS|cds", "exon")]
             yield derived_feature(cds, "exon", attrs)
 
 

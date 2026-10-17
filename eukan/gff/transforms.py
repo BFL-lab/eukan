@@ -3,7 +3,7 @@
 Transform callbacks here are tool-agnostic — anything specific to a
 particular gene predictor lives next to that tool's wrapper in
 ``annotation/<tool>.py``. The two shared helpers (``derived_feature``,
-``_swap_id_kind``) underlie both :mod:`eukan.gff.hierarchy` and the
+``swap_id_kind``) underlie both :mod:`eukan.gff.hierarchy` and the
 ORF coordinate mapping in :mod:`eukan.annotation.orf`.
 """
 
@@ -89,7 +89,7 @@ def derived_feature(
     )
 
 
-def _swap_id_kind(feature_id: str, from_kind: str, to_kind: str) -> str:
+def swap_id_kind(feature_id: str, from_kind: str, to_kind: str) -> str:
     """Replace a feature-kind token in an ID, falling back to a suffix.
 
     e.g. ``exon1`` → ``CDS1``; ``g1`` (no match) → ``g1:CDS``.
