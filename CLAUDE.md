@@ -83,6 +83,7 @@ eukan/
 │   ├── health.py       # Tool/database probes for `eukan check`
 │   ├── tools_registry.py # Tool metadata loaded from data/tools.toml
 │   ├── combinr.py      # combinr_bin(), run_combinr() — the combinr binary shared by assemble + annotate (version gate >= 0.3.0)
+│   ├── databases.py    # Reference-database registry (names, URLs, filenames, HOMOLOGY_DBS) + database manifest/integrity check
 │   ├── utils.py        # Shared utility functions: md5_file(), symlink(), package_resource(), concat_files()
 │   └── environ.py      # Env var helpers
 │
@@ -141,7 +142,7 @@ eukan/
 │   ├── pipeline.py     # run_functional_annotation() — branches on homology_db
 │   ├── search.py       # pyhmmer phmmer/hmmscan + UniProt/KOfam/Pfam GFF3/FASTA emitters
 │   ├── kofam.py        # KOfam (KofamKOALA-style): ko_list parsing, EC extraction, per-KO threshold scoring
-│   └── dbfetch.py      # UniProt/KOfam/Pfam database download and integrity tracking
+│   └── dbfetch.py      # UniProt/KOfam/Pfam downloaders (registry + manifest live in infra/databases.py)
 │
 ├── submission/         # NCBI submission prep
 │   ├── pipeline.py     # table2asn wrapper (eukan prep-submission)
@@ -210,7 +211,7 @@ Both wrap step-dir setup, manifest updates, and force/skip logic so that step-le
 ### Conventions
 
 - GFF3 manipulations chain through `create_gff_db(..., transform=fn)` / `transform_db()` from `gff/db.py` (in-memory gffutils DBs); the stdlib row reader `gff/rows.py` and transcript model `gff/transcripts.py` are for code that needs a few columns, not a DB
-- Configs do no discovery and read no files at construction; the CLI commands call `config.discover()` to locate prior pipeline outputs, and unknown keyword arguments are rejected
+- Configs do no discovery, read no files and create no directories at construction; the CLI commands call `config.discover()` to locate prior pipeline outputs, each driver calls `config.ensure_dirs()` first, and unknown keyword arguments are rejected
 - External commands use `run_cmd(["cmd", "arg"], cwd=step_dir)` — never shell strings
 - `--kingdom` flag (fungus/protist/animal/plant) controls which predictors run
 - All pipeline state is in a pydantic-settings config (`PipelineConfig`, `AssemblyConfig`, etc.) — no mutable class state
@@ -257,7 +258,7 @@ Authoritative reference for shared flag spellings and option-group layout. New s
 **Shared helpers** (`eukan/cli/_framework.py`): always use these instead of redefining inline.
 
 - `genome_option(help_text=...)` — required `--genome/-g`.
-- `numcpu_option` — `--numcpu/-n` with `cpu_count()` default.
+- `numcpu_option` — `--numcpu/-n` defaulting to the CPUs the process may run on (`available_cpus()`).
 - `force_option` or `force_option(help_text="…")` — `--force/-f` flag.
 - `code_option(default=N)` — `--code/-c` int with command-specific default.
 
