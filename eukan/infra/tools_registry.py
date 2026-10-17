@@ -69,11 +69,6 @@ class Tool:
     conda_pin: str | None = None
     install_hint: str | None = None
 
-    @property
-    def env_var_names(self) -> tuple[str, ...]:
-        """Names of every env var this tool declares."""
-        return tuple(e.var for e in self.env_vars)
-
 
 def _find_tools_toml() -> Path | None:
     """Locate tools.toml shipped under ``eukan/data/``."""
