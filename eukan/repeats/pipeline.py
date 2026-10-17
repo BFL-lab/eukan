@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from eukan.exceptions import ConfigurationError
 from eukan.infra.logging import get_logger
 from eukan.infra.manifest import (
     REPEATS,
@@ -132,7 +133,6 @@ def run_repeats(
                     config.manifest_dir, manifest, step_key(REPEATS, "modeler"),
                 )
                 if not isinstance(cached, Path):
-                    from eukan.exceptions import ConfigurationError
                     raise ConfigurationError(
                         "RepeatMasker step requested but no families library found.",
                         hint="Run --run-modeler first or pass --lib.",
