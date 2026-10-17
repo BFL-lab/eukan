@@ -20,7 +20,6 @@ exercising the same code paths as real user workflows.
 
 from __future__ import annotations
 
-import multiprocessing
 import os
 import shutil
 import subprocess
@@ -32,6 +31,8 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 import click
+
+from eukan.infra.utils import available_cpus
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -131,7 +132,7 @@ def setup_test_data_cmd(output_dir: Path) -> None:
     help="Kingdom for test organism (S. pombe = fungus).",
 )
 @click.option(
-    "--numcpu", "-n", type=int, default=multiprocessing.cpu_count(),
+    "--numcpu", "-n", type=int, default=available_cpus(),
     show_default=True, help="Number of CPU threads.",
 )
 @click.option(

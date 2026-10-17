@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+
 import pytest
 from click.testing import CliRunner
 
 import eukan.assembly
 from eukan.cli import cli
+from eukan.infra.utils import available_cpus
 
 
 @pytest.fixture
@@ -166,3 +171,25 @@ def test_choices_arrive_as_declared(run_dir, monkeypatch, args, target):
     monkeypatch.setattr(importlib.import_module(target[0]), target[1], stub)
     CliRunner().invoke(cli, args)
     assert seen == [("kofam", ["pfam"] if args[0] == "db-fetch" else None)]
+
+
+@pytest.mark.skipif(not hasattr(os, "sched_setaffinity"), reason="needs CPU affinity")
+def test_numcpu_default_follows_cpu_affinity():
+    """A job pinned to some CPUs (SLURM cpuset, docker --cpuset-cpus) defaults to
+    that many threads, not to every CPU in the machine."""
+    code = (
+        "import os\n"
+        "os.sched_setaffinity(0, {min(os.sched_getaffinity(0))})\n"
+        "from eukan.cli.annotate import annotate\n"
+        "print(next(p.default for p in annotate.params if p.name == 'num_cpu'))\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True,
+    ).stdout
+    assert out.strip() == "1"
+
+
+def test_available_cpus_falls_back_to_cpu_count(monkeypatch):
+    """Platforms without sched_getaffinity (macOS) use the machine's count."""
+    monkeypatch.delattr(os, "sched_getaffinity", raising=False)
+    assert available_cpus() == (os.cpu_count() or 1)

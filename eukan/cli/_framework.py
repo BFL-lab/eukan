@@ -8,7 +8,6 @@ import only the helpers they need from here.
 from __future__ import annotations
 
 import errno
-import multiprocessing
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -16,6 +15,8 @@ from typing import NoReturn
 
 import click
 from click_option_group import optgroup
+
+from eukan.infra.utils import available_cpus
 
 try:
     EUKAN_VERSION = version("eukan")
@@ -201,7 +202,7 @@ def drop_none(**kwargs) -> dict:
 
 def numcpu_option(func):
     return optgroup.option(
-        "--numcpu", "-n", "num_cpu", type=int, default=multiprocessing.cpu_count(),
+        "--numcpu", "-n", "num_cpu", type=int, default=available_cpus(),
         show_default=True, help="Number of CPU threads.",
     )(func)
 

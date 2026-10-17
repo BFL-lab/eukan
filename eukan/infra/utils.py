@@ -43,6 +43,19 @@ def md5_file(path: Path) -> str:
     return digest
 
 
+def available_cpus() -> int:
+    """Number of CPUs this process may run on.
+
+    That is its affinity mask, which is how SLURM cpusets and
+    ``docker --cpuset-cpus`` limit a job, or the machine's count where the
+    platform has no affinity call (macOS).
+    """
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:
+        return os.cpu_count() or 1
+
+
 def symlink(target: Path, link: Path) -> None:
     """Create a symlink, replacing any existing one."""
     link.unlink(missing_ok=True)
