@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field, fields
 from typing import NamedTuple
 
@@ -42,7 +43,7 @@ class FeatureRecord:
     pred fields empty for missing refs, ref fields empty for novel preds).
     """
 
-    level: str              # "gene" | "mRNA" | "CDS" | "intron"
+    level: str              # "gene" | "mrna" | "cds" | "intron"
     classification: str     # gene: exact|inexact|missing|merged|fragmented|novel
                             # subfeature: match|missing|fp
     ref_id: str | None = None
@@ -99,14 +100,13 @@ class FeatureRecord:
         pred_len = pred.end - pred.start + 1
         sn = overlap_bp / ref_len if ref_len else 0.0
         sp = overlap_bp / pred_len if pred_len else 0.0
-        f1 = 2 * sn * sp / (sn + sp) if (sn + sp) else 0.0
         return cls(
             level=level, classification=classification,
             ref_id=ref.feat_id, pred_id=pred.feat_id,
             chrom=ref.chrom, strand=ref.strand,
             ref_start=ref.start, ref_end=ref.end,
             pred_start=pred.start, pred_end=pred.end,
-            overlap_bp=overlap_bp, sn=sn, sp=sp, f1=f1,
+            overlap_bp=overlap_bp, sn=sn, sp=sp, f1=_f1(sn, sp),
             **kwargs,
         )
 
@@ -124,8 +124,41 @@ def _safe_mean(values: list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
+def _f1(sn: float, sp: float) -> float:
+    """Harmonic mean of *sn* and *sp*; 0.0 when both are 0."""
+    return 2 * sn * sp / (sn + sp) if (sn + sp) else 0.0
+
+
+class _OverlapStats:
+    """Means and perfect-overlap counts over the matched features' sn/sp/f1."""
+
+    sn_values: list[float]
+    sp_values: list[float]
+    f1_values: list[float]
+
+    @property
+    def mean_sn(self) -> float:
+        return _safe_mean(self.sn_values)
+
+    @property
+    def mean_sp(self) -> float:
+        return _safe_mean(self.sp_values)
+
+    @property
+    def mean_f1(self) -> float:
+        return _safe_mean(self.f1_values)
+
+    @property
+    def perfect_sn_count(self) -> int:
+        return sum(1 for v in self.sn_values if v >= PERFECT_THRESHOLD)
+
+    @property
+    def perfect_sp_count(self) -> int:
+        return sum(1 for v in self.sp_values if v >= PERFECT_THRESHOLD)
+
+
 @dataclass
-class GeneStats:
+class GeneStats(_OverlapStats):
     ref_total: int = 0
     pred_total: int = 0
     exact: int = 0
@@ -165,32 +198,11 @@ class GeneStats:
 
     @property
     def f1(self) -> float:
-        s, p = self.sensitivity, self.precision
-        return 2 * s * p / (s + p) if (s + p) else 0.0
-
-    @property
-    def mean_sn(self) -> float:
-        return _safe_mean(self.sn_values)
-
-    @property
-    def mean_sp(self) -> float:
-        return _safe_mean(self.sp_values)
-
-    @property
-    def mean_f1(self) -> float:
-        return _safe_mean(self.f1_values)
-
-    @property
-    def perfect_sn_count(self) -> int:
-        return sum(1 for v in self.sn_values if v >= PERFECT_THRESHOLD)
-
-    @property
-    def perfect_sp_count(self) -> int:
-        return sum(1 for v in self.sp_values if v >= PERFECT_THRESHOLD)
+        return _f1(self.sensitivity, self.precision)
 
 
 @dataclass
-class SubfeatureStats:
+class SubfeatureStats(_OverlapStats):
     """Statistics for mRNA, CDS, or intron level."""
 
     level_name: str
@@ -215,28 +227,7 @@ class SubfeatureStats:
 
     @property
     def f1(self) -> float:
-        s, p = self.sensitivity, self.precision
-        return 2 * s * p / (s + p) if (s + p) else 0.0
-
-    @property
-    def mean_sn(self) -> float:
-        return _safe_mean(self.sn_values)
-
-    @property
-    def mean_sp(self) -> float:
-        return _safe_mean(self.sp_values)
-
-    @property
-    def mean_f1(self) -> float:
-        return _safe_mean(self.f1_values)
-
-    @property
-    def perfect_sn_count(self) -> int:
-        return sum(1 for v in self.sn_values if v >= PERFECT_THRESHOLD)
-
-    @property
-    def perfect_sp_count(self) -> int:
-        return sum(1 for v in self.sp_values if v >= PERFECT_THRESHOLD)
+        return _f1(self.sensitivity, self.precision)
 
 
 # ---------------------------------------------------------------------------
@@ -290,41 +281,38 @@ class MultiComparisonResult:
 # ---------------------------------------------------------------------------
 
 
+def _overlap_values(
+    records: list[FeatureRecord],
+) -> tuple[list[float], list[float], list[float]]:
+    """The sn, sp and f1 values of *records*, in order.
+
+    FeatureRecord.from_match sets the three together; other records have none.
+    """
+    triples = [
+        (r.sn, r.sp, r.f1)
+        for r in records
+        if r.sn is not None and r.sp is not None and r.f1 is not None
+    ]
+    return [t[0] for t in triples], [t[1] for t in triples], [t[2] for t in triples]
+
+
 def gene_stats_from_records(
     records: list[FeatureRecord],
     ref_total: int,
     pred_total: int,
 ) -> GeneStats:
     """Build a GeneStats from gene-level FeatureRecords."""
-    stats = GeneStats(ref_total=ref_total, pred_total=pred_total)
-    for r in records:
-        cls = r.classification
-        if cls == "exact":
-            stats.exact += 1
-        elif cls == "inexact":
-            stats.inexact += 1
-            if r.boundary_5p is not None:
-                stats.boundary_5p.append(r.boundary_5p)
-            if r.boundary_3p is not None:
-                stats.boundary_3p.append(r.boundary_3p)
-        elif cls == "missing":
-            stats.missing += 1
-        elif cls == "merged":
-            stats.merged += 1
-        elif cls == "fragmented":
-            stats.fragmented += 1
-        elif cls == "novel":
-            stats.novel += 1
-
-        # Overlap metrics for matched genes (exact + inexact).
-        # sn/sp/f1 are set as a triple by FeatureRecord.from_match, so a
-        # single None check on sn implies the others are also non-None.
-        if cls in ("exact", "inexact") and r.sn is not None:
-            stats.sn_values.append(r.sn)
-            assert r.sp is not None and r.f1 is not None
-            stats.sp_values.append(r.sp)
-            stats.f1_values.append(r.f1)
-    return stats
+    counts = Counter(r.classification for r in records)
+    inexact = [r for r in records if r.classification == "inexact"]
+    sn, sp, f1 = _overlap_values([r for r in records if r.classification in ("exact", "inexact")])
+    return GeneStats(
+        ref_total=ref_total, pred_total=pred_total,
+        exact=counts["exact"], inexact=counts["inexact"], missing=counts["missing"],
+        merged=counts["merged"], fragmented=counts["fragmented"], novel=counts["novel"],
+        sn_values=sn, sp_values=sp, f1_values=f1,
+        boundary_5p=[r.boundary_5p for r in inexact if r.boundary_5p is not None],
+        boundary_3p=[r.boundary_3p for r in inexact if r.boundary_3p is not None],
+    )
 
 
 def subfeature_stats_from_records(
@@ -334,20 +322,10 @@ def subfeature_stats_from_records(
     pred_total: int,
 ) -> SubfeatureStats:
     """Build a SubfeatureStats from level-specific FeatureRecords."""
-    stats = SubfeatureStats(
+    counts = Counter(r.classification for r in records)
+    sn, sp, f1 = _overlap_values([r for r in records if r.classification == "match"])
+    return SubfeatureStats(
         level_name=level_name, ref_total=ref_total, pred_total=pred_total,
+        match=counts["match"], missing=counts["missing"], fp=counts["fp"],
+        sn_values=sn, sp_values=sp, f1_values=f1,
     )
-    for r in records:
-        cls = r.classification
-        if cls == "match":
-            stats.match += 1
-            if r.sn is not None:
-                assert r.sp is not None and r.f1 is not None
-                stats.sn_values.append(r.sn)
-                stats.sp_values.append(r.sp)
-                stats.f1_values.append(r.f1)
-        elif cls == "missing":
-            stats.missing += 1
-        elif cls == "fp":
-            stats.fp += 1
-    return stats
