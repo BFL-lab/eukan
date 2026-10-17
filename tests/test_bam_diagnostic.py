@@ -30,6 +30,7 @@ from eukan.assembly.bam_diagnostic import (
     _cluster_key,
     _hamming_distance,
     _is_low_complexity,
+    _log_trans_splicing_verdict,
     compute_verdict,
     diagnose_bam,
     load_verdict,
@@ -1044,7 +1045,6 @@ def test_split_tolerance_per_locus_tolerant_cross_locus_strict(
 def test_log_trans_splicing_verdict_flags_adapter(caplog):
     """A dominant soft-clip cluster that is Illumina adapter read-through is
     reported as adapter contamination, not as a spliced leader."""
-    from eukan.assembly.align_hints import _log_trans_splicing_verdict
     report = _make_report(
         top_clusters=[("AGATCGGAAGAG", 2000, 20_000)],
         canonical_pct=99.0,
@@ -1064,7 +1064,6 @@ def test_log_trans_splicing_verdict_flags_adapter(caplog):
 def test_log_trans_splicing_verdict_flags_adapter_even_when_absent(caplog):
     """Adapter is surfaced even when its support is below the trans-splicing
     thresholds (call ABSENT)."""
-    from eukan.assembly.align_hints import _log_trans_splicing_verdict
     report = _make_report(
         top_clusters=[("AGATCGGAAGAG", 20, 500)],  # below MODERATE
         canonical_pct=99.0,
@@ -1080,7 +1079,6 @@ def test_log_trans_splicing_verdict_flags_adapter_even_when_absent(caplog):
 def test_log_trans_splicing_verdict_genuine_sl_not_flagged(caplog):
     """A genuine (non-adapter) spliced-leader signal logs the trans-splicing
     warning and says nothing about adapters."""
-    from eukan.assembly.align_hints import _log_trans_splicing_verdict
     report = _make_report(
         top_clusters=[("ATCGATCGATCG", 2000, 20_000)],
         canonical_pct=99.0,

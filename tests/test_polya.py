@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pysam
 
+from eukan.assembly.bam_diagnostic import run_softclip_diagnostic
 from eukan.assembly.bam_utils import _write_unmapped_fasta
 from eukan.assembly.polya import (
     POLYA_DIAGNOSTIC,
@@ -235,7 +236,7 @@ def test_map_one_transcript_set_captures_unmapped(tmp_path, monkeypatch):
     assert "tx_M" not in text
 
 
-# --- align_hints integration (the "reads" section) -------------------------
+# --- soft-clip diagnostic integration (the "reads" section) ----------------
 
 
 def _reads_bam_with_polya(tmp_path):
@@ -252,8 +253,6 @@ def _reads_bam_with_polya(tmp_path):
 
 
 def test_run_softclip_diagnostic_writes_reads_polya_section(tmp_path):
-    from eukan.assembly.align_hints import run_softclip_diagnostic
-
     bam, genome = _reads_bam_with_polya(tmp_path)
     run_softclip_diagnostic(bam, genome, tmp_path)
 
@@ -263,8 +262,6 @@ def test_run_softclip_diagnostic_writes_reads_polya_section(tmp_path):
 
 
 def test_run_softclip_diagnostic_backfills_reads_section_on_resume(tmp_path):
-    from eukan.assembly.align_hints import run_softclip_diagnostic
-
     bam, genome = _reads_bam_with_polya(tmp_path)
     run_softclip_diagnostic(bam, genome, tmp_path)            # cold: writes both
     (tmp_path / POLYA_DIAGNOSTIC).unlink()                    # simulate pre-feature run dir

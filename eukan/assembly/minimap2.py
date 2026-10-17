@@ -27,8 +27,17 @@ from pathlib import Path
 
 import pysam
 
-from eukan.assembly.align_hints import generate_rnaseq_hints, sj_table_from_bam
-from eukan.assembly.bam_diagnostic import NonCanonicalSpliceLevel, load_verdict
+from eukan.assembly.align_hints import (
+    analyze_splice_sites,
+    sj_table_from_bam,
+    write_coverage_hints,
+    write_intron_hints,
+)
+from eukan.assembly.bam_diagnostic import (
+    NonCanonicalSpliceLevel,
+    load_verdict,
+    run_softclip_diagnostic,
+)
 from eukan.assembly.bam_utils import (
     _bam_is_complete,
     _coordinate_sort_and_filter,
@@ -117,12 +126,12 @@ def _log_mapping_rate(bam: Path) -> None:
 
 
 def _emit_sj_and_hints(config: AssemblyConfig) -> None:
-    """Derive a STAR-format SJ.out.tab from the read BAM and generate hints.
+    """Derive a STAR-format SJ.out.tab from the read BAM, then the splice summary,
+    the soft-clip diagnostic (``--diagnose-softclips``) and the hints.
 
     minimap2 has no native junction table, so the SJ table is synthesized from
-    the BAM's N-CIGAR junctions and the shared post-processing (splice summary,
-    intron/coverage hints, soft-clip diagnostic) is reused — identical to the
-    contract STAR/segemehl produced.
+    the BAM's N-CIGAR junctions and the shared post-processing is reused —
+    identical to the contract STAR/segemehl produced.
     """
     wd = config.work_dir
     sj = sj_table_from_bam(
@@ -131,10 +140,11 @@ def _emit_sj_and_hints(config: AssemblyConfig) -> None:
         max_intron=config.max_intron_len,
         out_name=_SJ,
     )
-    generate_rnaseq_hints(
-        sj, wd / _BAM, config.genome, wd,
-        diagnose=config.diagnose_softclips, source_label="minimap2",
-    )
+    analyze_splice_sites(sj, config.genome, wd)
+    if config.diagnose_softclips:
+        run_softclip_diagnostic(wd / _BAM, config.genome, wd)
+    write_intron_hints(sj, wd, "minimap2")
+    write_coverage_hints(wd / _BAM, wd)
 
 
 def _map_reads_once(config: AssemblyConfig, *, non_canonical: bool) -> None:

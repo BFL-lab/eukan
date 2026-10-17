@@ -32,9 +32,20 @@ from eukan.assembly.bam_reads import (
     iter_primary_alignments,
     walk_introns,
 )
-from eukan.assembly.polya import PolyAStats, tally_clip
+from eukan.assembly.polya import (
+    PolyAStats,
+    characterize_polya_bam,
+    has_section,
+    stats_to_dict,
+    tally_clip,
+    write_polya_section,
+)
+from eukan.assembly.sl_depletion import is_adapter
 from eukan.infra.artifacts import Artifact
 from eukan.infra.genome import ContigIndex
+from eukan.infra.logging import get_logger
+
+log = get_logger(__name__)
 
 # Per-locus key cap. Statistically the dominant key arrives among the
 # first few clips at any locus (≥94% prevalence at depth ≥ a few), so
@@ -855,3 +866,109 @@ def load_verdict(wd: Path) -> Verdict | None:
         )
     except (OSError, ValueError, KeyError, TypeError):
         return None
+
+
+# ---------------------------------------------------------------------------
+# The pipeline step: diagnose the read BAM, write the summary, log the verdict
+# ---------------------------------------------------------------------------
+
+
+def _log_read_polya(pa: PolyAStats, bam_name: str) -> None:
+    """INFO-log the read-BAM poly-A soft-clip tally (no-op when there are none)."""
+    if pa.n_polya or pa.n_polyt:
+        log.info(
+            "Poly-A soft-clips in %s: %d poly-A (3') + %d poly-T (5') of %d clips "
+            "(%.3f%% poly-A; mean %.1f bp, max %d bp).",
+            bam_name, pa.n_polya, pa.n_polyt, pa.n_clips_examined,
+            pa.polya_pct_of_clips, pa.polya_mean_len, pa.polya_len_max,
+        )
+
+
+def _log_trans_splicing_verdict(ts: TransSplicingCall) -> None:
+    """Log the trans-splicing verdict, flagging when the dominant soft-clip motif
+    is actually residual sequencing adapter rather than a genuine spliced leader.
+
+    Reads aren't adapter-trimmed upstream, so Illumina/Nextera read-through can be
+    the dominant soft-clip cluster and masquerade as trans-splicing. Surfacing it
+    here (in the soft-clip analysis) tells the user to adapter-trim rather than
+    trust a phantom spliced leader; SL detection separately excludes it.
+    """
+    label = ts.top_non_trivial_cluster_consensus or ts.top_non_trivial_cluster_key
+    if label and (
+        is_adapter(ts.top_non_trivial_cluster_consensus)
+        or is_adapter(ts.top_non_trivial_cluster_key)
+    ):
+        note = (
+            f"; the {ts.call} trans-splicing signal is attributable to it"
+            if ts.call in (TransSplicingLevel.STRONG, TransSplicingLevel.MODERATE)
+            else ""
+        )
+        log.warning(
+            "Soft-clip analysis: the dominant soft-clip motif %s matches a known "
+            "sequencing adapter%s. This is residual adapter read-through, not a "
+            "spliced leader; adapter-trim the reads before assembly. SL detection "
+            "excludes it by default (--no-sl-adapter-filter to override).",
+            label, note,
+        )
+        return
+    if ts.call in (TransSplicingLevel.STRONG, TransSplicingLevel.MODERATE):
+        log.warning(
+            "Trans-splicing signal %s: top motif %s spans %d loci (%d reads). "
+            "Reads may need splice-leader trimming before annotation.",
+            ts.call,
+            label,
+            ts.top_non_trivial_cluster_n_loci,
+            ts.top_non_trivial_cluster_n_reads,
+        )
+    else:
+        log.info("Trans-splicing signal: ABSENT")
+
+
+def run_softclip_diagnostic(bam: Path, genome: Path, wd: Path) -> None:
+    """Walk the aligner BAM for soft-clip + intron motifs and log a verdict.
+
+    Idempotent: if the summary JSON already exists, this is a no-op. The
+    verdict surfaces trans-splicing and non-canonical splice prevalence so the
+    user knows whether downstream gene prediction will need special handling
+    (read pre-processing for trans-splicing; ``--splice-permissive`` for
+    non-canonical splice landscapes).
+    """
+    summary_path = wd / Artifact.SOFTCLIP_DIAGNOSTIC.value
+    if not bam.exists():
+        return
+    if summary_path.exists():
+        log.info("Soft-clip diagnostic already produced %s, skipping", summary_path.name)
+        # The poly-A "reads" section is a later addition and is written separately
+        # from the SL summary, so backfill it (cheap poly-A-only pass over the read
+        # BAM) when an existing or pre-feature summary would otherwise skip it — else
+        # the section is silently never produced on resume / force / upgrade-in-place.
+        if not has_section(wd, "reads"):
+            # At diagnose_bam's MAPQ floor, so the backfill matches the full walk.
+            pa = characterize_polya_bam(bam, "reads", min_mapq=DiagnosticParams().min_mapq)
+            write_polya_section(wd, "reads", stats_to_dict(pa))
+            _log_read_polya(pa, bam.name)
+        return
+
+    log.info("Running soft-clip / intron diagnostic over %s...", bam.name)
+    report = diagnose_bam(bam, genome)
+    verdict = compute_verdict(report)
+
+    with open(summary_path, "w") as f:
+        json.dump(to_summary_dict(report, verdict), f, indent=2)
+
+    # Poly-A characterization of the read soft-clips (separate from the SL verdict),
+    # piggy-backing on the single diagnose_bam walk just performed.
+    write_polya_section(wd, "reads", stats_to_dict(report.polya))
+    _log_read_polya(report.polya, bam.name)
+
+    _log_trans_splicing_verdict(verdict.trans_splicing)
+
+    nc = verdict.non_canonical_splice
+    if nc.call in (NonCanonicalSpliceLevel.EXTENSIVE, NonCanonicalSpliceLevel.MODERATE):
+        log.warning(
+            "Non-canonical splice signal %s: canonical fraction %.2f%% "
+            "(top non-canonical %s). Consider --splice-permissive on the annotate step.",
+            nc.call, nc.canonical_pct, nc.top_non_canonical_dinuc,
+        )
+    else:
+        log.info("Canonical splice site usage typical: %.2f%%", nc.canonical_pct)
