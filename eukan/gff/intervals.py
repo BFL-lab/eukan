@@ -1,7 +1,7 @@
 """Strand-aware interval index with prefix-max-end overlap queries.
 
 Used by both the consensus/concordance routines (``gff/concordance.py``)
-and the annotation comparison stats (``stats/compare.py``). Both modules
+and the annotation comparison (``compare/engine.py``). Both modules
 previously rolled their own copy of this data structure.
 
 Scheme:
@@ -70,7 +70,7 @@ class IntervalIndex(Generic[IT]):
 
     Generic over any object exposing ``chrom``, ``strand``, ``start``,
     and ``end`` attributes — e.g. ``gffutils.Feature`` and
-    ``stats.models.Interval`` both qualify.
+    ``compare.models.Interval`` both qualify.
 
     Use :meth:`overlapping` to enumerate hits along with their overlap
     bp counts.
