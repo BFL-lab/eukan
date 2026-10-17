@@ -127,15 +127,14 @@ def _get_splice_sites_flag(config: PipelineConfig) -> list[str]:
     return []
 
 
-def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
-    """Train and run AUGUSTUS gene prediction."""
-    output = "augustus.gff3"
-    sdir = step_dir(config.work_dir, "augustus")
-    log.info("Running AUGUSTUS training and prediction...")
+def _gather_hints(config: PipelineConfig, prot_gff3: Path) -> tuple[list[Path], str]:
+    """The hint files for prediction, and the extrinsic cfg that weights them.
 
-    # Gather hints. The protein hints sit beside the protein evidence (evidence[1],
-    # prot.gff3 in the alignment step dir: prot_align, or prot_align_ssp with --spsp).
-    hint_files = [evidence[1].parent / "hints_protein.gff"]
+    The protein hints sit beside the protein evidence (prot.gff3 in the alignment
+    step dir: prot_align, or prot_align_ssp with --spsp). RNA-seq hints switch the
+    cfg from AUGUSTUS's stock extrinsic.MPE.cfg to our augustus.config.
+    """
+    hint_files = [prot_gff3.parent / "hints_protein.gff"]
     if config.rnaseq_hints:
         ext_cfg = "augustus.config"
         hint_files.append(config.rnaseq_hints)
@@ -151,14 +150,13 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
     if rm_hints is not None:
         log.info("Including RepeatMasker hints: %s", rm_hints.name)
         hint_files.append(rm_hints)
+    return hint_files, ext_cfg
 
-    # Create AUGUSTUS species
-    config_path = os.environ.get("AUGUSTUS_CONFIG_PATH")
-    if not config_path:
-        raise ToolEnvError("augustus", env_var="AUGUSTUS_CONFIG_PATH")
 
-    # Install custom extrinsic config if not already present
-    ext_dest = Path(config_path) / "extrinsic" / ext_cfg
+def _install_extrinsic_cfg(config_path: Path, ext_cfg: str) -> Path:
+    """Install the package's *ext_cfg* into AUGUSTUS's extrinsic dir unless one is
+    there already; return its path there."""
+    ext_dest = config_path / "extrinsic" / ext_cfg
     if not ext_dest.exists():
         pkg_cfg = package_resource(f"configs/{ext_cfg}")
         if pkg_cfg is not None:
@@ -166,82 +164,100 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
             log.info("Installed and using extrinsic config: %s", ext_cfg)
         else:
             log.warning("Custom extrinsic config %s not found, AUGUSTUS may fail", ext_cfg)
+    return ext_dest
 
-    aug_species_dir = Path(config_path) / "species" / config.name
-    aug_cfg_file = aug_species_dir / f"{config.name}_parameters.cfg"
+
+def _set_stop_codon_probs(config: PipelineConfig, sdir: Path, cfg_file: Path) -> None:
+    """Write the stop codon frequencies into the species *cfg_file*: those etraining
+    measured, or 0/0/1 under genetic code 6."""
+    if config.genetic_code == "6":
+        stop_probs = ["0", "0", "1"]
+    else:
+        stop_probs = []
+        with open(sdir / "etraining.out") as fp:
+            for line in fp:
+                if re.search(r"(tag:|taa:|tga:)", line):
+                    stop_probs.append(re.sub(r"[()]", "", line).split()[-1])
+
+    with open(cfg_file) as fh:
+        lines = [line.rstrip() for line in fh]
+    for i, line in enumerate(lines):
+        if re.search(r"(amberprob|ochreprob|opalprob)", line) and stop_probs:
+            parts = line.split()
+            parts[1] = stop_probs.pop(0)
+            lines[i] = " ".join(parts)
+    cfg_file.write_text("".join(f"{line}\n" for line in lines))
+
+
+def _train_species(
+    config: PipelineConfig, evidence: tuple[Path, ...], sdir: Path, species_dir: Path
+) -> None:
+    """Create the AUGUSTUS species in *species_dir* and train it on the evidence
+    training set, unless this work dir has trained it already."""
+    aug_cfg_file = species_dir / f"{config.name}_parameters.cfg"
 
     # Skip training if species already exists and has been optimized
     if aug_cfg_file.exists() and (sdir / "genbank.gb.train").exists():
         log.info("[augustus] Species %s already trained, skipping to prediction.", config.name)
-    else:
-        if aug_species_dir.exists():
-            if not (aug_species_dir / _SPECIES_MARKER).exists():
-                raise ConfigurationError(
-                    f"AUGUSTUS species '{config.name}' already exists in "
-                    f"{aug_species_dir.parent} and was not created by eukan; "
-                    "refusing to replace it.",
-                    hint="The species name defaults to the genome file name. Train "
-                    "under another name by setting EUKAN_NAME=<name> (there is no "
-                    "command-line option for it) or by renaming the genome FASTA. "
-                    "Delete the directory only if an earlier eukan version created it.",
-                )
-            shutil.rmtree(aug_species_dir)
+        return
 
-        run_cmd(["new_species.pl", f"--species={config.name}"], cwd=sdir)
-        (aug_species_dir / _SPECIES_MARKER).touch()
-
-        # Build training set and train
-        build_training_set(config, evidence, sdir)
-
-        # Report training set size
-        with open(sdir / "genbank.gb.train") as fh:
-            train_count = sum(1 for line in fh if line.startswith("LOCUS"))
-        with open(sdir / "genbank.gb.test") as fh:
-            test_count = sum(1 for line in fh if line.startswith("LOCUS"))
-        total = train_count + test_count
-        if total <= 500:
-            log.warning(
-                "Low AUGUSTUS training set size: %d models (%d train, %d test) "
-                "— prediction quality may be reduced",
-                total, train_count, test_count,
+    if species_dir.exists():
+        if not (species_dir / _SPECIES_MARKER).exists():
+            raise ConfigurationError(
+                f"AUGUSTUS species '{config.name}' already exists in "
+                f"{species_dir.parent} and was not created by eukan; "
+                "refusing to replace it.",
+                hint="The species name defaults to the genome file name. Train "
+                "under another name by setting EUKAN_NAME=<name> (there is no "
+                "command-line option for it) or by renaming the genome FASTA. "
+                "Delete the directory only if an earlier eukan version created it.",
             )
-        else:
-            log.info("AUGUSTUS training set: %d train, %d test models", train_count, test_count)
+        shutil.rmtree(species_dir)
 
-        run_cmd(["etraining", f"--species={config.name}", "genbank.gb.train"], cwd=sdir, out_file="etraining.out")
+    run_cmd(["new_species.pl", f"--species={config.name}"], cwd=sdir)
+    (species_dir / _SPECIES_MARKER).touch()
 
-        # Set stop codon frequencies
-        if config.genetic_code == "6":
-            stop_probs = ["0", "0", "1"]
-        else:
-            stop_probs = []
-            with open(sdir / "etraining.out") as fp:
-                for line in fp:
-                    if re.search(r"(tag:|taa:|tga:)", line):
-                        stop_probs.append(re.sub(r"[()]", "", line).split()[-1])
+    # Build training set and train
+    build_training_set(config, evidence, sdir)
 
-        with open(aug_cfg_file) as fh:
-            lines = [line.rstrip() for line in fh]
-        for i, line in enumerate(lines):
-            if re.search(r"(amberprob|ochreprob|opalprob)", line) and stop_probs:
-                parts = line.split()
-                parts[1] = stop_probs.pop(0)
-                lines[i] = " ".join(parts)
-        aug_cfg_file.write_text("".join(f"{line}\n" for line in lines))
-
-        # Test and optimize
-        run_cmd(["augustus", f"--species={config.name}", "genbank.gb.test"], cwd=sdir)
-        run_cmd(
-            [
-                "optimize_augustus.pl", f"--species={config.name}",
-                "--onlytrain=genbank.gb.train", f"--cpus={config.num_cpu}",
-                "genbank.gb.test",
-            ],
-            cwd=sdir,
+    # Report training set size
+    with open(sdir / "genbank.gb.train") as fh:
+        train_count = sum(1 for line in fh if line.startswith("LOCUS"))
+    with open(sdir / "genbank.gb.test") as fh:
+        test_count = sum(1 for line in fh if line.startswith("LOCUS"))
+    total = train_count + test_count
+    if total <= 500:
+        log.warning(
+            "Low AUGUSTUS training set size: %d models (%d train, %d test) "
+            "— prediction quality may be reduced",
+            total, train_count, test_count,
         )
-        run_cmd(["etraining", f"--species={config.name}", "genbank.gb.train"], cwd=sdir)
-        run_cmd(["augustus", f"--species={config.name}", "genbank.gb.test"], cwd=sdir)
+    else:
+        log.info("AUGUSTUS training set: %d train, %d test models", train_count, test_count)
 
+    run_cmd(["etraining", f"--species={config.name}", "genbank.gb.train"], cwd=sdir, out_file="etraining.out")
+    _set_stop_codon_probs(config, sdir, aug_cfg_file)
+
+    # Test and optimize
+    run_cmd(["augustus", f"--species={config.name}", "genbank.gb.test"], cwd=sdir)
+    run_cmd(
+        [
+            "optimize_augustus.pl", f"--species={config.name}",
+            "--onlytrain=genbank.gb.train", f"--cpus={config.num_cpu}",
+            "genbank.gb.test",
+        ],
+        cwd=sdir,
+    )
+    run_cmd(["etraining", f"--species={config.name}", "genbank.gb.train"], cwd=sdir)
+    run_cmd(["augustus", f"--species={config.name}", "genbank.gb.test"], cwd=sdir)
+
+
+def _predict(
+    config: PipelineConfig, sdir: Path, ext_cfg: Path, hint_files: list[Path]
+) -> Path:
+    """Predict with the trained species, one AUGUSTUS per genome split in parallel,
+    and join the splits into ``augustus.gff3``."""
+    output = "augustus.gff3"
     concat_files(hint_files, sdir / "hints_all.gff")
 
     # Split genome for parallel prediction
@@ -257,7 +273,7 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
 
     base_cmd = [
         "augustus", f"--species={config.name}",
-        f"--extrinsicCfgFile={Path(config_path) / 'extrinsic' / ext_cfg}",
+        f"--extrinsicCfgFile={ext_cfg}",
         "--hintsfile=hints_all.gff", "--softmasking=1", "--UTR=off",
         *splice_sites_flag,
     ]
@@ -294,6 +310,20 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
         (sdir / f"{split.name}.gff3").unlink(missing_ok=True)
 
     return sdir / output
+
+
+def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
+    """Train and run AUGUSTUS gene prediction."""
+    sdir = step_dir(config.work_dir, "augustus")
+    log.info("Running AUGUSTUS training and prediction...")
+    hint_files, ext_cfg = _gather_hints(config, evidence[1])
+
+    config_path = os.environ.get("AUGUSTUS_CONFIG_PATH")
+    if not config_path:
+        raise ToolEnvError("augustus", env_var="AUGUSTUS_CONFIG_PATH")
+    ext_cfg_path = _install_extrinsic_cfg(Path(config_path), ext_cfg)
+    _train_species(config, evidence, sdir, Path(config_path) / "species" / config.name)
+    return _predict(config, sdir, ext_cfg_path, hint_files)
 
 
 # ---------------------------------------------------------------------------
