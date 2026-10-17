@@ -507,7 +507,7 @@ def compare_annotations_cmd(reference: Path, predicted: Path) -> None:
 
     Defaults compare tests/data/reference.gff3 vs the pipeline output.
     """
-    from tests.annot_quality import compare_annotations, format_results
+    from eukan.compare import compare_annotations, format_results
 
     click.echo(f"Loading reference: {reference}")
     click.echo(f"Loading predicted: {predicted}")
