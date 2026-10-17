@@ -12,6 +12,7 @@ import gffutils
 import pyhmmer
 from Bio import SeqIO
 
+from eukan.gff import create_gff_db
 from eukan.gff.io import count_gff3_features, featuredb2gff3_file
 from eukan.infra.logging import get_logger
 
@@ -282,7 +283,6 @@ def annotate_gff3(
         if any(info["evalue"] <= _EVALUE_GOOD_HIT for info in hits.values())
     }
 
-    from eukan.gff import create_gff_db
     gff3 = create_gff_db(gff3_path)
     gff3.update(
         _add_func_info(gff3, homology_res, hmmscan_strict, apply_hits),
