@@ -218,7 +218,6 @@ def test_map_one_transcript_set_captures_unmapped(tmp_path, monkeypatch):
 
     monkeypatch.setattr(minimap2, "run_piped", fake_piped)
     monkeypatch.setattr(minimap2, "run_cmd", lambda *a, **k: None)
-    monkeypatch.setattr(minimap2, "_coordinate_sort_and_filter", lambda *a, **k: None)
     monkeypatch.setattr(minimap2, "_bam_is_complete", lambda _p: False)
 
     (tmp_path / "genome.fa").write_text(">c1\n" + "ACGT" * 100 + "\n")

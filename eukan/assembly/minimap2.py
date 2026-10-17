@@ -40,7 +40,6 @@ from eukan.assembly.bam_diagnostic import (
 )
 from eukan.assembly.bam_utils import (
     _bam_is_complete,
-    _coordinate_sort_and_filter,
     _write_unmapped_fasta,
     count_fasta_records,
 )
@@ -251,7 +250,11 @@ def _map_one_transcript_set(
 
     stem = out_bam[: -len(GENOME_BAM_SUFFIX)]
     _write_unmapped_fasta(unsorted, wd / f"{stem}.unmapped_transcripts.fasta")
-    _coordinate_sort_and_filter(unsorted, out_bam, wd, config.num_cpu)
+    run_piped(
+        ["samtools", "view", "-bh", "-F", "4", str(unsorted)],
+        ["samtools", "sort", "-@", str(config.num_cpu), "-o", out_bam, "-"],
+        cwd=wd,
+    )
     run_cmd(["samtools", "index", out_bam], cwd=wd)
     unsorted.unlink(missing_ok=True)
 

@@ -14,7 +14,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pysam
-import pytest
 
 from eukan.assembly.align_hints import (
     analyze_splice_sites,
@@ -22,7 +21,6 @@ from eukan.assembly.align_hints import (
     write_intron_hints,
 )
 from eukan.assembly.pipeline import STEPS, force_steps_from_run_flags
-from eukan.exceptions import ExternalToolError
 from eukan.settings import AssemblyConfig
 
 # (start, end) 0-based half-open intron, n_unique (NH=1), n_multi (NH=2)
@@ -188,38 +186,3 @@ def test_non_canonical_field(tmp_path):
         num_cpu=1, non_canonical="force",
     )
     assert cfg.non_canonical == "force"
-
-
-# ------------------------------------------------------------------
-# Shared coordinate-sort disk-full translation (bam_utils)
-# ------------------------------------------------------------------
-
-
-def test_coordinate_sort_translates_disk_full(tmp_path, monkeypatch):
-    """A samtools 'Illegal seek' (a full-disk write failure) is re-raised as a
-    clear out-of-space error whose hint points at freeing space and notes that
-    the unsorted BAM is reused on re-run."""
-    from eukan.assembly import bam_utils
-
-    (tmp_path / "unsorted.bam").write_bytes(b"BAMDATA")
-
-    def boom(c1, c2, **kw):
-        raise ExternalToolError(
-            "samtools failed (exit 1)", tool="samtools", returncode=1, cmd=c2,
-            stderr_snippet=(
-                "[bam_sort_core] merging from 10 files...\n"
-                'samtools sort: failed writing to "out.bam": Illegal seek'
-            ),
-        )
-
-    monkeypatch.setattr(bam_utils, "run_piped", boom)
-
-    with pytest.raises(ExternalToolError) as exc_info:
-        bam_utils._coordinate_sort_and_filter(
-            tmp_path / "unsorted.bam", "out.bam", tmp_path, 4
-        )
-
-    # Original samtools stderr preserved, plus an actionable disk hint.
-    assert "Illegal seek" in exc_info.value.stderr_snippet
-    assert exc_info.value.hint is not None
-    assert "re-map" in exc_info.value.hint.lower() or "reuse" in exc_info.value.hint.lower()

@@ -1186,7 +1186,8 @@ class TestTrinityTrackRerun:
             (wd / f"{prefix}.{name}").write_text(">t\nACGT\n")
 
         def fake_piped(cmd1, cmd2, **kw):
-            ran.append(cmd1[-1].rsplit("/", 1)[-1])  # the transcript FASTA mapped
+            if cmd1[0] == "minimap2":
+                ran.append(cmd1[-1].rsplit("/", 1)[-1])  # the transcript FASTA mapped
             (wd / cmd2[cmd2.index("-o") + 1]).write_text("bam")
             return ""
 
@@ -1194,9 +1195,6 @@ class TestTrinityTrackRerun:
         monkeypatch.setattr(minimap2, "run_piped", fake_piped)
         monkeypatch.setattr(minimap2, "run_cmd", lambda *a, **k: None)
         monkeypatch.setattr(minimap2, "_write_unmapped_fasta", lambda u, o: o.write_text(">u\nA\n"))
-        monkeypatch.setattr(
-            minimap2, "_coordinate_sort_and_filter", lambda u, ob, w, n: (w / ob).write_text("bam"),
-        )
         monkeypatch.setattr(minimap2, "_finalize_transcript_diagnostics", lambda c: None)
         # A BAM from a completed run passes samtools quickcheck.
         monkeypatch.setattr(minimap2, "_bam_is_complete", lambda b: b.exists() and b.stat().st_size > 0)

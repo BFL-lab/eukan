@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict
+
+import pytest
 
 from eukan.assembly import minimap2
 from eukan.assembly.bam_diagnostic import NonCanonicalSpliceCall, TransSplicingCall, Verdict
 from eukan.assembly.pipeline import STEPS
+from eukan.exceptions import ExternalToolError
 from eukan.infra.artifacts import Artifact
 from eukan.infra.manifest import ASSEMBLY, step_key
 from eukan.infra.pipeline import run_simple_pipeline
@@ -59,9 +63,6 @@ def _mock_transcript_mapping(monkeypatch, tmp_path):
             (tmp_path / cmd2[cmd2.index("-o") + 1]).write_text("bam")
         return ""
 
-    def fake_sort(unsorted, out_bam, wd, num_cpu):
-        (wd / out_bam).write_text("bam")
-
     def fake_unmapped(unsorted_bam, out_fasta):
         unmapped.append(out_fasta.name)
         out_fasta.write_text(">u\nACGT\n")
@@ -70,7 +71,6 @@ def _mock_transcript_mapping(monkeypatch, tmp_path):
     monkeypatch.setattr(minimap2, "run_piped", fake_piped)
     monkeypatch.setattr(minimap2, "run_cmd", lambda *a, **k: None)
     monkeypatch.setattr(minimap2, "_write_unmapped_fasta", fake_unmapped)
-    monkeypatch.setattr(minimap2, "_coordinate_sort_and_filter", fake_sort)
     monkeypatch.setattr(minimap2, "_bam_is_complete", lambda _p: False)
     monkeypatch.setattr(minimap2, "_finalize_transcript_diagnostics", lambda _c: None)
     return piped, unmapped
@@ -78,6 +78,42 @@ def _mock_transcript_mapping(monkeypatch, tmp_path):
 
 def _minimap2_cmds(piped):
     return [c1 for c1, _ in piped if c1 and c1[0] == "minimap2"]
+
+
+def test_failed_transcript_sort_reports_samtools_error(tmp_path, monkeypatch):
+    """A failed sort of a transcript BAM surfaces samtools' own error. The
+    segemehl-era translation re-raised it as out-of-space with a hint that a
+    re-run reuses the unsorted BAM and skips the mapper; minimap2 always re-maps."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "samtools").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = sort ]; then\n'
+        '  echo \'samtools sort: failed writing to "o.bam": Illegal seek\' >&2; exit 1\n'
+        "fi\n"
+    )
+    (bindir / "samtools").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    real_piped = minimap2.run_piped
+
+    def piped(cmd1, cmd2, **kw):
+        if cmd1[0] != "minimap2":
+            return real_piped(cmd1, cmd2, **kw)
+        (tmp_path / cmd2[cmd2.index("-o") + 1]).write_text("bam")  # the unsorted BAM
+        return ""
+
+    monkeypatch.setattr(minimap2, "run_piped", piped)
+    monkeypatch.setattr(minimap2, "_write_unmapped_fasta", lambda u, o: 0)
+    monkeypatch.setattr(minimap2, "_bam_is_complete", lambda _p: False)
+    query = tmp_path / "trinity-denovo.fasta"
+    query.write_text(">t\nACGT\n")
+
+    with pytest.raises(ExternalToolError) as exc_info:
+        minimap2._map_one_transcript_set(
+            _config(tmp_path), query, "trinity-denovo.genome.bam", non_canonical=False,
+        )
+    assert "Illegal seek" in exc_info.value.stderr_snippet
+    assert "reuse" not in (exc_info.value.hint or "").lower()
 
 
 def test_maps_both_trinity_tracks(tmp_path, monkeypatch):
