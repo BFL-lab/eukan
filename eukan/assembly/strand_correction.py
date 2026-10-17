@@ -180,13 +180,12 @@ def _decide(
 # ---------------------------------------------------------------------------
 
 
-def run_strand_correction(config: AssemblyConfig) -> None:
-    """Convert the Trinity transcript->genome BAMs to models and (when enabled)
-    homology-correct strand."""
-    wd = config.work_dir
+def _convert_track_bams(wd: Path) -> None:
+    """Convert each Trinity transcript->genome BAM to ``<track>.genome.gff3`` models.
 
-    # 1. Always: each Trinity transcript->genome BAM -> gene>mRNA>exon GFF3 (the SL
-    #    cut consumes these, replacing the conversion that used to live in run_sl_cut).
+    Runs whether or not correction does: the SL cut consumes these (the conversion
+    used to live in run_sl_cut).
+    """
     for _, bam_name in TRANSCRIPT_SETS:
         bam = wd / bam_name
         if not bam.exists():
@@ -194,6 +193,101 @@ def run_strand_correction(config: AssemblyConfig) -> None:
         out = wd / f"{bam.stem}{RAW_GFF3}"  # <track>.genome.gff3
         n = bam_to_transcript_gff3(bam, out, source=bam_name[: -len(GENOME_BAM_SUFFIX)])
         log.info("Converted %s -> %s (%d models).", bam.name, out.name, n)
+
+
+def _blastx_coding_strands(
+    config: AssemblyConfig, models_by_tag: dict[str, list[Transcript]], contigs: ContigIndex
+) -> dict[str, str]:
+    """Both-strand blastx -> per-hit query frame -> the coding strand of each
+    confirmed transcript, keyed ``{tag}:{tid}``.
+
+    A positive frame means the label is coding, a negative one that its reverse
+    complement is, so a hit both confirms and flips labels.
+    """
+    wd = config.work_dir
+    run_blastx(
+        config, models_by_tag, contigs, wd / _QUERY_FASTA, wd / _HITS_TSV,
+        evalue=config.strand_blastx_evalue, max_target_seqs=1,
+        fields=("qseqid", "sseqid", "bitscore", "qframe"),
+    )
+    frames = parse_hits(wd / _HITS_TSV)
+    coding: dict[str, str] = {}
+    for tag, models in models_by_tag.items():
+        for tx in models:
+            qid = f"{tag}:{tx.tid}"
+            if qid in frames:
+                coding[qid] = coding_strand(tx.strand, frames[qid])
+    return coding
+
+
+def _learn_consensus(
+    models_by_tag: dict[str, list[Transcript]],
+    coding: dict[str, str],
+    contigs: ContigIndex,
+    min_consensus: int,
+) -> tuple[str, str]:
+    """The dominant splice consensus and its RC-twin, learned from the confirmed
+    introns read on the homology-determined coding strand (not the original label)."""
+    tally: Counter[str] = Counter()
+    for tag, models in models_by_tag.items():
+        for tx in models:
+            cstrand = coding.get(f"{tag}:{tx.tid}")
+            if cstrand is None:
+                continue
+            for istart, iend in introns_of(tx.exons):
+                motif = consensus_on_strand(
+                    dinucleotide(contigs, tx.chrom, istart, iend), cstrand
+                )
+                if motif:
+                    tally[motif] += 1
+    total = sum(tally.values())
+    dominant, rc = _pick_consensus(tally, min_consensus)
+    if total < min_consensus:
+        log.warning(
+            "Only %d confirmed introns (< %d); falling back to %s consensus.",
+            total, min_consensus, dominant,
+        )
+    log.info(
+        "Strand consensus %s (rc-twin %s); %d confirmed transcripts, %d introns.",
+        dominant, rc, len(coding), total,
+    )
+    return dominant, rc
+
+
+def _correct_and_write(
+    wd: Path,
+    models_by_tag: dict[str, list[Transcript]],
+    coding: dict[str, str],
+    dominant: str,
+    rc: str,
+    contigs: ContigIndex,
+) -> Counter[str]:
+    """Re-strand every transcript; write each track's ``<stem>.stranded.gff3`` and the
+    audit TSV. Returns how often each decision was made."""
+    counts: Counter[str] = Counter()
+    with open(wd / _AUDIT_TSV, "w") as tsv:
+        tsv.write("set\ttid\tn_introns\told_strand\tnew_strand\tdecision\thit\n")
+        for tag, models in models_by_tag.items():
+            for tx in models:
+                hit_coding = coding.get(f"{tag}:{tx.tid}")
+                n_introns = len(introns_of(tx.exons))
+                new, decision = _decide(tx, hit_coding, dominant, rc, contigs)
+                counts[decision] += 1
+                old = tx.strand
+                tx.strand = new
+                tsv.write(
+                    f"{tag}\t{tx.tid}\t{n_introns}\t{old}\t{new}\t{decision}"
+                    f"\t{int(hit_coding is not None)}\n"
+                )
+            write_transcripts(models, wd / f"{tag}{STRANDED_GFF3}")
+    return counts
+
+
+def run_strand_correction(config: AssemblyConfig) -> None:
+    """Convert the Trinity transcript->genome BAMs to models and (when enabled)
+    homology-correct strand."""
+    wd = config.work_dir
+    _convert_track_bams(wd)
 
     # Clear any stranded models from a prior run before deciding whether to rewrite
     # them. When correction is now a no-op (stranded library, no --uniprot, or a
@@ -203,7 +297,7 @@ def run_strand_correction(config: AssemblyConfig) -> None:
     for stem in mapped_transcript_stems():
         (wd / f"{stem}{STRANDED_GFF3}").unlink(missing_ok=True)
 
-    # 2. Gate: only for unstranded libraries with a protein DB supplied.
+    # Gate: only for unstranded libraries with a protein DB supplied.
     if config.strand_specific is not None:
         log.info(
             "Strand-specific library (%s); skipping strand correction.",
@@ -214,79 +308,23 @@ def run_strand_correction(config: AssemblyConfig) -> None:
         log.info("No --uniprot DB; skipping homology-based strand correction.")
         return
 
-    # 3. The model sets present — the raw genome GFF3 of each Trinity track (built
-    #    in step 1), correcting into a per-track ``<stem>.stranded.gff3``.
-    sets: list[tuple[str, Path, Path]] = []
-    for stem in mapped_transcript_stems():
-        raw = wd / f"{stem}{RAW_GFF3}"
-        if raw.exists():
-            sets.append((stem, raw, wd / f"{stem}{STRANDED_GFF3}"))
-    if not sets:
+    # The raw genome GFF3 of each Trinity track present (from _convert_track_bams),
+    # corrected into a per-track ``<stem>.stranded.gff3``.
+    models_by_tag = {
+        stem: read_transcripts(wd / f"{stem}{RAW_GFF3}")
+        for stem in mapped_transcript_stems()
+        if (wd / f"{stem}{RAW_GFF3}").exists()
+    }
+    if not models_by_tag:
         log.warning("No transcript models to strand-correct.")
         return
-    models_by_tag = {tag: read_transcripts(inp) for tag, inp, _ in sets}
 
     with ContigIndex(config.genome) as contigs:
-        # 4. Both-strand blastx -> per-hit query frame -> the coding strand of each
-        #    confirmed transcript (positive frame = label is coding, negative = its
-        #    reverse complement is). This both confirms and flips labels.
-        run_blastx(
-            config, models_by_tag, contigs, wd / _QUERY_FASTA, wd / _HITS_TSV,
-            evalue=config.strand_blastx_evalue, max_target_seqs=1,
-            fields=("qseqid", "sseqid", "bitscore", "qframe"),
+        coding = _blastx_coding_strands(config, models_by_tag, contigs)
+        dominant, rc = _learn_consensus(
+            models_by_tag, coding, contigs, config.min_strand_consensus
         )
-        frames = parse_hits(wd / _HITS_TSV)
-        coding: dict[str, str] = {}
-        for tag, models in models_by_tag.items():
-            for tx in models:
-                qid = f"{tag}:{tx.tid}"
-                if qid in frames:
-                    coding[qid] = coding_strand(tx.strand, frames[qid])
-
-        # 5. Learn the dominant splice consensus from confirmed introns, read on the
-        #    homology-determined coding strand (not the original label).
-        tally: Counter[str] = Counter()
-        for tag, models in models_by_tag.items():
-            for tx in models:
-                cstrand = coding.get(f"{tag}:{tx.tid}")
-                if cstrand is None:
-                    continue
-                for istart, iend in introns_of(tx.exons):
-                    motif = consensus_on_strand(
-                        dinucleotide(contigs, tx.chrom, istart, iend), cstrand
-                    )
-                    if motif:
-                        tally[motif] += 1
-        total = sum(tally.values())
-        dominant, rc = _pick_consensus(tally, config.min_strand_consensus)
-        if total < config.min_strand_consensus:
-            log.warning(
-                "Only %d confirmed introns (< %d); falling back to %s consensus.",
-                total, config.min_strand_consensus, dominant,
-            )
-        log.info(
-            "Strand consensus %s (rc-twin %s); %d confirmed transcripts, %d introns.",
-            dominant, rc, len(coding), total,
-        )
-
-        # 6. Correct each transcript; write stranded models + the audit TSV.
-        counts: Counter[str] = Counter()
-        with open(wd / _AUDIT_TSV, "w") as tsv:
-            tsv.write("set\ttid\tn_introns\told_strand\tnew_strand\tdecision\thit\n")
-            for tag, _inp, out in sets:
-                models = models_by_tag[tag]
-                for tx in models:
-                    hit_coding = coding.get(f"{tag}:{tx.tid}")
-                    n_introns = len(introns_of(tx.exons))
-                    new, decision = _decide(tx, hit_coding, dominant, rc, contigs)
-                    counts[decision] += 1
-                    old = tx.strand
-                    tx.strand = new
-                    tsv.write(
-                        f"{tag}\t{tx.tid}\t{n_introns}\t{old}\t{new}\t{decision}"
-                        f"\t{int(hit_coding is not None)}\n"
-                    )
-                write_transcripts(models, out)
+        counts = _correct_and_write(wd, models_by_tag, coding, dominant, rc, contigs)
 
     log.info(
         "Strand correction: %d flipped, %d assigned, %d kept, %d mono-exon, "
