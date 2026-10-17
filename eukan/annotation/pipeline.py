@@ -25,7 +25,7 @@ from eukan.infra.manifest import (
 from eukan.infra.pipeline import run_orchestrated_step
 from eukan.infra.steps import step_dir
 from eukan.settings import PipelineConfig
-from eukan.validation import sanitize_genome_fasta, validate_fasta
+from eukan.validation import sanitize_genome_fasta, validate_fasta, validate_gff
 
 log = get_logger(__name__)
 
@@ -37,8 +37,6 @@ log = get_logger(__name__)
 
 def find_orfs(config: PipelineConfig, trans_gff3: Path) -> Path:
     """Find ORFs in transcript assemblies."""
-    from eukan.validation import validate_gff
-
     output = "transcript_orfs.gff3"
     sdir = step_dir(config.work_dir, "orf_finder")
     log.info("Finding ORFs in transcript assemblies...")
