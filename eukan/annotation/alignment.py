@@ -11,7 +11,7 @@ import gffutils
 
 from eukan.annotation.spaln_params import build_ssp
 from eukan.gff.normalize import normalize_to_gff3
-from eukan.gff.rows import iter_gff3_rows
+from eukan.gff.rows import iter_gff3_rows, parse_attrs
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_dir
@@ -55,21 +55,16 @@ def align_proteins(
 
 
 def _write_protein_hints(prot_gff3: Path, out: Path) -> None:
-    """AUGUSTUS protein hints: each CDS as a CDSpart grouped by its Parent."""
-    with open(prot_gff3) as fin, open(out, "w") as fout:
-        for line in fin:
-            cols = line.rstrip("\n").split("\t")
-            if len(cols) == 9 and cols[2] == "CDS" and not line.startswith("#"):
+    """AUGUSTUS protein hints: each CDS as a CDSpart grouped by its (still
+    URL-escaped) Parent."""
+    with open(out, "w") as fout:
+        for cols in iter_gff3_rows(prot_gff3):
+            if cols[2] == "CDS":
                 end = ";" if cols[8].endswith(";") else ""
+                group = parse_attrs(cols[8]).get("Parent", "")
                 cols[2] = "CDSpart"
-                cols[8] = f"pri=1;src=P;group={_attr(cols[8], 'Parent')}{end}"
+                cols[8] = f"pri=1;src=P;group={group}{end}"
                 fout.write("\t".join(cols) + "\n")
-
-
-def _attr(column9: str, key: str) -> str:
-    """Raw (still URL-escaped) value of *key* in a GFF3 attribute column."""
-    m = re.search(rf"(?:^|;){key}=([^;]*)", column9)
-    return m.group(1) if m else ""
 
 
 def _gene_lengths_and_introns(gff3: Path) -> tuple[list[int], int]:
@@ -80,17 +75,14 @@ def _gene_lengths_and_introns(gff3: Path) -> tuple[list[int], int]:
     lengths: list[int] = []
     gene_of: dict[str, str] = {}
     cds_per_parent: Counter[str] = Counter()
-    with open(gff3) as fh:
-        for line in fh:
-            cols = line.split("\t")
-            if len(cols) != 9 or line.startswith("#"):
-                continue
-            if cols[2] == "gene":
-                lengths.append(abs(int(cols[4]) - int(cols[3])))
-            elif cols[2] == "mRNA":
-                gene_of[_attr(cols[8], "ID")] = _attr(cols[8], "Parent")
-            elif cols[2] == "CDS":
-                cds_per_parent[_attr(cols[8], "Parent")] += 1
+    for cols in iter_gff3_rows(gff3):
+        if cols[2] == "gene":
+            lengths.append(abs(int(cols[4]) - int(cols[3])))
+        elif cols[2] == "mRNA":
+            attrs = parse_attrs(cols[8])
+            gene_of[attrs.get("ID", "")] = attrs.get("Parent", "")
+        elif cols[2] == "CDS":
+            cds_per_parent[parse_attrs(cols[8]).get("Parent", "")] += 1
     cds_per_gene: Counter[str] = Counter()
     for parent, n in cds_per_parent.items():
         cds_per_gene[gene_of.get(parent, parent)] += n

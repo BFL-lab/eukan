@@ -45,9 +45,12 @@ def test_protein_hints_match_the_gffutils_transform(tmp_path, trailing):
     assert len(ref.splitlines()) == 5
 
 
-def test_gene_lengths_and_introns_match_the_db_walk(tmp_path):
+@pytest.mark.parametrize("trailing", [True, False])
+def test_gene_lengths_and_introns_match_the_db_walk(tmp_path, trailing):
+    # Without trailing semicolons the old scan kept the newline on the last
+    # attribute, so g1.t1's CDS (Parent last) missed g1 and g1 lost an intron.
     gff = tmp_path / "genemark.gff3"
-    gff.write_text(
+    text = (
         "c1\tgenemark\tgene\t100\t900\t.\t+\t.\tID=g1;\n"
         "c1\tgenemark\tmRNA\t100\t900\t.\t+\t.\tID=g1.t1;Parent=g1;\n"
         "c1\tgenemark\tCDS\t100\t200\t.\t+\t0\tID=g1.c1;Parent=g1.t1;\n"
@@ -61,6 +64,7 @@ def test_gene_lengths_and_introns_match_the_db_walk(tmp_path):
         "c1\tgenemark\tgene\t5000\t5600\t.\t+\t.\tID=g3;\n"
         "c1\tgenemark\tmRNA\t5000\t5600\t.\t+\t.\tID=g3.t1;Parent=g3;\n"
     )
+    gff.write_text(text if trailing else text.replace(";\n", "\n"))
     db = create_gff_db(gff)
     genes = list(db.features_of_type("gene"))
     db_lengths = [abs(g.end - g.start) for g in genes]
