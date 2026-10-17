@@ -76,10 +76,6 @@ class GeneticCode:
             return [f"--gcode={self._ncbi_id}"]
         return []
 
-    @property
-    def is_genemark_supported(self) -> bool:
-        return self._ncbi_id in _GENEMARK_CODES
-
     # -- dunder --------------------------------------------------------------
 
     def __repr__(self) -> str:

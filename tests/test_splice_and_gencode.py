@@ -36,12 +36,6 @@ class TestGeneticCodeGenemarkFlag:
         """Unsupported codes should return empty list, not error."""
         gc = GeneticCode(10)  # Euplotes — not in GeneMark's set
         assert gc.genemark_flag == []
-        assert gc.is_genemark_supported is False
-
-    def test_is_genemark_supported(self):
-        assert GeneticCode(1).is_genemark_supported is True
-        assert GeneticCode(6).is_genemark_supported is True
-        assert GeneticCode(12).is_genemark_supported is False
 
 
 # ---------------------------------------------------------------------------
