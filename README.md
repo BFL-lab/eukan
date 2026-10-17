@@ -297,7 +297,8 @@ Pipeline parameters:
                                   skipped.
 
 Re-run steps:
-  --run-modeler                   Force re-run BuildDatabase + RepeatModeler.
+  --run-modeler                   Force re-run BuildDatabase + RepeatModeler (also re-runs
+                                  RepeatMasker).
   --run-masker                    Force re-run RepeatMasker.
   -f, --force                     Force re-run all steps (ignore cached outputs).
 ```

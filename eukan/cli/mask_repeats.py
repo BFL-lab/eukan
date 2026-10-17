@@ -33,7 +33,10 @@ from eukan.infra.layout import step_work_dir
     help="Pre-built repeat-family library FASTA. When set, RepeatModeler is skipped.",
 )
 @optgroup.group("Re-run steps")
-@optgroup.option("--run-modeler", is_flag=True, help="Force re-run BuildDatabase + RepeatModeler.")
+@optgroup.option(
+    "--run-modeler", is_flag=True,
+    help="Force re-run BuildDatabase + RepeatModeler (also re-runs RepeatMasker).",
+)
 @optgroup.option("--run-masker", is_flag=True, help="Force re-run RepeatMasker.")
 @force_option
 def mask_repeats(**opts: Any) -> None:
