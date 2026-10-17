@@ -421,23 +421,11 @@ def _share_bucket(share: int) -> str:
     return ">1000"
 
 
-def diagnose_bam(
-    bam_path: Path,
-    genome_path: Path,
-    *,
-    min_clip_len: int = 8,
-    cluster_key_len: int = 12,
-    min_mapq: int = 20,
-    top_n: int = 15,
-    hamming_tolerance: int = 2,
-    cluster_hamming_tolerance: int = 1,
-    min_consistency_fraction: float = 0.95,
-    consensus_min_majority_fraction: float = 0.6,
-) -> DiagnosticReport:
-    """Stream a BAM and return aggregated soft-clip + intron + locus stats.
+@dataclass(frozen=True)
+class DiagnosticParams:
+    """The tunables of :func:`diagnose_bam`; the pipeline runs the defaults.
 
-    One sequential pass over the BAM; no index required. Three knobs
-    tune motif consolidation over the same K-bp anchored window:
+    Three knobs tune motif consolidation over the same K-bp anchored window:
 
     - ``hamming_tolerance`` — per-locus consolidation. Tracked clip
       keys at a locus are considered to match the dominant key if
@@ -461,6 +449,25 @@ def diagnose_bam(
     sequence. Lower values let the consensus extend further into noisier
     columns; higher values terminate sooner. Default 0.6.
     """
+
+    min_clip_len: int = 8
+    cluster_key_len: int = 12
+    min_mapq: int = 20
+    top_n: int = 15
+    hamming_tolerance: int = 2
+    cluster_hamming_tolerance: int = 1
+    min_consistency_fraction: float = 0.95
+    consensus_min_majority_fraction: float = 0.6
+
+
+def diagnose_bam(
+    bam_path: Path, genome_path: Path, params: DiagnosticParams = DiagnosticParams(),
+) -> DiagnosticReport:
+    """Stream a BAM and return aggregated soft-clip + intron + locus stats.
+
+    One sequential pass over the BAM; no index required. *params* holds the
+    clustering and consolidation knobs (:class:`DiagnosticParams`).
+    """
     n_reads_scanned = 0
     n_reads_with_clip = 0
     clips_by_side: Counter[str] = Counter()
@@ -477,18 +484,18 @@ def diagnose_bam(
     with ContigIndex(genome_path) as contigs:
         bam = pysam.AlignmentFile(str(bam_path), "rb")
         try:
-            for read in iter_primary_alignments(bam, min_mapq=min_mapq):
+            for read in iter_primary_alignments(bam, min_mapq=params.min_mapq):
                 n_reads_scanned += 1
                 had_clip = False
                 chrom_name = read.reference_name
                 if chrom_name is None:
                     continue
-                for side, seq, anchor_pos in extract_clips(read, min_clip_len):
+                for side, seq, anchor_pos in extract_clips(read, params.min_clip_len):
                     had_clip = True
                     clips_by_side[side] += 1
                     tally_clip(polya, side, seq, chrom_name)
                     locus = (chrom_name, anchor_pos, side)
-                    key = _cluster_key(side, seq, cluster_key_len)
+                    key = _cluster_key(side, seq, params.cluster_key_len)
                     cluster_loci.setdefault(key, set()).add(locus)
                     cluster_reads[key] += 1
                     cluster_examples.setdefault(key, seq)
@@ -497,7 +504,7 @@ def diagnose_bam(
                     ld.n_clips += 1
                     if len(seq) > len(ld.longest_clip):
                         ld.longest_clip = seq
-                    if len(seq) >= cluster_key_len:
+                    if len(seq) >= params.cluster_key_len:
                         if key in ld.long_key_counts or len(ld.long_key_counts) < LOCUS_KEY_CAP:
                             ld.long_key_counts[key] += 1
                     else:
@@ -519,7 +526,7 @@ def diagnose_bam(
     keys_sorted = sorted(
         cluster_reads.items(), key=lambda kv: (-kv[1], kv[0]),
     )
-    canonical_map = _canonicalize_keys(keys_sorted, cluster_hamming_tolerance)
+    canonical_map = _canonicalize_keys(keys_sorted, params.cluster_hamming_tolerance)
 
     canon_cluster_loci: dict[str, set[tuple[str, int, str]]] = {}
     canon_cluster_reads: Counter[str] = Counter()
@@ -540,7 +547,7 @@ def diagnose_bam(
     top_keys = sorted(
         canon_cluster_to_loci_count.items(),
         key=lambda kv: (-kv[1], -canon_cluster_reads[kv[0]], kv[0]),
-    )[:top_n]
+    )[:params.top_n]
     top_clusters = [(k, n_loci, canon_cluster_reads[k]) for k, n_loci in top_keys]
 
     # Build a consensus sequence for each top-N cluster from its member
@@ -570,16 +577,16 @@ def diagnose_bam(
         clips: list[str] = []
         for loc in loci_by_side[dominant_side]:
             lc = locus_data[loc].longest_clip
-            if len(lc) < cluster_key_len:
+            if len(lc) < params.cluster_key_len:
                 continue
-            if _cluster_key(dominant_side, lc, cluster_key_len) not in raw_keys:
+            if _cluster_key(dominant_side, lc, params.cluster_key_len) not in raw_keys:
                 continue
             clips.append(lc)
         if not clips:
             continue
         consensus = _cluster_consensus(
             clips, dominant_side,
-            min_majority_fraction=consensus_min_majority_fraction,
+            min_majority_fraction=params.consensus_min_majority_fraction,
         )
         if consensus:
             canon_cluster_consensus[seed] = consensus
@@ -608,9 +615,9 @@ def diagnose_bam(
 
     locus_consistency = _build_locus_consistency_stats(
         locus_data, canon_cluster_to_loci_count, canonical_map,
-        hamming_tolerance=hamming_tolerance,
-        min_consistency_fraction=min_consistency_fraction,
-        top_n=top_n,
+        hamming_tolerance=params.hamming_tolerance,
+        min_consistency_fraction=params.min_consistency_fraction,
+        top_n=params.top_n,
     )
 
     return DiagnosticReport(

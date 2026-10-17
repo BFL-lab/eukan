@@ -24,6 +24,7 @@ from pathlib import Path
 import pysam
 
 from eukan.assembly.bam_diagnostic import (
+    DiagnosticParams,
     NonCanonicalSpliceLevel,
     TransSplicingCall,
     TransSplicingLevel,
@@ -47,10 +48,6 @@ from eukan.infra.runner import run_cmd
 from eukan.infra.utils import concat_files
 
 log = get_logger(__name__)
-
-# Read-BAM poly-A is characterized at the same MAPQ floor diagnose_bam uses, so a
-# backfill (poly-A-only) pass over the read BAM matches the full-walk numbers.
-_DIAGNOSTIC_MIN_MAPQ = 20
 
 
 def _log_read_polya(pa: PolyAStats, bam_name: str) -> None:
@@ -255,7 +252,8 @@ def run_softclip_diagnostic(bam: Path, genome: Path, wd: Path) -> None:
         # BAM) when an existing or pre-feature summary would otherwise skip it — else
         # the section is silently never produced on resume / force / upgrade-in-place.
         if not has_section(wd, "reads"):
-            pa = characterize_polya_bam(bam, "reads", min_mapq=_DIAGNOSTIC_MIN_MAPQ)
+            # At diagnose_bam's MAPQ floor, so the backfill matches the full walk.
+            pa = characterize_polya_bam(bam, "reads", min_mapq=DiagnosticParams().min_mapq)
             write_polya_section(wd, "reads", stats_to_dict(pa))
             _log_read_polya(pa, bam.name)
         return
