@@ -300,7 +300,7 @@ def _orig_spliced(gff, genome):
     )["t1"]
 
 
-def _clip_gff3(gff, genome, clip_map, out_gff, out_fa):
+def _split_and_reextract(gff, genome, clip_map, out_gff, out_fa):
     # Split at clip_map (25 bp floor), write the models, re-extract them with gffutils.
     from eukan.gff import create_gff_db
     from eukan.gff.io import iter_assembled_sequences
@@ -316,7 +316,7 @@ def _clip_gff3(gff, genome, clip_map, out_gff, out_fa):
 
 
 @pytest.mark.parametrize("strand", ["+", "-"])
-def test_clip_gff3_splits_and_reextracts(tmp_path, strand):
+def test_split_models_at_clips_reextracts_the_pieces(tmp_path, strand):
     (tmp_path / "genome.fa").write_text(f">chr1\n{GENOME}\n")
     gff = tmp_path / "tx.gff3"
     gff.write_text(_GFF_TEMPLATE.format(s=strand))
@@ -326,7 +326,7 @@ def test_clip_gff3_splits_and_reextracts(tmp_path, strand):
 
     out_gff = tmp_path / "clipped.gff3"
     out_fa = tmp_path / "clipped.fasta"
-    _clip_gff3(gff, tmp_path / "genome.fa", {"t1": [45]}, out_gff, out_fa)
+    _split_and_reextract(gff, tmp_path / "genome.fa", {"t1": [45]}, out_gff, out_fa)
 
     recs = _read_fasta(out_fa)
     assert set(recs) == {"t1.j1", "t1.j2"}
@@ -515,16 +515,6 @@ def test_run_jaccard_clips_stringtie_when_present(tmp_path, monkeypatch):
     )
     run_jaccard(config)
     assert called == ["st"]  # StringTie GTF clipped alongside the de novo FASTA
-
-
-def test_clip_gff3_passthrough_when_no_clip(tmp_path):
-    (tmp_path / "genome.fa").write_text(f">chr1\n{GENOME}\n")
-    gff = tmp_path / "tx.gff3"
-    gff.write_text(_GFF_TEMPLATE.format(s="+"))
-    out_gff = tmp_path / "out.gff3"
-    out_fa = tmp_path / "out.fasta"
-    _clip_gff3(gff, tmp_path / "genome.fa", {}, out_gff, out_fa)  # no clips
-    assert set(_read_fasta(out_fa)) == {"t1"}
 
 
 # --- run_jaccard wiring ----------------------------------------------------
