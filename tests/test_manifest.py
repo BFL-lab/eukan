@@ -1,12 +1,16 @@
 """Tests for the run manifest data model and step lifecycle."""
 
 import json
+import os
 import subprocess
+import time
+from pathlib import Path
 
 import pytest
 
 from eukan.cli.status import format_status
 from eukan.infra import manifest as manifest_mod
+from eukan.infra import utils
 from eukan.infra.manifest import (
     RunManifest,
     StepRecord,
@@ -359,3 +363,52 @@ class TestToolVersionSnapshot:
         assert manifest_mod._snapshot_tool_versions()["trinity"] == "2.15.2"
         assert manifest_mod._snapshot_tool_versions()["trinity"] == "2.15.2"
         assert len(conda_calls) == 1  # the refreshed entry is reused
+
+
+class TestMd5Cache:
+    """md5_file reuses a digest within one process while the file is unchanged."""
+
+    _HOUR_AGO = time.time_ns() - 3600 * 10**9
+
+    @staticmethod
+    def _opened(monkeypatch):
+        opened = []
+
+        def counting_open(path, *args, **kwargs):
+            opened.append(Path(path))
+            return open(path, *args, **kwargs)
+
+        monkeypatch.setattr(utils, "open", counting_open, raising=False)
+        return opened
+
+    def test_unchanged_file_is_read_once(self, tmp_path, monkeypatch):
+        """The resume path hashed the same multi-GB BAM up to three times."""
+        f = tmp_path / "reads.bam"
+        f.write_bytes(b"x" * 1000)
+        os.utime(f, ns=(self._HOUR_AGO, self._HOUR_AGO))
+        opened = self._opened(monkeypatch)
+        assert md5_file(f) == md5_file(f)
+        assert opened == [f]
+
+    @pytest.mark.parametrize(("second", "mtime_shift"), [("v2-longer", 0), ("v2", 10**9)])
+    def test_new_size_or_mtime_is_rehashed(self, tmp_path, second, mtime_shift):
+        f = tmp_path / "out.txt"
+        f.write_text("v1")
+        os.utime(f, ns=(self._HOUR_AGO, self._HOUR_AGO))
+        first = md5_file(f)
+        f.write_text(second)
+        stamp = self._HOUR_AGO + mtime_shift
+        os.utime(f, ns=(stamp, stamp))
+        assert md5_file(f) != first
+
+    def test_just_written_file_is_not_reused(self, tmp_path):
+        """mtime comes from a coarse clock (4 ms ticks on this kernel), so a
+        same-size rewrite within one tick keeps (size, mtime_ns)."""
+        f = tmp_path / "out.gff3"
+        f.write_text("a")
+        stamp = time.time_ns()
+        os.utime(f, ns=(stamp, stamp))
+        first = md5_file(f)
+        f.write_text("b")
+        os.utime(f, ns=(stamp, stamp))
+        assert md5_file(f) != first

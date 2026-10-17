@@ -5,20 +5,42 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import time
 from collections.abc import Iterable
 from importlib.resources import files
 from pathlib import Path
 
 _MD5_CHUNK_SIZE = 8 * 1024 * 1024  # 8 MiB
 
+# Digests already computed in this process, keyed by (absolute path, size,
+# mtime_ns). The kernel stamps mtime from a coarse clock (4 ms ticks here,
+# whole seconds on some filesystems), so a same-size rewrite within one tick
+# keeps the key: a digest is stored only for a file last modified at least
+# this long before it was hashed.
+_MD5_CACHE_MIN_AGE_NS = 2 * 10**9
+_md5_cache: dict[tuple[str, int, int], str] = {}
+
 
 def md5_file(path: Path) -> str:
-    """Compute MD5 of a file in chunks (never loads entire file into memory)."""
+    """Compute MD5 of a file in chunks (never loads entire file into memory).
+
+    Within one process an unchanged file is hashed once: fingerprinting an
+    input, recording a step output and verifying it on resume often hash
+    the same multi-GB file.
+    """
+    now = time.time_ns()
+    st = os.stat(path)
+    key = (os.path.abspath(path), st.st_size, st.st_mtime_ns)
+    if key in _md5_cache:
+        return _md5_cache[key]
     h = hashlib.md5()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(_MD5_CHUNK_SIZE), b""):
             h.update(chunk)
-    return h.hexdigest()
+    digest = h.hexdigest()
+    if now - st.st_mtime_ns >= _MD5_CACHE_MIN_AGE_NS:
+        _md5_cache[key] = digest
+    return digest
 
 
 def symlink(target: Path, link: Path) -> None:
