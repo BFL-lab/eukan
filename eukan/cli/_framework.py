@@ -81,8 +81,8 @@ class PreformattedEpilogCommand(click.Command):
         # show_full_help is set by EukanGroup.parse_args based on whether
         # --help (verbose) or -h (brief) was used.
         state = ctx.find_object(CLIState)
-        if state is not None and state.show_full_help:
-            text = _resolve_epilog(self.epilog or "")
+        if self.epilog and state is not None and state.show_full_help:
+            text = _resolve_epilog(self.epilog)
             formatter.write("\n")
             for line in text.split("\n"):
                 formatter.write(f"  {line}\n")

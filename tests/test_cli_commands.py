@@ -162,6 +162,16 @@ def test_gff3toseq_rejects_an_unknown_genetic_code(run_dir):
     assert "Hint: Valid codes: 1, 2, 3," in result.output
 
 
+@pytest.mark.parametrize(
+    "command", ["mask-repeats", "func-annot", "prep-submission", "db-fetch", "compare", "check"],
+)
+def test_long_help_without_an_epilog_ends_at_the_options(command):
+    """--help on a command with no epilog adds no empty epilog block after --help."""
+    result = CliRunner().invoke(cli, [command, "--help"])
+    assert result.exit_code == 0
+    assert result.output.endswith("Show this message and exit.\n")
+
+
 def test_db_fetch_help_has_no_options_header():
     """db-fetch lays out its option groups like every other command."""
     result = CliRunner().invoke(cli, ["db-fetch", "-h"])
