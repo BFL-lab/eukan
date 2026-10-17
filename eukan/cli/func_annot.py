@@ -58,10 +58,11 @@ def func_annot(**opts: Any) -> None:
     """Add functional annotations (UniProt/KOfam + Pfam) to proteins.
 
     \b
-    When run after `eukan annotate` and `eukan db-fetch`, the predicted
-    protein sequences and homology/Pfam databases are discovered
-    automatically. Use the override options to point to different files
-    or to run functional annotation independently of the main pipeline.
+    The proteins are not discovered automatically: extract the predicted
+    proteins of an `eukan annotate` run with `eukan gff3toseq` and pass
+    them with --proteins; pass annotate/final.gff3 with --gff3 to get the
+    annotated final.mod.gff3. The homology and Pfam databases default to
+    where `eukan db-fetch` puts them (databases/ in the current directory).
 
     \b
     --homology-db uniprot (default) runs phmmer against UniProt-SwissProt

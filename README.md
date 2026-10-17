@@ -112,8 +112,10 @@ The typical workflow runs each subcommand from the same working directory. Each 
 # 4. Annotate:  auto-discovers assembly outputs, repeat hints, and databases
 ./eukan-docker annotate -g genome.fasta -p proteins.fasta --kingdom protist
 
-# 5. Functional annotation:  auto-discovers predicted proteins + databases
-./eukan-docker func-annot
+# 5. Functional annotation:  extract the predicted proteins, then annotate them
+#    (the databases from step 1 are found in databases/)
+./eukan-docker gff3toseq -g genome.fasta -i annotate/final.gff3 --output-format protein -o proteins.faa
+./eukan-docker func-annot -p proteins.faa --gff3 annotate/final.gff3
 
 # 6. NCBI submission prep (table2asn validator + .sqn)
 ./eukan-docker prep-submission -t template.sbt --organism "Genus species"
@@ -312,7 +314,7 @@ Pass the masked genome to the next stage (`eukan annotate -g <stem>.masked.fasta
 
 ### `eukan func-annot`
 
-Add functional annotations to predicted proteins. When run after `eukan annotate` and `eukan db-fetch`, the predicted protein sequences and reference databases are discovered automatically.
+Add functional annotations to predicted proteins. The proteins are not discovered automatically: extract them from `annotate/final.gff3` with `eukan gff3toseq` and pass them with `--proteins`, and pass `--gff3 annotate/final.gff3` to get the annotated `func-annot/final.mod.gff3` that `eukan prep-submission` picks up. The reference databases default to where `eukan db-fetch` puts them (`databases/` in the current directory).
 
 Two homology sources are supported (selected with `--homology-db`); Pfam is searched in both modes:
 
