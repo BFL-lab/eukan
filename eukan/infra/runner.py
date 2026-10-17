@@ -128,11 +128,9 @@ def run_cmd(
     cwd: Path,
     in_file: str | None = None,
     out_file: str | None = None,
-    err_file: str | None = None,
     binary: bool = False,
-    timeout: int | None = None,
     extra_env: dict[str, str] | None = None,
-) -> subprocess.CompletedProcess:
+) -> None:
     """Run an external command safely.
 
     Args:
@@ -142,20 +140,16 @@ def run_cmd(
             for reading and connected to the child's stdin (no Python
             buffering — the child reads from the fd directly).
         out_file: If set, stdout is streamed straight to this filename
-            within *cwd* via the child's fd (no in-process capture).
-        err_file: If set, stderr is streamed straight to this filename
-            within *cwd* via the child's fd.
-        binary: Only meaningful when *out_file* is unset; controls
-            whether captured stdout is returned as bytes or str.
-        timeout: Optional timeout in seconds.
+            within *cwd* via the child's fd (no in-process capture);
+            otherwise stdout goes to ``/dev/null``. Stdout is never
+            captured, so nothing is returned.
+        binary: Read the child's stderr as bytes and decode it here,
+            instead of opening the pipe in text mode.
         extra_env: Additional environment variables merged on top of
             the current environment for this subprocess only.
 
-    Returns:
-        The CompletedProcess result.
-
     Raises:
-        ExternalToolError: If the command exits non-zero or times out.
+        ExternalToolError: If the command exits non-zero.
     """
     cmd_str = " ".join(cmd)
     log.debug("Running: %s (cwd=%s)", cmd_str, cwd)
@@ -167,18 +161,16 @@ def run_cmd(
     with contextlib.ExitStack() as stack:
         in_handle = stack.enter_context(open(cwd / in_file, "rb")) if in_file else None
         out_handle = stack.enter_context(open(cwd / out_file, "wb")) if out_file else None
-        err_handle = stack.enter_context(open(cwd / err_file, "wb")) if err_file else None
 
         stdin_target: int | None = in_handle.fileno() if in_handle else None
         stdout_target: int = out_handle.fileno() if out_handle else subprocess.DEVNULL
-        stderr_target: int = err_handle.fileno() if err_handle else subprocess.PIPE
 
         tool = _tool_name(cmd)
         # External tools occasionally emit non-UTF-8 bytes on stderr (e.g.
         # AUGUSTUS surfaces raw locale-encoded bytes from its C++ layer); a
         # strict decoder would crash before we ever see the message. errors
-        # only applies in text mode — pass it only when text=True so binary
-        # mode (binary=True) keeps returning raw bytes.
+        # only applies in text mode — pass it only when text=True; binary
+        # mode reads raw bytes, decoded the same way below.
         text_kwargs: dict[str, object] = (
             {"text": True, "errors": "replace"} if not binary else {"text": False}
         )
@@ -189,25 +181,12 @@ def run_cmd(
             missing_tool=tool,
             stdin=stdin_target,
             stdout=stdout_target,
-            stderr=stderr_target,
+            stderr=subprocess.PIPE,
             **text_kwargs,
         ) as proc:
-            try:
-                _, stderr = proc.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired as exc:
-                _signal_group(proc, signal.SIGKILL)
-                with contextlib.suppress(subprocess.TimeoutExpired):
-                    proc.communicate(timeout=5)
-                raise ExternalToolError(
-                    f"{tool} timed out after {timeout}s",
-                    tool=tool, returncode=-1, cmd=cmd,
-                    stderr_snippet=str(exc),
-                ) from exc
+            _, stderr = proc.communicate()
 
-    if stderr is None:
-        stderr_text = ""
-    else:
-        stderr_text = stderr if isinstance(stderr, str) else stderr.decode(errors="replace")
+    stderr_text = stderr if isinstance(stderr, str) else stderr.decode(errors="replace")
     if stderr_text:
         log.debug("stderr from %s:\n%s", tool, stderr_text)
 
@@ -218,10 +197,6 @@ def run_cmd(
             tool=tool, returncode=proc.returncode, cmd=cmd,
             stderr_snippet=stderr_text,
         )
-
-    return subprocess.CompletedProcess(
-        args=cmd, returncode=proc.returncode, stdout=None, stderr=stderr,
-    )
 
 
 def run_piped(

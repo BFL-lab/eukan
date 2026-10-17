@@ -124,23 +124,10 @@ class TestRunCmd:
         )
         assert (tmp_path / "out.txt").read_bytes() == b"hello"
 
-    def test_err_file_streams_directly(self, tmp_path):
-        """err_file should capture stderr without it appearing in the exception."""
-        run_cmd(
-            ["sh", "-c", "echo oops 1>&2"],
-            cwd=tmp_path,
-            err_file="err.txt",
-        )
-        assert (tmp_path / "err.txt").read_bytes() == b"oops\n"
-
     def test_nonzero_exit_raises(self, tmp_path):
         with pytest.raises(ExternalToolError) as exc_info:
             run_cmd(["false"], cwd=tmp_path)
         assert exc_info.value.returncode != 0
-
-    def test_timeout_raises(self, tmp_path):
-        with pytest.raises(ExternalToolError):
-            run_cmd(["sleep", "10"], cwd=tmp_path, timeout=1)
 
     def test_process_is_untracked_after_completion(self, tmp_path):
         before = len(_RUNNING)
@@ -201,17 +188,18 @@ class TestRunCmdResourceCleanup:
         reason="needs /proc fd listing",
     )
     def test_setup_failure_does_not_leak_redirect_handles(self, tmp_path, monkeypatch):
-        """A raise between opening the out/err files and starting the child
+        """A raise between opening the in/out files and starting the child
         must still close them. Pre-ExitStack this leaked 2 fds per call."""
         def boom(_cmd):
             raise RuntimeError("tool-name boom")
 
         monkeypatch.setattr(runner, "_tool_name", boom)
+        (tmp_path / "i.txt").write_text("")
 
         baseline = self._fd_count()
         for _ in range(40):
             with pytest.raises(RuntimeError, match="tool-name boom"):
-                run_cmd(["true"], cwd=tmp_path, out_file="o.txt", err_file="e.txt")
+                run_cmd(["true"], cwd=tmp_path, in_file="i.txt", out_file="o.txt")
         # No monotonic growth: handles were closed each time.
         assert self._fd_count() <= baseline + 1
 
