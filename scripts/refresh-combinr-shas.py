@@ -40,7 +40,7 @@ def fetch_sha(version: str, target: str) -> str:
     url = f"{BASE}/v{version}/combinr-{target}.tar.xz"
     print(f"  {target}: {url}", file=sys.stderr)
     digest = hashlib.sha256()
-    with urllib.request.urlopen(url) as resp:  # noqa: S310 (trusted GitHub release URL)
+    with urllib.request.urlopen(url) as resp:
         for chunk in iter(lambda: resp.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()

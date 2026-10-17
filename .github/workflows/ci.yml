@@ -40,7 +40,7 @@ jobs:
         run: poetry install --no-interaction --only-root
 
       - name: Lint (ruff)
-        run: poetry run ruff check eukan tests
+        run: poetry run ruff check eukan tests scripts
 
       - name: Type-check (mypy)
         run: poetry run mypy eukan
