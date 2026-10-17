@@ -34,6 +34,14 @@
 #   conda_lib_dirs  = dirs relative to $CONDA_PREFIX, prepended to
 #                     LD_LIBRARY_PATH in subprocesses only (keeps system
 #                     tools like git from breaking in the parent process).
+#                     Every tool eukan runs gets these entries, not only the
+#                     tool declaring them (only fitild does; install-extras.sh
+#                     builds it against $CONDA_PREFIX/lib). This is deliberate:
+#                     the Docker image sets LD_LIBRARY_PATH to the env's lib/
+#                     for every process and conda-activate.sh exports it too,
+#                     so scoping it to fitild would change only a conda env
+#                     without the activate script, making it the one setup in
+#                     which the other tools run without the env's lib/.
 
 [augustus]
 binary = "augustus"
@@ -155,7 +163,7 @@ version_cmd = ["fitild"]
 required_by = ["annotate"]
 install_hint = "Build from source: git clone https://github.com/ogotoh/fitild && cd fitild/src && ./configure && make"
 conda_path_dirs = ["opt/fitild/src"]
-conda_lib_dirs = ["lib"]
+conda_lib_dirs = ["lib"]  # reaches every tool eukan runs (see conda_lib_dirs above)
 
 [combinr]
 binary = "combinr"
