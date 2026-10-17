@@ -149,7 +149,7 @@ RUN pip install .
 #   - lib/ncbi-blast+ (391 MB BLAST+ dev SDK) — verified: no binary links to it
 #   - Unused BLAST CLIs (tblastx, psiblast, deltablast, rps*blast, seedtop,
 #     blast_formatter/_report, blastdbcheck) — not invoked by eukan or any
-#     bundled tool (RepeatMasker, RepeatModeler, PASA, Trinity)
+#     bundled tool (RepeatMasker, RepeatModeler, Trinity)
 #   - matplotlib + fontTools + contourpy + PIL + RNA python packages — only
 #     pulled in via lazy imports in scipy/biopython that we never trigger
 #   - AUGUSTUS pre-shipped species (165 of 166) — eukan always trains from
@@ -266,14 +266,12 @@ RUN chmod 644 /root/.gm_key /home/eukan/.gm_key 2>/dev/null || true
 # Environment variables (mirrors conda-activate.sh)
 # ---------------------------------------------------------------------------
 ENV CONDA_DEFAULT_ENV=eukan \
-    PATH="/opt/conda/envs/eukan/opt/genemark:/opt/conda/envs/eukan/opt/fitild/src:/opt/conda/envs/eukan/bin/EvmUtils:/opt/conda/envs/eukan/bin/EvmUtils/misc:/opt/conda/envs/eukan/opt/pasa-2.5.3/scripts:/opt/conda/envs/eukan/bin:${PATH}" \
+    PATH="/opt/conda/envs/eukan/opt/genemark:/opt/conda/envs/eukan/opt/fitild/src:/opt/conda/envs/eukan/bin:${PATH}" \
     LD_LIBRARY_PATH="/opt/conda/envs/eukan/lib" \
     ZOE="/opt/conda/envs/eukan/share/snap" \
     AUGUSTUS_CONFIG_PATH="/opt/conda/envs/eukan/config" \
     QUARRY_PATH="/opt/conda/envs/eukan/opt/codingquarry-2.0/QuarryFiles" \
-    EVM_HOME="/opt/conda/envs/eukan/opt/evidencemodeler-2.1.0" \
     TRINITY_HOME="/opt/conda/envs/eukan/bin" \
-    PASAHOME="/opt/conda/envs/eukan/opt/pasa-2.5.3" \
     ALN_TAB="/opt/conda/envs/eukan/share/spaln/table" \
     ALN_DBS="/opt/conda/envs/eukan/share/spaln/seqdb" \
     PERL5LIB="/opt/conda/envs/eukan/share/spaln/alndbs" \
