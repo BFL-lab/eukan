@@ -1,8 +1,11 @@
 """Tests for the run manifest data model and step lifecycle."""
 
+import json
+import subprocess
 
 import pytest
 
+from eukan.infra import manifest as manifest_mod
 from eukan.infra.manifest import (
     RunManifest,
     StepRecord,
@@ -309,3 +312,50 @@ class TestFormatStatus:
         assert "augustus" in output
         assert "failed" in output
         assert "exit code 1" in output
+
+
+class TestToolVersionSnapshot:
+    _CONDA_LIST = (
+        "# packages in environment at /env:\n"
+        "#\n"
+        "# Name    Version    Build    Channel\n"
+        "diamond    2.1.11    h43eeafb_0    bioconda\n"
+        "hmmer    3.4    hdbdd923_1    bioconda\n"
+        "samtools    1.21    h50ea8bc_0    bioconda\n"
+        "trinity    2.15.2    pl5321h077b44d_6    bioconda\n"
+        "zlib    1.3.1    hb9d3cd8_2    conda-forge\n"
+    )
+
+    @pytest.fixture
+    def conda_calls(self, tmp_path, monkeypatch):
+        """A conda prefix and cache dir under tmp_path, and a recording fake conda."""
+        (tmp_path / "env").mkdir()
+        monkeypatch.setenv("CONDA_PREFIX", str(tmp_path / "env"))
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        calls = []
+
+        def fake_run(cmd, **_kw):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout=self._CONDA_LIST, stderr="")
+
+        monkeypatch.setattr(manifest_mod.subprocess, "run", fake_run)
+        return calls
+
+    def test_records_the_conda_packages_tools_toml_declares(self, conda_calls):
+        """Not a hard-coded six that missed trinity and diamond and still listed
+        hmmer, which pyhmmer replaced."""
+        assert manifest_mod._snapshot_tool_versions() == {
+            "diamond": "2.1.11", "samtools": "1.21", "trinity": "2.15.2",
+        }
+
+    def test_cache_written_for_another_package_list_is_refreshed(self, tmp_path, conda_calls):
+        env = tmp_path / "env"
+        cache = tmp_path / "cache" / "eukan" / "tool-versions.json"
+        cache.parent.mkdir(parents=True)
+        cache.write_text(json.dumps({
+            "prefix": str(env), "mtime": env.stat().st_mtime, "versions": {"hmmer": "3.4"},
+        }))
+
+        assert manifest_mod._snapshot_tool_versions()["trinity"] == "2.15.2"
+        assert manifest_mod._snapshot_tool_versions()["trinity"] == "2.15.2"
+        assert len(conda_calls) == 1  # the refreshed entry is reused

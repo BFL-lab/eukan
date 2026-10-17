@@ -24,6 +24,7 @@ from typing import Any
 from pydantic import BaseModel, Field, PrivateAttr
 
 from eukan.infra.logging import get_logger
+from eukan.infra.tools_registry import load_tools
 
 log = get_logger(__name__)
 
@@ -255,9 +256,6 @@ def get_or_create_manifest(work_dir: Path, config: Any = None) -> RunManifest:
 # ---------------------------------------------------------------------------
 
 
-_CONDA_TOOLS = ["samtools", "augustus", "minimap2", "hmmer", "spaln", "snap"]
-
-
 def _tool_versions_cache_path() -> Path:
     """Per-user cache file for the conda tool-version snapshot."""
     import os
@@ -267,13 +265,13 @@ def _tool_versions_cache_path() -> Path:
 
 
 def _snapshot_tool_versions() -> dict[str, str]:
-    """Capture version strings for key tools via conda. Best-effort, never fails.
+    """Capture the version of every conda package in tools.toml. Best-effort, never fails.
 
     Cached in ``$XDG_CACHE_HOME/eukan/tool-versions.json`` (or
-    ``~/.cache/eukan/tool-versions.json``) keyed by ``CONDA_PREFIX`` and
-    its mtime — re-running ``conda list`` on every fresh manifest costs
-    hundreds of milliseconds, and the result only changes when packages
-    are installed or upgraded.
+    ``~/.cache/eukan/tool-versions.json``) keyed by ``CONDA_PREFIX``, its
+    mtime and the package list — re-running ``conda list`` on every fresh
+    manifest costs hundreds of milliseconds, and the result only changes
+    when packages are installed or upgraded.
     """
     import json
     import os
@@ -287,31 +285,30 @@ def _snapshot_tool_versions() -> dict[str, str]:
     except OSError:
         prefix_mtime = 0.0
 
+    packages = sorted({t.conda_package for t in load_tools() if t.conda_package})
+    key = {"prefix": prefix, "mtime": prefix_mtime, "packages": packages}
     cache_path = _tool_versions_cache_path()
     if cache_path.exists():
         try:
             cached = json.loads(cache_path.read_text())
-            if cached.get("prefix") == prefix and cached.get("mtime") == prefix_mtime:
+            if all(cached.get(k) == v for k, v in key.items()):
                 return dict(cached.get("versions") or {})
         except (OSError, ValueError):
             pass
 
-    versions = _query_conda_versions(prefix)
+    versions = _query_conda_versions(prefix, packages)
 
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(
-            {"prefix": prefix, "mtime": prefix_mtime, "versions": versions},
-            indent=2,
-        ))
+        cache_path.write_text(json.dumps({**key, "versions": versions}, indent=2))
     except OSError:
         pass  # caching is best-effort
 
     return versions
 
 
-def _query_conda_versions(prefix: str) -> dict[str, str]:
-    """Run ``conda list`` once and parse version strings for known tools."""
+def _query_conda_versions(prefix: str, packages: list[str]) -> dict[str, str]:
+    """Run ``conda list`` once and parse the version of each of *packages*."""
     try:
         result = subprocess.run(
             ["conda", "list", "-p", prefix, "--no-pip"],
@@ -327,7 +324,7 @@ def _query_conda_versions(prefix: str) -> dict[str, str]:
         if line.startswith("#"):
             continue
         parts = line.split()
-        if len(parts) >= 2 and parts[0] in _CONDA_TOOLS:
+        if len(parts) >= 2 and parts[0] in packages:
             versions[parts[0]] = parts[1]
     return versions
 
