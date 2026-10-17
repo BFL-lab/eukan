@@ -9,7 +9,10 @@
 # succeeds and `eukan check` reports GeneMark as missing.
 
 # ============================= BUILDER STAGE =================================
-FROM condaforge/mambaforge:latest AS builder
+# Pinned: condaforge/mambaforge has had no release since 24.9.2-0 (2024-11-27;
+# Mambaforge is deprecated in favour of Miniforge3), and `latest` is that same
+# image (identical platform digests on Docker Hub, checked 2026-10-16).
+FROM condaforge/mambaforge:24.9.2-0 AS builder
 
 # System packages needed for building fitild and spaln from source, plus
 # curl/xz to fetch and unpack the pre-built combinr release tarball. jq must be
