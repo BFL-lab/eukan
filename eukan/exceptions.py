@@ -1,19 +1,17 @@
 """Eukan exception hierarchy.
 
 Structured, domain-specific exceptions carrying actionable context for
-CLI error formatting. The CLI's top-level handler in ``cli.py``
-dispatches on the category classes below, so the hierarchy stays
-minimal and isinstance-friendly::
+CLI error formatting. The CLI's top-level handler (``EukanGroup.invoke``
+in :mod:`eukan.cli._framework`) renders any of them through its
+``format_for_cli()``, so a class exists only where it carries behaviour::
 
     EukanError
     ├── ConfigurationError
-    │   └── InvalidOptionError
     ├── ValidationError
     │   ├── FastaValidationError
     │   └── GFFValidationError
-    ├── DependencyError
-    │   ├── MissingToolError
-    │   └── ToolEnvError
+    ├── MissingToolError
+    ├── ToolEnvError
     └── ExternalToolError
 """
 
@@ -49,10 +47,6 @@ class ConfigurationError(EukanError):
     """Bad settings, missing options, or invalid combinations."""
 
 
-class InvalidOptionError(ConfigurationError):
-    """An option value is out of range or an incompatible combination was given."""
-
-
 class ValidationError(EukanError):
     """Invalid input files."""
 
@@ -78,11 +72,7 @@ class GFFValidationError(ValidationError):
     _kind = "GFF3"
 
 
-class DependencyError(EukanError):
-    """Missing or broken external tools or databases."""
-
-
-class MissingToolError(DependencyError):
+class MissingToolError(EukanError):
     """A required external binary is not installed or not on PATH.
 
     Raised when ``subprocess`` cannot locate the executable for an
@@ -102,7 +92,7 @@ class MissingToolError(DependencyError):
         )
 
 
-class ToolEnvError(DependencyError):
+class ToolEnvError(EukanError):
     """Required environment variable for a tool is not set."""
 
     def __init__(self, tool: str, *, env_var: str) -> None:

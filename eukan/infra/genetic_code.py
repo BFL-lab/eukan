@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from Bio.Data.CodonTable import unambiguous_dna_by_id
 
-from eukan.exceptions import InvalidOptionError
+from eukan.exceptions import ConfigurationError
 
 # Genetic codes supported by GeneMark-ES/ET (gmes_petap.pl --gcode).
 # Code 26 is remapped to 6 internally by GeneMark.
@@ -20,7 +20,7 @@ class GeneticCode:
     """Wrapper around an NCBI genetic code ID.
 
     Accepts ``int`` or ``str`` (the string is cast to ``int``).  Raises
-    :class:`~eukan.exceptions.InvalidOptionError` if the code is not a
+    :class:`~eukan.exceptions.ConfigurationError` if the code is not a
     recognised NCBI translation table.
 
     Examples::
@@ -37,13 +37,13 @@ class GeneticCode:
         try:
             ncbi_id = int(code)
         except (ValueError, TypeError) as exc:
-            raise InvalidOptionError(
+            raise ConfigurationError(
                 f"Invalid genetic code: {code!r}",
                 hint="Provide a numeric NCBI translation table ID (e.g. 1, 6, 10, 12).",
             ) from exc
 
         if ncbi_id not in unambiguous_dna_by_id:
-            raise InvalidOptionError(
+            raise ConfigurationError(
                 f"Unknown NCBI genetic code: {ncbi_id}",
                 hint=f"Valid codes: {', '.join(str(k) for k in sorted(unambiguous_dna_by_id))}",
             )
