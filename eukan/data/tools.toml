@@ -4,7 +4,7 @@
 #   - eukan check                    (verifies tools are installed)
 #   - eukan.infra.environ            (configures conda env vars at runtime)
 #   - eukan.infra.tools_registry     (loader shared by the above)
-#   - environment.yml                (regenerate with: eukan dev generate-env)
+#   - environment.yml                (regenerate with: python scripts/generate-env.py)
 #   - docker/Dockerfile              (ARG versions should match min_version here)
 #
 # Per-tool fields (all optional unless marked required):

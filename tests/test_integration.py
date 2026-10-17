@@ -23,7 +23,6 @@ MODULES = [
     "eukan.cli",
     "eukan.settings",
     "eukan.infra.health",
-    "eukan.infra.conda_env",
     "eukan.annotation.orf",
     "eukan.infra",
     "eukan.infra.runner",
@@ -206,17 +205,3 @@ def test_functional_config_defaults(tmp_path):
     config = FunctionalConfig(proteins=proteins)
     assert "databases" in str(config.uniprot_db)
     assert "databases" in str(config.pfam_db)
-
-
-# ---------------------------------------------------------------------------
-# Environment file generation
-# ---------------------------------------------------------------------------
-
-
-def test_generate_env_no_hmmer():
-    """Generated environment.yml should not include hmmer."""
-    from eukan.infra.conda_env import generate_environment_yml
-    content = generate_environment_yml()
-    assert "hmmer" not in content
-    assert "bioconda" in content
-    assert "augustus" in content

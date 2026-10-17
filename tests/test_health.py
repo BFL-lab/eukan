@@ -1,9 +1,5 @@
-"""Tests for eukan.infra.health and eukan.infra.conda_env."""
+"""Tests for eukan.infra.health."""
 
-import tomllib
-from pathlib import Path
-
-from eukan.infra.conda_env import generate_environment_yml
 from eukan.infra.health import (
     PythonCheckResult,
     _crash_signal,
@@ -250,31 +246,3 @@ class TestFormatResults:
             output = format_results([], [result])
             assert "license" in output.lower()
             assert "hint:" in output
-
-
-class TestGenerateEnv:
-    def test_generates_valid_yaml(self):
-        """Output should be valid YAML with expected structure."""
-        content = generate_environment_yml()
-        assert "name: eukan" in content
-        assert "bioconda" in content
-        assert "augustus" in content
-        assert "tools.toml" in content
-
-    def test_deduplicates_packages(self):
-        """spaln should appear only once despite spaln/makdbs sharing a package."""
-        content = generate_environment_yml()
-        assert content.count("- spaln") == 1
-
-    def test_includes_minimap2(self):
-        """minimap2 is emitted from tools.toml with its bioconda version pin."""
-        content = generate_environment_yml()
-        assert "minimap2>=2.29" in content
-
-    def test_python_floor_matches_pyproject(self):
-        """The conda python floor tracks pyproject's; a lower one fails at `pip: .`."""
-        pyproject = tomllib.loads(
-            (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text()
-        )
-        floor = pyproject["tool"]["poetry"]["dependencies"]["python"].split(",")[0]
-        assert f"  - python{floor}," in generate_environment_yml()
