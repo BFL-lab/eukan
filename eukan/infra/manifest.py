@@ -1,7 +1,8 @@
 """Run manifest data model and I/O.
 
 Defines the ``RunManifest`` pydantic model serialized to ``eukan-run.json``
-and the load/save/init/format helpers around it. Pipeline lifecycle (the
+and the load/save/init helpers around it (``eukan status`` renders it, in
+:mod:`eukan.cli.status`). Pipeline lifecycle (the
 context manager that opens/closes a step record) lives in
 :mod:`eukan.infra.steps`; the driver loop that consumes step specs lives
 in :mod:`eukan.infra.pipeline`.
@@ -108,24 +109,6 @@ class RunManifest(BaseModel):
     # This copy as last loaded or saved; save_manifest writes only what changed
     # since, so copies saving to one run dir keep each other's changes.
     _synced: dict[str, Any] = PrivateAttr(default_factory=dict)
-
-    def pipeline_status(self, prefix: str) -> str:
-        """Get the aggregate status for a pipeline (assembly, annotation, functional).
-
-        Returns 'completed' if all steps with the prefix are completed,
-        'running' if any are running, 'failed' if any failed, else 'pending'.
-        """
-        pipeline_steps = {k: v for k, v in self.steps.items() if k.startswith(prefix + "/")}
-        if not pipeline_steps:
-            return "pending"
-        statuses = {r.status for r in pipeline_steps.values()}
-        if StepStatus.failed in statuses:
-            return "failed"
-        if StepStatus.running in statuses:
-            return "running"
-        if all(s == StepStatus.completed for s in statuses):
-            return "completed"
-        return "running"
 
 
 # ---------------------------------------------------------------------------
@@ -327,66 +310,6 @@ def _query_conda_versions(prefix: str, packages: list[str]) -> dict[str, str]:
         if len(parts) >= 2 and parts[0] in packages:
             versions[parts[0]] = parts[1]
     return versions
-
-
-# ---------------------------------------------------------------------------
-# Status formatting
-# ---------------------------------------------------------------------------
-
-
-_STATUS_ICONS = {
-    StepStatus.completed: "\u2713",
-    StepStatus.running: "\u25b6",
-    StepStatus.failed: "\u2717",
-    StepStatus.pending: "\u00b7",
-    StepStatus.skipped: "-",
-}
-
-
-def format_status(manifest: RunManifest) -> str:
-    """Format the manifest as a human-readable status report."""
-    lines = [
-        f"Run: {manifest.status}",
-        f"Started: {manifest.started_at}",
-    ]
-    if manifest.finished_at:
-        lines.append(f"Finished: {manifest.finished_at}")
-    lines += [
-        f"Genome: {manifest.genome}",
-        f"Kingdom: {manifest.kingdom or 'not set'}",
-        f"CPUs: {manifest.num_cpu}",
-        "",
-    ]
-
-    if manifest.tool_versions:
-        lines.append("Tool versions:")
-        for tool, ver in manifest.tool_versions.items():
-            lines.append(f"  {tool:<20s} {ver}")
-        lines.append("")
-
-    # Per-pipeline summary above the step detail.
-    pipeline_summaries = [
-        (p, manifest.pipeline_status(p.value)) for p in PipelineName
-    ]
-    if any(status != "pending" for _, status in pipeline_summaries):
-        lines.append("Pipelines:")
-        for pipeline, status in pipeline_summaries:
-            if status == "pending":
-                continue
-            lines.append(f"  {pipeline.value:<12s} {status}")
-        lines.append("")
-
-    lines.append("Steps:")
-    for step_name, record in manifest.steps.items():
-        icon = _STATUS_ICONS.get(record.status, "?")
-        duration = f" ({record.duration_seconds}s)" if record.duration_seconds else ""
-        lines.append(f"  {icon} {step_name:<25s} {record.status.value}{duration}")
-        if record.error:
-            lines.append(f"    error: {record.error[:200]}")
-        if record.output_md5:
-            lines.append(f"    output: {record.output_file} (md5:{record.output_md5[:12]}...)")
-
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

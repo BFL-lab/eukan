@@ -5,12 +5,12 @@ import subprocess
 
 import pytest
 
+from eukan.cli.status import format_status
 from eukan.infra import manifest as manifest_mod
 from eukan.infra.manifest import (
     RunManifest,
     StepRecord,
     StepStatus,
-    format_status,
     load_manifest,
     save_manifest,
 )
