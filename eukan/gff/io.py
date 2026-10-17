@@ -6,7 +6,7 @@ and extract_sequences.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import gffutils
@@ -27,18 +27,36 @@ def count_gff3_features(gff3_path: str | Path, feature_type: str = "gene") -> in
     return sum(1 for cols in iter_gff3_rows(gff3_path) if cols[2] == feature_type)
 
 
-def featuredb2gff3_file(featuredb: gffutils.FeatureDB, out: str | Path) -> None:
-    """Write a FeatureDB to a GFF3 file with proper gene>mRNA>exon/CDS hierarchy."""
+def featuredb2gff3_file(
+    featuredb: gffutils.FeatureDB,
+    out: str | Path,
+    *,
+    header: str = "",
+    visit: Callable[[gffutils.Feature], bool] | None = None,
+) -> None:
+    """Write a FeatureDB to a GFF3 file with proper gene>mRNA>exon/CDS hierarchy.
+
+    *header* is written first. *visit* is called on each feature before it is
+    written and may modify it; when it returns False the feature and
+    everything under it are left out.
+    """
+    keep = visit or (lambda feature: True)
     with open(out, "w") as fout:
+        fout.write(header)
         for gene in featuredb.features_of_type("gene", order_by=("seqid", "start")):
+            if not keep(gene):
+                continue
             fout.write(f"{gene}\n")
             for mRNA in featuredb.children(gene, featuretype="mRNA", order_by="start"):
+                if not keep(mRNA):
+                    continue
                 fout.write(f"{mRNA}\n")
                 for child_type in ("exon", "CDS"):
                     for f in featuredb.children(
                         mRNA, featuretype=child_type, order_by="start"
                     ):
-                        fout.write(f"{f}\n")
+                        if keep(f):
+                            fout.write(f"{f}\n")
 
 
 def iter_assembled_sequences(
