@@ -52,7 +52,11 @@ class TestFormatDiskFullUnit:
         exc = OSError(errno.EACCES, "Permission denied", "/etc/shadow")
         assert _format_disk_full(exc) is None
 
-    def test_external_tool_with_enospc_stderr_matches(self):
+
+class TestExternalToolErrorDiskFull:
+    """format_for_cli reports a tool that ran out of disk space as such."""
+
+    def test_enospc_stderr_gets_the_disk_full_title(self):
         exc = ExternalToolError(
             "STAR failed",
             tool="STAR",
@@ -61,39 +65,49 @@ class TestFormatDiskFullUnit:
             stderr_snippet="EXITING because of FATAL ERROR: No space left on device\n",
             step="annotation/star",
         )
-        result = _format_disk_full(exc)
-        assert result is not None
-        title, details = result
+        title, details = exc.format_for_cli()
         assert title == "Error: no space left on device"
-        assert any("STAR" in d for d in details)
-        assert any("annotation/star" in d for d in details)
+        assert "Tool: STAR (exit 137)" in details
+        assert "Step: annotation/star" in details
+        assert details[-1] == (
+            "Free up disk space on the device hosting the work directory and re-run."
+        )
 
-    def test_external_tool_with_quota_stderr_matches(self):
+    def test_quota_stderr_gets_the_disk_full_title(self):
         exc = ExternalToolError(
             "rnaspades failed",
             tool="rnaSPAdes",
             returncode=1,
             stderr_snippet="write error: Disk quota exceeded",
         )
-        assert _format_disk_full(exc) is not None
+        assert exc.format_for_cli()[0] == "Error: no space left on device"
 
-    def test_external_tool_enospc_after_progress_output_matches(self):
+    def test_enospc_after_progress_output_gets_the_disk_full_title(self):
         """The error line comes last, after the progress output; the snippet must
         keep it for the detector to see it."""
         exc = ExternalToolError(
             "samtools failed (exit 1)", tool="samtools", returncode=1,
             stderr_snippet=_PROGRESS + "samtools sort: No space left on device\n",
         )
-        assert _format_disk_full(exc) is not None
+        assert exc.format_for_cli()[0] == "Error: no space left on device"
 
-    def test_external_tool_with_unrelated_stderr_does_not_match(self):
+    def test_samtools_illegal_seek_gets_the_disk_full_title(self):
+        """htslib reports a write to a full disk as 'Illegal seek'; the CLI used to
+        miss it, although assembly/bam_utils.py already treated it as disk-full."""
+        exc = ExternalToolError(
+            "samtools failed (exit 1)", tool="samtools", returncode=1,
+            stderr_snippet='samtools sort: failed writing to "o.bam": Illegal seek\n',
+        )
+        assert exc.format_for_cli()[0] == "Error: no space left on device"
+
+    def test_unrelated_stderr_keeps_the_generic_title(self):
         exc = ExternalToolError(
             "STAR failed",
             tool="STAR",
             returncode=1,
             stderr_snippet="segfault at 0xdeadbeef",
         )
-        assert _format_disk_full(exc) is None
+        assert exc.format_for_cli()[0] == "Error: STAR failed (exit 1)"
 
 
 class TestExternalToolErrorFormat:
@@ -138,9 +152,33 @@ class TestCliBoundary:
         assert result.exit_code == 1
         assert "Error: no space left on device" in result.output
         assert "STAR" in result.output
-        # The standard ExternalToolError details should NOT be shown — the
-        # disk-full handler short-circuits first.
+        # A disk-full report points at freeing space, not at -v.
         assert "Run with -v" not in result.output
+
+    @pytest.mark.parametrize("stderr", [
+        "samtools sort: No space left on device",
+        "[E::bgzf_flush] File write failed (wrong size)",
+    ])
+    def test_disk_full_tool_error_keeps_message_and_hint(self, app_factory, stderr):
+        """The disk-full report used to drop the raiser's explanation and hint
+        (bam_utils' samtools-sort re-wrap carries both), and missed htslib's
+        write-failure wording altogether."""
+        exc = ExternalToolError(
+            "samtools sort failed writing the coordinate-sorted BAM",
+            tool="samtools", returncode=1, cmd=["samtools", "sort"],
+            stderr_snippet=f"{stderr}\n", step="assembly/minimap2",
+            hint="Free space on the run-dir filesystem, then re-run.",
+        )
+        result = CliRunner().invoke(app_factory(exc), ["boom"])
+        assert result.exit_code == 1
+        assert result.output == (
+            "Error: no space left on device\n"
+            "  Tool: samtools (exit 1)\n"
+            "  samtools sort failed writing the coordinate-sorted BAM\n"
+            "  Step: assembly/minimap2\n"
+            f"  stderr: {stderr}\n\n"
+            "  Hint: Free space on the run-dir filesystem, then re-run.\n"
+        )
 
     def test_unrelated_oserror_still_propagates(self, app_factory):
         exc = OSError(errno.EACCES, "Permission denied", "/etc/shadow")

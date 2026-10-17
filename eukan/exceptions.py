@@ -19,6 +19,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Stderr fragments that mean a tool ran out of disk space. "no space" and
+# "disk quota exceeded" cover the strerror texts of ENOSPC and EDQUOT. htslib
+# (samtools) reports a write to a full disk as "File write failed" or as
+# 'failed writing to "x.bam": Illegal seek', with a misleading errno.
+DISK_FULL_MARKERS = (
+    "no space",
+    "disk quota exceeded",
+    "illegal seek",
+    "failed writing",
+    "write failed",
+)
+
 
 class EukanError(Exception):
     """Base exception for all eukan errors.
@@ -145,7 +157,6 @@ class ExternalToolError(EukanError):
 
     def format_for_cli(self) -> tuple[str, list[str]]:
         generic = f"{self.tool} failed (exit {self.returncode})"
-        title = f"Error: {generic}"
         details: list[str] = []
         if self.message != generic:
             details.append(self.message)
@@ -153,5 +164,12 @@ class ExternalToolError(EukanError):
             details.append(f"Step: {self.step}")
         if self.stderr_snippet:
             details.append(f"stderr: {self.stderr_snippet[-300:]}")
+        if any(marker in self.stderr_snippet.lower() for marker in DISK_FULL_MARKERS):
+            # Point at the fix rather than at -v; the CLI adds the hint, if any.
+            advice = [] if self.hint else [
+                "Free up disk space on the device hosting the work directory and re-run.",
+            ]
+            tool = f"Tool: {self.tool} (exit {self.returncode})"
+            return "Error: no space left on device", [tool, *details, *advice]
         details.append("Run with -v for full command and stderr output.")
-        return title, details
+        return f"Error: {generic}", details
