@@ -23,9 +23,11 @@ def _genemark_homogenize_source(f: gffutils.Feature) -> gffutils.Feature:
     """Set ``source`` to ``genemark`` for all features.
 
     GeneMark stamps column 2 as ``GeneMark.hmm`` (or ``GeneMark.hmm3`` in
-    newer releases). The consensus engine matches weights by the source token, so a
-    version-dependent value silently zeros out GeneMark's contribution.
-    Mirror what ``augustus`` / ``snap`` / ``codingquarry`` already do.
+    newer releases); genemark.gff3 says ``genemark`` whatever the release, as
+    the AUGUSTUS, SNAP and CodingQuarry outputs carry their own names. Nothing
+    downstream reads the column: the GeneMark models choose between spaln and
+    gth, supply spaln's gene lengths (and its introns when there are no intron
+    hints), and train AUGUSTUS, but never reach the consensus engine.
     """
     f.source = "genemark"
     return f

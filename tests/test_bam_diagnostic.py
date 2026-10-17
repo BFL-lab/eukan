@@ -849,7 +849,7 @@ def test_locus_consistent_under_hamming_tolerance(tmp_path, synthetic_genome):
     # Dominant K-bp suffix = "TTTTGGGGGGGG" (3 reads → wins seed selection)
     # Variant 1: differs at position 11 — TTTTGGGGGGGT (1 read)
     # Variant 2: differs at position 9  — TTTTGGGGGAGG (1 read)
-    # All within H=1 of dominant. Default hamming_tolerance=1 → consistent.
+    # All within H=1 of dominant, inside the default hamming_tolerance (2) → consistent.
     reads = []
     for i in range(3):
         reads.append(_read_with_5p_clip(f"dom{i}", 100, "AAAATTTTGGGGGGGG"))

@@ -298,7 +298,8 @@ class AssemblyConfig(_StepRunSettings):
     # --- Genome-guided assembly (StringTie) stringency ---
     # DORMANT: StringTie is no longer in the active pipeline (Trinity covers both
     # de novo and genome-guided). These fields configure the kept-but-unwired
-    # stringtie module and have no effect unless it is re-wired into _steps_for.
+    # stringtie module and have no effect unless it is re-wired into the assembly
+    # STEPS (assembly/pipeline.py).
     stringtie_min_coverage: float = 1.5
     """StringTie ``-c``: minimum per-bp read coverage for a transcript to be
     assembled. Raised above StringTie's default of 1 to suppress low-coverage
@@ -318,7 +319,7 @@ class AssemblyConfig(_StepRunSettings):
     rnaspades: bool = True
     """DORMANT: rnaSPAdes is no longer in the active pipeline (Trinity covers de
     novo + genome-guided). Configures the kept-but-unwired rnaspades module; no
-    effect unless it is re-wired into _steps_for."""
+    effect unless it is re-wired into the assembly STEPS (assembly/pipeline.py)."""
     min_sl_fragment: int = 25
     """Minimum length (nt) of a fragment kept after in-silico SL trans-splicing."""
     sl_sequence: str | None = None
