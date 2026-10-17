@@ -147,22 +147,38 @@ def _emit_sj_and_hints(config: AssemblyConfig) -> None:
     write_coverage_hints(wd / _BAM, wd)
 
 
-def _map_reads_once(config: AssemblyConfig, *, non_canonical: bool) -> None:
-    """Map reads to the genome (splice:sr) into the sorted, indexed read BAM."""
-    wd = config.work_dir
-    cmd = ["minimap2", "-a", "-x", "splice:sr", "-t", str(config.num_cpu)]
-    if config.max_intron_len:
+def _minimap2_cmd(
+    config: AssemblyConfig, preset: str, ref: Path, queries: list[str], *,
+    non_canonical: bool = False,
+) -> list[str]:
+    """``minimap2 -a -x <preset>`` of *queries* against *ref*, primary alignments only.
+
+    A spliced preset gets the ``-G`` intron bound (``-M``, when set) and, with
+    *non_canonical*, the non-canonical splice flags.
+    """
+    cmd = ["minimap2", "-a", "-x", preset, "-t", str(config.num_cpu)]
+    if preset.startswith("splice:") and config.max_intron_len:
         cmd += ["-G", str(config.max_intron_len)]
     cmd.append("--secondary=no")
     if non_canonical:
         cmd += _NON_CANONICAL_FLAGS
-    cmd += [str(config.genome), *config.reads_args_minimap2]
-    run_piped(
-        cmd,
-        ["samtools", "sort", "-@", str(config.num_cpu), "-o", _BAM, "-"],
-        cwd=wd,
+    return [*cmd, str(ref), *queries]
+
+
+def _minimap2_to_sorted_bam(config: AssemblyConfig, cmd: list[str], out_bam: str) -> None:
+    """Pipe the minimap2 *cmd* into the coordinate-sorted, indexed *out_bam* (run dir)."""
+    wd = config.work_dir
+    run_piped(cmd, ["samtools", "sort", "-@", str(config.num_cpu), "-o", out_bam, "-"], cwd=wd)
+    run_cmd(["samtools", "index", out_bam], cwd=wd)
+
+
+def _map_reads_once(config: AssemblyConfig, *, non_canonical: bool) -> None:
+    """Map reads to the genome (splice:sr) into the sorted, indexed read BAM."""
+    cmd = _minimap2_cmd(
+        config, "splice:sr", config.genome, config.reads_args_minimap2,
+        non_canonical=non_canonical,
     )
-    run_cmd(["samtools", "index", _BAM], cwd=wd)
+    _minimap2_to_sorted_bam(config, cmd, _BAM)
 
 
 def map_reads_minimap2(config: AssemblyConfig) -> None:
@@ -202,19 +218,10 @@ def map_reads_to_transcripts(config: AssemblyConfig, fasta: Path, tag: str) -> P
     introns, so ``-x sr`` (non-spliced short-read) is the right preset. minimap2
     indexes the transcript FASTA on the fly, so no index build/teardown is needed.
     """
-    wd = config.work_dir
-    prefix = f"jaccard_{tag}_"
-    bam = wd / f"{prefix}Aligned.sortedByCoord.out.bam"
-    cmd = [
-        "minimap2", "-a", "-x", "sr", "-t", str(config.num_cpu), "--secondary=no",
-        str(fasta), *config.reads_args_minimap2,
-    ]
-    run_piped(
-        cmd,
-        ["samtools", "sort", "-@", str(config.num_cpu), "-o", bam.name, "-"],
-        cwd=wd,
+    bam = config.work_dir / f"jaccard_{tag}_Aligned.sortedByCoord.out.bam"
+    _minimap2_to_sorted_bam(
+        config, _minimap2_cmd(config, "sr", fasta, config.reads_args_minimap2), bam.name,
     )
-    run_cmd(["samtools", "index", bam.name], cwd=wd)
     return bam
 
 
@@ -237,13 +244,9 @@ def _map_one_transcript_set(
         return
 
     unsorted = wd / f"{out_bam}.unsorted.bam"
-    cmd = ["minimap2", "-a", "-x", "splice:hq", "-t", str(config.num_cpu)]
-    if config.max_intron_len:
-        cmd += ["-G", str(config.max_intron_len)]
-    cmd.append("--secondary=no")
-    if non_canonical:
-        cmd += _NON_CANONICAL_FLAGS
-    cmd += [str(config.genome), str(query)]
+    cmd = _minimap2_cmd(
+        config, "splice:hq", config.genome, [str(query)], non_canonical=non_canonical,
+    )
     run_piped(cmd, ["samtools", "view", "-b", "-o", unsorted.name, "-"], cwd=wd)
 
     stem = out_bam[: -len(GENOME_BAM_SUFFIX)]
