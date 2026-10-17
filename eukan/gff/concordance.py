@@ -37,16 +37,6 @@ _SOURCE_LABEL = {"prot": "spaln"}
 # ---------------------------------------------------------------------------
 
 
-def _features_overlap(a: gffutils.Feature, b: gffutils.Feature) -> bool:
-    """Check if two features overlap on the same strand."""
-    return (
-        a.chrom == b.chrom
-        and a.strand == b.strand
-        and a.start <= b.end
-        and b.start <= a.end
-    )
-
-
 def _find_overlapping_genes(
     db: gffutils.FeatureDB,
 ) -> list[list[gffutils.Feature]]:

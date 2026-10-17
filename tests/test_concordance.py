@@ -4,11 +4,9 @@ from collections import Counter
 from pathlib import Path
 
 import gffutils
-import pytest
 
 from eukan.gff.concordance import (
     _cds_boundaries_match,
-    _features_overlap,
     _find_overlapping_genes,
     combine_nonredundant_models,
     extract_supported_models,
@@ -29,29 +27,6 @@ def _feature(chrom, start, end, strand="+", featuretype="gene", id="g1", **attrs
 # ---------------------------------------------------------------------------
 # Overlap detection
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("a", "b", "expected"),
-    [
-        (("chr1", 100, 500, "+"), ("chr1", 400, 800, "+"), True),
-        (("chr1", 100, 300, "+"), ("chr1", 400, 800, "+"), False),
-        (("chr1", 100, 500, "+"), ("chr1", 100, 500, "-"), False),
-        (("chr1", 100, 500, "+"), ("chr2", 100, 500, "+"), False),
-        (("chr1", 100, 200, "+"), ("chr1", 201, 300, "+"), False),
-        (("chr1", 100, 200, "+"), ("chr1", 200, 300, "+"), True),
-    ],
-    ids=[
-        "overlapping",
-        "non_overlapping",
-        "different_strand",
-        "different_chrom",
-        "adjacent",
-        "touching",
-    ],
-)
-def test_features_overlap(a, b, expected):
-    assert _features_overlap(_feature(*a), _feature(*b)) == expected
 
 
 class TestFindOverlappingGenes:
