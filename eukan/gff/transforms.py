@@ -58,16 +58,6 @@ def fix_contig_names(f: gffutils.Feature) -> gffutils.Feature:
     return f
 
 
-def prot2augustus_hints(f: gffutils.Feature) -> gffutils.Feature | None:
-    """Convert protein alignment CDS features to AUGUSTUS CDSpart hints."""
-    if f.featuretype == "CDS":
-        group = f.attributes["Parent"]
-        f.attributes = {"pri": "1", "src": "P", "group": group}
-        f.featuretype = "CDSpart"
-        return f
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Feature construction helpers
 # ---------------------------------------------------------------------------

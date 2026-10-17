@@ -6,7 +6,6 @@ import pytest
 
 from eukan.annotation.alignment import _gene_lengths_and_introns, _write_protein_hints
 from eukan.gff import create_gff_db
-from eukan.gff.transforms import prot2augustus_hints
 
 # gth- and spaln-style prot.gff3 rows as eukan writes them, plus a
 # multi-parent CDS and URL-escaped Parent values.
@@ -26,23 +25,26 @@ _PROT = (
     "c3\tprot_align\tCDS\t10\t90\t.\t+\t1\tID=shared;Parent=mA,mB;\n"
     "c3\tprot_align\tCDS\t100\t190\t.\t-\t0\tID=esc;Parent=m%3Bx%3Dy%26z%25w%2Cv;\n"
 )
+# _PROT's hints: each CDS as a CDSpart grouped by its raw Parent, the bytes the
+# gffutils transform pass (prot2augustus_hints) wrote before the line scan.
+_HINTS = (
+    "c1\tprot_align\tCDSpart\t448\t2950\t.\t-\t0\tpri=1;src=P;group=gene1_mRNA;\n"
+    "c2\tprot_align\tCDSpart\t21000\t21104\t.\t+\t0\tpri=1;src=P;group=mRNA00020;\n"
+    "c2\tprot_align\tCDSpart\t21909\t22100\t12.5\t+\t2\tpri=1;src=P;group=mRNA00020;\n"
+    "c3\tprot_align\tCDSpart\t10\t90\t.\t+\t1\tpri=1;src=P;group=mA,mB;\n"
+    "c3\tprot_align\tCDSpart\t100\t190\t.\t-\t0\tpri=1;src=P;group=m%3Bx%3Dy%26z%25w%2Cv;\n"
+)
 
 
 @pytest.mark.parametrize("trailing", [True, False])
-def test_protein_hints_match_the_gffutils_transform(tmp_path, trailing):
-    """The line scan writes the bytes the prot2augustus_hints DB pass wrote."""
-    text = _PROT if trailing else _PROT.replace(";\n", "\n")
+def test_protein_hints(tmp_path, trailing):
     prot = tmp_path / "prot.gff3"
-    prot.write_text(text)
-    ref = "".join(
-        f"{f}\n" for f in create_gff_db(prot, transform=prot2augustus_hints).all_features()
-    )
+    prot.write_text(_PROT if trailing else _PROT.replace(";\n", "\n"))
     out = tmp_path / "hints_protein.gff"
 
     _write_protein_hints(prot, out)
 
-    assert out.read_text() == ref
-    assert len(ref.splitlines()) == 5
+    assert out.read_text() == (_HINTS if trailing else _HINTS.replace(";\n", "\n"))
 
 
 @pytest.mark.parametrize("trailing", [True, False])
