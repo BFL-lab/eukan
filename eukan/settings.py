@@ -8,7 +8,6 @@ Settings are resolved in this order (last wins):
 
 from __future__ import annotations
 
-import os
 import random
 import string
 from enum import Enum
@@ -21,6 +20,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from eukan.exceptions import ConfigurationError
 from eukan.infra.logging import get_logger
+from eukan.infra.utils import available_cpus
 
 
 def _rand_string(length: int = 5) -> str:
@@ -51,7 +51,7 @@ class _StepRunSettings(BaseSettings):
     # Filled in from work_dir by _default_manifest_dir if not provided;
     # always a Path after construction.
     manifest_dir: Path = Field(default_factory=Path.cwd)
-    num_cpu: int = Field(default_factory=lambda: os.cpu_count() or 1)
+    num_cpu: int = Field(default_factory=available_cpus)
     genetic_code: str = "1"
 
     @field_validator("genetic_code", mode="before")

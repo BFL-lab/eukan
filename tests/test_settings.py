@@ -1,5 +1,6 @@
 """Tests for eukan.settings — pydantic-settings configuration."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,14 @@ class TestPipelineConfig:
         assert config.num_cpu >= 1
         assert config.name == "genome"
         assert len(config.shortname) == 5
+
+    def test_num_cpu_defaults_to_the_cpus_this_process_may_use(self, tmp_path, monkeypatch):
+        # A SLURM or docker cpuset limits the affinity mask, not the machine's count;
+        # the CLI's --numcpu default already counts the mask.
+        monkeypatch.setattr(os, "sched_getaffinity", lambda pid: {0, 1}, raising=False)
+        monkeypatch.setattr(os, "cpu_count", lambda: 64)
+        config = PipelineConfig(genome=tmp_path / "g.fa", proteins=[tmp_path / "p.faa"])
+        assert config.num_cpu == 2
 
     def test_name_derived_from_genome(self, tmp_path):
         """Name should default to genome stem."""
