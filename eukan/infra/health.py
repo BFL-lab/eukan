@@ -274,7 +274,8 @@ def _probe_pyhmmer() -> str:
         name=b"test", sequence="MKFLILLFNILCLFPVLAADNH"
     ).digitize(alpha)
     hits = list(pyhmmer.hmmer.phmmer([seq], [seq], cpus=1))  # type: ignore[list-item]
-    assert len(hits) == 1 and len(hits[0]) >= 1
+    if len(hits) != 1 or len(hits[0]) < 1:
+        raise RuntimeError("phmmer did not find the query sequence in itself")
     return "phmmer search works"
 
 
@@ -282,7 +283,9 @@ def _probe_gffutils() -> str:
     import gffutils
     gff = "chr1\ttest\tgene\t100\t500\t.\t+\t.\tID=g1"
     db = gffutils.create_db(gff, ":memory:", from_string=True)
-    assert len(list(db.features_of_type("gene"))) == 1
+    genes = len(list(db.features_of_type("gene")))
+    if genes != 1:
+        raise RuntimeError(f"in-memory DB holds {genes} genes after loading 1")
     return "in-memory DB works"
 
 
@@ -296,7 +299,9 @@ def _probe_biopython() -> str:
     buf = io.StringIO()
     SeqIO.write(record, buf, "fasta")
     buf.seek(0)
-    assert len(list(SeqIO.parse(buf, "fasta"))) == 1
+    records = len(list(SeqIO.parse(buf, "fasta")))
+    if records != 1:
+        raise RuntimeError(f"read back {records} FASTA records after writing 1")
     return "sequence I/O works"
 
 
@@ -306,20 +311,23 @@ def _probe_pydantic_settings() -> str:
     from eukan.settings import PipelineConfig
     with tempfile.NamedTemporaryFile(suffix=".fa") as f:
         config = PipelineConfig(genome=Path(f.name), proteins=[Path(f.name)])
-        assert config.num_cpu >= 1
+    if config.num_cpu < 1:
+        raise RuntimeError(f"default num_cpu is {config.num_cpu}")
     return "config loads OK"
 
 
 def _probe_scipy() -> str:
     from scipy.optimize import linear_sum_assignment
     _, cols = linear_sum_assignment([[1, 5], [4, 1]], maximize=True)
-    assert cols.tolist() == [1, 0]
+    if cols.tolist() != [1, 0]:
+        raise RuntimeError(f"linear_sum_assignment returned {cols.tolist()}, expected [1, 0]")
     return "linear_sum_assignment works"
 
 
 def _probe_tool_registry() -> str:
     tools = load_tools()
-    assert len(tools) > 10
+    if len(tools) <= 10:
+        raise RuntimeError(f"only {len(tools)} tools loaded from tools.toml")
     return f"{len(tools)} tools loaded from tools.toml"
 
 

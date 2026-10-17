@@ -1,9 +1,12 @@
 """Tests for eukan.infra.health."""
 
 import importlib
+import subprocess
+import sys
 from pathlib import Path
 
 import eukan
+from eukan.infra import health
 from eukan.infra.health import (
     PythonCheckResult,
     _check_module_imports,
@@ -223,6 +226,25 @@ class TestPythonChecks:
         result = _check_module_imports()
         assert not result.ok
         assert "eukan.functional.kofam: boom" in result.detail
+
+    def test_failed_probe_reports_why(self, monkeypatch):
+        """A failed probe used to report an empty detail (a bare assert)."""
+        monkeypatch.setattr(health, "load_tools", lambda: ())
+        result = health._check_python_dep("tool registry", health._probe_tool_registry)
+        assert not result.ok
+        assert result.detail == "only 0 tools loaded from tools.toml"
+
+    def test_probe_still_fails_under_python_O(self):
+        """`python -O` strips asserts, which turned every probe into a pass."""
+        code = (
+            "from eukan.infra import health\n"
+            "health.load_tools = lambda: ()\n"
+            "print(health._check_python_dep('r', health._probe_tool_registry).ok)\n"
+        )
+        out = subprocess.run(
+            [sys.executable, "-O", "-c", code], capture_output=True, text=True, check=True,
+        ).stdout
+        assert out.strip() == "False"
 
     def test_all_pass(self):
         """Python dep checks should pass in a working environment."""
