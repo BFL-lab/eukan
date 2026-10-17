@@ -9,7 +9,7 @@ read the database names and file names from here.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, get_args
@@ -81,6 +81,14 @@ class DatabaseEntry:
     md5: str
     date: str
     size_bytes: int
+    # md5 of each file hmmpress wrote beside ``file`` (Pfam, KOfam), by file
+    # name; empty for the FASTA and TSV databases.
+    pressed_md5: dict[str, str] = field(default_factory=dict)
+
+
+def _pressed_md5(file: str, db_dir: Path) -> dict[str, str]:
+    """md5 of each pressed file (``<file>.h3?``) beside *file* in *db_dir*."""
+    return {p.name: md5_file(p) for p in sorted(db_dir.glob(f"{file}.h3?"))}
 
 
 def load_db_manifest(db_dir: Path) -> dict[str, DatabaseEntry]:
@@ -114,15 +122,23 @@ def make_entry(name: str, db_dir: Path) -> DatabaseEntry:
         md5=md5_file(path),
         date=datetime.now(UTC).isoformat(),
         size_bytes=path.stat().st_size,
+        pressed_md5=_pressed_md5(db.file, db_dir),
     )
 
 
 def is_current(entry: DatabaseEntry, db_dir: Path) -> bool:
-    """Check if a database file matches its manifest entry."""
+    """Check that a database file, and the files hmmpress wrote beside it,
+    match its manifest entry.
+
+    func-annot reads a pressed database from its ``.h3*`` files, not from the
+    ``.hmm``: an empty ``.h3f`` beside an intact ``.hmm`` loads no profiles at
+    all. An entry saved before the pressed files were hashed records none, so
+    its pressed database counts as changed until it is fetched again.
+    """
     path = db_dir / entry.file
     if not path.exists():
         return False
-    return md5_file(path) == entry.md5
+    return md5_file(path) == entry.md5 and _pressed_md5(entry.file, db_dir) == entry.pressed_md5
 
 
 def check_databases(
@@ -165,7 +181,9 @@ def check_databases(
         entry = manifest[db_name]
         if is_current(entry, db_dir):
             results.append((db_name, f"{filename} OK (md5:{entry.md5[:12]}..., {entry.date})", True))
-        else:
+        elif md5_file(path) != entry.md5:
             results.append((db_name, f"{filename} CORRUPTED (md5 mismatch)", False))
+        else:
+            results.append((db_name, f"{filename} pressed files do not match the manifest", False))
 
     return results

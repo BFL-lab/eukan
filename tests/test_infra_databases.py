@@ -1,5 +1,7 @@
 """Tests for eukan.infra.databases — the database registry and its manifest."""
 
+import json
+
 from eukan.infra.databases import (
     DATABASES,
     HOMOLOGY_DB_TARGETS,
@@ -60,6 +62,17 @@ class TestIsCurrent:
         """Missing file should not be current."""
         entry = DatabaseEntry("test", "missing.faa", "", "abc", "", 0)
         assert not is_current(entry, tmp_path)
+
+    def test_unpressed_entry_saved_before_press_hashes_stays_current(self, tmp_path):
+        """A FASTA or TSV database has no pressed files, so an entry saved
+        before they were recorded still matches (no re-fetch on upgrade)."""
+        f = tmp_path / "uniprot_sprot.faa"
+        f.write_text(">seq1\nMKK\n")
+        (tmp_path / ".manifest.json").write_text(json.dumps({"uniprot": {
+            "name": "uniprot", "file": "uniprot_sprot.faa", "source_url": "",
+            "md5": md5_file(f), "date": "2026-01-01", "size_bytes": f.stat().st_size,
+        }}))
+        assert is_current(load_manifest(tmp_path)["uniprot"], tmp_path)
 
 
 class TestCheckDatabases:

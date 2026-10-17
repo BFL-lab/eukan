@@ -2,6 +2,7 @@
 
 import gzip
 import io
+import json
 import tarfile
 from pathlib import Path
 from unittest.mock import patch
@@ -11,7 +12,14 @@ import pytest
 
 from eukan.functional import dbfetch
 from eukan.functional.dbfetch import _download_file
-from eukan.infra.databases import DATABASES
+from eukan.functional.search import _open_hmm_db
+from eukan.infra.databases import (
+    DATABASES,
+    MANIFEST_FILE,
+    check_databases,
+    is_current,
+    load_db_manifest,
+)
 from eukan.infra.utils import md5_file
 
 
@@ -190,6 +198,54 @@ class TestDownloadPfam:
             dbfetch.download_pfam(tmp_path)
 
         assert _pressed_profile_count(tmp_path / "Pfam-A.hmm") == 10
+
+
+def _fetch_pfam(db_dir: Path) -> list[str]:
+    """fetch_databases(["pfam"]) with RREFam served; the URLs downloaded."""
+    urls: list[str] = []
+
+    def serve(url, dest):
+        urls.append(url)
+        _serve_gzipped_rrefam(url, dest)
+
+    with patch.object(dbfetch, "_download_file", side_effect=serve):
+        dbfetch.fetch_databases(db_dir, databases=["pfam"])
+    return urls
+
+
+def _profiles_func_annot_loads(hmm: Path) -> int:
+    with _open_hmm_db(hmm) as profiles:
+        return len(profiles)
+
+
+@needs_rrefam
+class TestPressedFilesTracked:
+    """func-annot reads a pressed database from the .h3* files; with an empty
+    .h3f beside an intact .hmm it loads no profiles at all."""
+
+    def test_damaged_press_is_fetched_again(self, tmp_path):
+        assert _fetch_pfam(tmp_path) == [DATABASES["pfam"].url]
+        (tmp_path / "Pfam-A.hmm.h3f").write_bytes(b"")
+        assert _profiles_func_annot_loads(tmp_path / "Pfam-A.hmm") == 0
+
+        pfam = {name: (msg, ok) for name, msg, ok in check_databases(tmp_path)}["pfam"]
+        assert pfam == ("Pfam-A.hmm pressed files do not match the manifest", False)
+        assert _fetch_pfam(tmp_path) == [DATABASES["pfam"].url]
+        assert _profiles_func_annot_loads(tmp_path / "Pfam-A.hmm") == 10
+        assert _fetch_pfam(tmp_path) == []  # now up to date
+
+    def test_entry_saved_before_press_hashes_is_fetched_again(self, tmp_path):
+        """An entry from a db-fetch that did not hash the pressed files cannot
+        vouch for them, so the database is fetched once more."""
+        _fetch_pfam(tmp_path)
+        manifest = tmp_path / MANIFEST_FILE
+        data = json.loads(manifest.read_text())
+        data["pfam"].pop("pressed_md5", None)
+        manifest.write_text(json.dumps(data))
+
+        assert not is_current(load_db_manifest(tmp_path)["pfam"], tmp_path)
+        assert _fetch_pfam(tmp_path) == [DATABASES["pfam"].url]
+        assert is_current(load_db_manifest(tmp_path)["pfam"], tmp_path)
 
 
 @needs_rrefam
