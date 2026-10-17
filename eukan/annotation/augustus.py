@@ -6,7 +6,6 @@ import json
 import os
 import re
 import shutil
-from fileinput import FileInput
 from pathlib import Path
 
 import gffutils
@@ -221,15 +220,14 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
                     if re.search(r"(tag:|taa:|tga:)", line):
                         stop_probs.append(re.sub(r"[()]", "", line).split()[-1])
 
-        with FileInput(files=[str(aug_cfg_file)], inplace=True) as f:
-            for line in f:
-                line = line.rstrip()
-                if re.search(r"(amberprob|ochreprob|opalprob)", line) and stop_probs:
-                    parts = line.split()
-                    parts[1] = stop_probs.pop(0)
-                    print(" ".join(parts))
-                else:
-                    print(line)
+        with open(aug_cfg_file) as fh:
+            lines = [line.rstrip() for line in fh]
+        for i, line in enumerate(lines):
+            if re.search(r"(amberprob|ochreprob|opalprob)", line) and stop_probs:
+                parts = line.split()
+                parts[1] = stop_probs.pop(0)
+                lines[i] = " ".join(parts)
+        aug_cfg_file.write_text("".join(f"{line}\n" for line in lines))
 
         # Test and optimize
         run_cmd(["augustus", f"--species={config.name}", "genbank.gb.test"], cwd=sdir)
