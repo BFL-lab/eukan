@@ -220,7 +220,11 @@ def pipeline_step(
         if record.output_file:
             output_path = work_dir / record.output_file
             if output_path.exists():
-                record.output_md5 = md5_file(output_path)
+                # Resume never checksums what _should_verify_md5 declines (a
+                # large binary output), so skip the full read hashing it costs.
+                record.output_md5 = (
+                    md5_file(output_path) if _should_verify_md5(output_path) else None
+                )
 
         record.input_md5 = fingerprint_inputs(input_files, input_scalars, work_dir)
 

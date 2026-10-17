@@ -130,6 +130,24 @@ class TestPipelineStepContextManager:
         assert manifest.steps["genemark"].output_md5 is not None
         assert manifest.steps["genemark"].duration_seconds is not None
 
+    def test_output_resume_never_verifies_is_not_hashed(self, tmp_path, monkeypatch):
+        """A large binary output (the multi-GB read BAM) is never checksummed on
+        resume, so recording its md5 was a full read for nothing."""
+        import eukan.infra.steps as steps_mod
+        monkeypatch.setattr(steps_mod, "_MD5_VERIFY_MAX_BYTES", 10)
+        hashed = []
+        monkeypatch.setattr(steps_mod, "md5_file", lambda p: hashed.append(p) or "d")
+        manifest = RunManifest()
+        manifest.steps["map"] = StepRecord(name="map", output_md5="from-an-earlier-run")
+
+        with pipeline_step(tmp_path, manifest, "map") as step:
+            (tmp_path / "reads.bam").write_bytes(b"x" * 100)
+            step.output_file = "reads.bam"
+
+        assert manifest.steps["map"].output_md5 is None
+        assert hashed == []
+        assert is_step_complete(tmp_path, manifest, "map") == tmp_path / "reads.bam"
+
     def test_failure_records_error(self, tmp_path):
         manifest = RunManifest()
 
