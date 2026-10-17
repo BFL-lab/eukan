@@ -7,7 +7,9 @@ version/help probe. Also checks database integrity via the manifest.
 
 from __future__ import annotations
 
+import importlib
 import os
+import pkgutil
 import shutil
 import signal
 import subprocess
@@ -15,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import eukan
 from eukan.infra.tools_registry import Tool, load_tools
 
 # ---------------------------------------------------------------------------
@@ -246,22 +249,16 @@ def _check_python_dep(name: str, probe: Callable[[], str]) -> PythonCheckResult:
 
 def _check_module_imports() -> PythonCheckResult:
     """Import every first-party module, collecting any failures."""
-    modules = [
-        "eukan", "eukan.cli", "eukan.settings", "eukan.infra.health",
-        "eukan.infra.runner", "eukan.infra.manifest", "eukan.infra.steps", "eukan.infra.pipeline", "eukan.infra.logging", "eukan.infra.environ",
-        "eukan.annotation", "eukan.annotation.pipeline",
-        "eukan.assembly", "eukan.assembly.pipeline",
-        "eukan.repeats", "eukan.repeats.pipeline", "eukan.repeats.modeler", "eukan.repeats.masker",
-        "eukan.functional", "eukan.functional.pipeline", "eukan.functional.dbfetch",
-        "eukan.submission",
-        "eukan.gff.transforms", "eukan.gff.hierarchy", "eukan.gff.concordance", "eukan.gff.io",
-        "eukan.compare", "eukan.compare.engine", "eukan.compare.format",
-        "eukan.compare.models",
+    # walk_packages imports each package to list its children; a package that
+    # fails there is still yielded, and the loop below reports it.
+    modules = ["eukan"] + [
+        info.name
+        for info in pkgutil.walk_packages(eukan.__path__, "eukan.", onerror=lambda _name: None)
     ]
     failures = []
     for mod in modules:
         try:
-            __import__(mod)
+            importlib.import_module(mod)
         except Exception as e:
             failures.append(f"{mod}: {e}")
     if failures:

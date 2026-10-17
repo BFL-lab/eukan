@@ -1,7 +1,12 @@
 """Tests for eukan.infra.health."""
 
+import importlib
+from pathlib import Path
+
+import eukan
 from eukan.infra.health import (
     PythonCheckResult,
+    _check_module_imports,
     _crash_signal,
     check_tool,
     cpu_baseline,
@@ -197,6 +202,28 @@ class TestRunChecks:
 
 
 class TestPythonChecks:
+    def test_module_check_covers_every_first_party_module(self):
+        """Every module under eukan/ is imported, not a hand-kept list of 30."""
+        root = Path(eukan.__file__).parent
+        n_files = sum(1 for p in root.rglob("*.py") if "__pycache__" not in p.parts)
+        result = _check_module_imports()
+        assert result.ok
+        assert result.detail == f"all {n_files} modules OK"
+
+    def test_module_check_reports_a_module_that_fails_to_import(self, monkeypatch):
+        """functional.kofam was not on the old list, so a broken one passed."""
+        real = importlib.import_module
+
+        def fake(name, *args, **kwargs):
+            if name == "eukan.functional.kofam":
+                raise ImportError("boom")
+            return real(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib, "import_module", fake)
+        result = _check_module_imports()
+        assert not result.ok
+        assert "eukan.functional.kofam: boom" in result.detail
+
     def test_all_pass(self):
         """Python dep checks should pass in a working environment."""
         from eukan.infra.health import check_python_deps
