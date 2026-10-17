@@ -22,17 +22,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
-# 1. Create the conda environment with all bioconda tools + eukan
+# 1. Create the conda environment with all bioconda tools
+#
+# Solved from environment.yml alone, so an edit to eukan's source does not
+# invalidate this layer (the multi-GB solve and download). environment.yml
+# ends with a pip step that installs eukan itself (`pip: - .`); it is cut
+# here and run in step 4, once the source has been copied in.
 # ---------------------------------------------------------------------------
 WORKDIR /opt/eukan
 
-# Copy only dependency specs first (layer caching)
 COPY environment.yml /opt/eukan/
-COPY pyproject.toml poetry.lock README.md /opt/eukan/
-COPY eukan/ /opt/eukan/eukan/
-
-RUN mamba env create -f environment.yml \
-    && mamba clean -afy
+RUN sed -e '/^  - pip:$/d' -e '/^    - \.$/d' environment.yml > /tmp/environment.conda.yml \
+    && mamba env create -f /tmp/environment.conda.yml \
+    && mamba clean -afy \
+    && rm /tmp/environment.conda.yml
 
 # Activate the eukan environment for all subsequent RUN commands
 SHELL ["conda", "run", "-n", "eukan", "/bin/bash", "-c"]
@@ -124,7 +127,16 @@ RUN genemark_tar=$(ls /tmp/_genemark/gmes_linux_64*.tar.gz 2>/dev/null | head -1
     fi && rm -rf /tmp/_genemark
 
 # ---------------------------------------------------------------------------
-# 4. Strip conda env of unnecessary files to shrink the runtime image
+# 4. Install eukan into the env: the pip step cut from environment.yml in
+#    step 1. It comes after the tool builds, so a source edit re-runs only
+#    this step and the strip below.
+# ---------------------------------------------------------------------------
+COPY pyproject.toml poetry.lock README.md /opt/eukan/
+COPY eukan/ /opt/eukan/eukan/
+RUN pip install .
+
+# ---------------------------------------------------------------------------
+# 5. Strip conda env of unnecessary files to shrink the runtime image
 #
 # Removed in addition to the obvious caches/test dirs:
 #   - R interpreter + bioconductor (lib/R, bin/R, bin/Rscript) — never invoked
