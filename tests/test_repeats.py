@@ -183,7 +183,8 @@ class TestForceStepsFromRunFlags:
 
 class TestRunRepeatsResume:
     """Through run_repeats: ``--run-modeler`` re-runs the masker on the rebuilt
-    library, and the masker re-runs when its library or the genome changed."""
+    library, the masker re-runs when its library or the genome changed, and a
+    changed genome rebuilds the library."""
 
     @staticmethod
     def _stub(monkeypatch, ran):
@@ -232,3 +233,16 @@ class TestRunRepeatsResume:
         genome.write_text(">chr1\nACGTA\n")
         run_repeats(config)
         assert ran == ["masker"] * 3
+
+    def test_changed_genome_rebuilds_the_library(self, tmp_path, monkeypatch):
+        ran: list[str] = []
+        run_repeats = self._stub(monkeypatch, ran)
+        genome = tmp_path / "genome.fa"
+        genome.write_text(">chr1\nACGT\n")
+        config = RepeatsConfig(genome=genome, work_dir=tmp_path)
+        run_repeats(config)
+        run_repeats(config)
+        assert ran == ["modeler", "masker"]  # unchanged: skipped
+        genome.write_text(">chr1\nACGTA\n")
+        run_repeats(config)
+        assert ran == ["modeler", "masker"] * 2

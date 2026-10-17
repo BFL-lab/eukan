@@ -102,8 +102,10 @@ def run_repeats(
             families = config.lib
         else:
             modeler_key = step_key(REPEATS, "modeler")
+            # RepeatModeler builds the library from the genome: a changed genome rebuilds it.
+            modeler_inputs = [config.genome]
             cached = (
-                is_step_complete(config.manifest_dir, manifest, modeler_key)
+                is_step_complete(config.manifest_dir, manifest, modeler_key, modeler_inputs)
                 if modeler_key not in forced else None
             )
             if isinstance(cached, Path):
@@ -115,6 +117,7 @@ def run_repeats(
                     step_dir=config.work_dir / "modeler",
                     force=modeler_key in forced,
                     output_file=_modeler_output(config),
+                    input_files=modeler_inputs,
                 )
                 families = _modeler_output(config)
 
