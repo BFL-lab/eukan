@@ -10,6 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 import eukan.assembly
+import eukan.functional
 from eukan.cli import cli
 from eukan.infra.utils import available_cpus
 
@@ -160,6 +161,20 @@ def test_gff3toseq_rejects_an_unknown_genetic_code(run_dir):
     assert result.exit_code == 1
     assert "Error: Unknown NCBI genetic code: 99" in result.output
     assert "Hint: Valid codes: 1, 2, 3," in result.output
+
+
+def test_func_annot_without_proteins_says_how_to_make_them(run_dir, monkeypatch):
+    """func-annot discovers no proteins, and annotate writes no protein FASTA:
+    the error names the gff3toseq call that extracts them."""
+    monkeypatch.setattr(
+        eukan.functional, "run_functional_annotation", lambda *a, **k: pytest.fail("ran"),
+    )
+    result = CliRunner().invoke(cli, ["func-annot"])
+    assert result.exit_code == 2
+    assert "No protein file given. Pass --proteins;" in result.output
+    assert "eukan gff3toseq -g <genome> -i annotate/final.gff3" in result.output
+    assert "--output-format protein -o proteins.faa" in result.output
+    assert "eukan annotate` first" not in result.output
 
 
 @pytest.mark.parametrize(

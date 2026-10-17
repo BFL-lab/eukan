@@ -77,7 +77,9 @@ def func_annot(**opts: Any) -> None:
 
     if opts["proteins"] is None:
         raise click.UsageError(
-            "No protein file found. Provide --proteins or run `eukan annotate` first."
+            "No protein file given. Pass --proteins; extract the proteins an annotate run "
+            "predicted with `eukan gff3toseq -g <genome> -i annotate/final.gff3 "
+            "--output-format protein -o proteins.faa`."
         )
 
     force = opts.pop("force")
