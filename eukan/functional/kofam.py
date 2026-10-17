@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pyhmmer
 
-from eukan.functional.search import HitResults, _decode, _load_digital_sequences, _open_hmm_db
+from eukan.functional.search import HitResults, _load_digital_sequences, _open_hmm_db
 from eukan.infra.logging import get_logger
 
 log = get_logger(__name__)
@@ -64,7 +64,7 @@ def parse_ko_list(ko_list_path: Path) -> dict[str, KOEntry]:
             cols = line.rstrip("\n").split("\t")
             if len(cols) < 12:
                 continue
-            k_number, thr, score_type, _profile_type = cols[0], cols[1], cols[2], cols[3]
+            k_number, thr, score_type = cols[0], cols[1], cols[2]
             description, ec_numbers = extract_ec_numbers(cols[11])
             threshold = float(thr) if thr not in ("-", "") else None
             entries[k_number] = KOEntry(
@@ -172,14 +172,14 @@ def run_kofam_search(
         for top_hits in pyhmmer.hmmer.hmmscan(
             queries, profiles, cpus=num_cpu, E=evalue_threshold,
         ):
-            query_name = _decode(top_hits.query.name)
+            query_name = top_hits.query.name
             if not top_hits:
                 continue
 
             # E= gates hits in-scan against the profiles seen so far; only
             # the *reported* ones pass it against the whole database.
             for hit in top_hits.reported:
-                k_number = _decode(hit.name)
+                k_number = hit.name
                 ko = ko_entries.get(k_number)
                 if ko is None:
                     # HMM not in ko_list (database mismatch or trimmed
@@ -189,11 +189,7 @@ def run_kofam_search(
                 score, evalue = _hit_score_and_evalue(hit, ko.score_type)
                 above = ko.threshold is not None and score >= ko.threshold
 
-                per_query = results.setdefault(query_name, {})
-                prev = per_query.get(k_number)
-                if prev is not None and prev["score"] >= score:
-                    continue
-                per_query[k_number] = {
+                results.setdefault(query_name, {})[k_number] = {
                     "description": ko.description,
                     "evalue": evalue,
                     "score": score,

@@ -19,13 +19,6 @@ from eukan.infra.logging import get_logger
 log = get_logger(__name__)
 
 
-def _decode(value: str | bytes | None) -> str:
-    """Decode bytes to str, pass through if already str (pyhmmer compat)."""
-    if value is None:
-        return ""
-    return value.decode() if isinstance(value, bytes) else value
-
-
 class HitInfo(TypedDict, total=False):
     description: str
     evalue: float
@@ -115,15 +108,15 @@ def run_phmmer_search(
     results: HitResults = {}
 
     for top_hits in pyhmmer.hmmer.phmmer(queries, targets, cpus=num_cpu, E=evalue_threshold):
-        query_name = _decode(top_hits.query.name)
+        query_name = top_hits.query.name
         # Keep only the best hit (lowest e-value). E= gates hits in-scan
         # against the targets seen so far; only the *reported* ones pass it
         # against the whole database.
         best = next(top_hits.reported, None)
         if best is None:
             continue
-        hit_name = _decode(best.name)
-        hit_desc = _decode(best.description) if best.description else ""
+        hit_name = best.name
+        hit_desc = best.description or ""
         results[query_name] = {
             hit_name: {"description": hit_desc, "evalue": best.evalue}
         }
@@ -147,7 +140,7 @@ def run_hmmscan_search(
     results: HitResults = {}
 
     for top_hits in pyhmmer.hmmer.hmmscan(queries, profiles, cpus=num_cpu, E=evalue_threshold):
-        query_name = _decode(top_hits.query.name)
+        query_name = top_hits.query.name
         if not top_hits:
             continue
 
@@ -164,12 +157,12 @@ def run_hmmscan_search(
             if any(start <= k_end and k_start <= end for k_start, k_end in kept_spans):
                 continue
             kept_spans.append((start, end))
-            hit_name = _decode(hit.name)
-            hit_desc = _decode(hit.description) if hit.description else ""
+            hit_name = hit.name
+            hit_desc = hit.description or ""
             query_hits[hit_name] = {
                 "description": hit_desc,
                 "evalue": hit.evalue,
-                "accession": _decode(hit.accession),
+                "accession": hit.accession or "",
             }
 
         if query_hits:
