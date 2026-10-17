@@ -8,12 +8,14 @@ import click
 from click_option_group import optgroup
 
 from eukan.cli._framework import PreformattedEpilogCommand, force_option
+from eukan.infra.databases import DATABASES, DEFAULT_DB_DIR
 
 
 @click.command("db-fetch", cls=PreformattedEpilogCommand)
 @optgroup.group("Pipeline parameters")
 @optgroup.option(
-    "--output-dir", "-o", type=click.Path(resolve_path=True, path_type=Path), default="databases",
+    "--output-dir", "-o", type=click.Path(resolve_path=True, path_type=Path),
+    default=str(DEFAULT_DB_DIR),
     show_default=True, help="Directory to download databases into.",
 )
 @optgroup.option(
@@ -25,7 +27,7 @@ from eukan.cli._framework import PreformattedEpilogCommand, force_option
 )
 @optgroup.option(
     "--database", "-d", multiple=True,
-    type=click.Choice(["uniprot", "pfam", "kofam", "ko_list"], case_sensitive=False),
+    type=click.Choice(list(DATABASES), case_sensitive=False),
     help="Specific database(s) to fetch. Overrides --homology-db when given.",
 )
 @force_option(help_text="Re-download even if databases are up to date.")

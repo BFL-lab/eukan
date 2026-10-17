@@ -9,6 +9,7 @@ import click
 from click_option_group import optgroup
 
 from eukan.cli._framework import PreformattedEpilogCommand
+from eukan.infra.databases import DEFAULT_DB_DIR
 
 if TYPE_CHECKING:
     from eukan.infra.health import CheckResult, PythonCheckResult
@@ -105,7 +106,7 @@ def format_results(
     help="Only check tools needed by these subcommands. If omitted, check all.",
 )
 @optgroup.option(
-    "--db-dir", type=click.Path(resolve_path=True, path_type=Path), default="databases",
+    "--db-dir", type=click.Path(resolve_path=True, path_type=Path), default=str(DEFAULT_DB_DIR),
     show_default=True, help="Database directory to check.",
 )
 @optgroup.option(

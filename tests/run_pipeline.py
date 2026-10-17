@@ -32,6 +32,7 @@ if _PROJECT_ROOT not in sys.path:
 
 import click
 
+from eukan.infra.databases import DATABASES
 from eukan.infra.utils import available_cpus
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
@@ -209,10 +210,10 @@ def test_pipeline_cmd(
     click.echo(f"STEP 1: Database fetch ({homology_db} + Pfam)")
     click.echo(f"{'=' * 60}")
 
-    pfam_db = db_dir / "Pfam-A.hmm"
-    uniprot_db = db_dir / "uniprot_sprot.faa"
-    kofam_db = db_dir / "kofam_eukaryote.hmm"
-    ko_list_path = db_dir / "ko_list.tsv"
+    pfam_db = db_dir / DATABASES["pfam"].file
+    uniprot_db = db_dir / DATABASES["uniprot"].file
+    kofam_db = db_dir / DATABASES["kofam"].file
+    ko_list_path = db_dir / DATABASES["ko_list"].file
 
     if homology_db == "kofam":
         homology_files = [kofam_db, ko_list_path, pfam_db]

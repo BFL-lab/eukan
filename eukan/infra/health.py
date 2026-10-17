@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import eukan
+from eukan.infra.databases import DEFAULT_DB_DIR, check_databases
 from eukan.infra.environ import subprocess_env
 from eukan.infra.tools_registry import Tool, load_tools
 
@@ -401,9 +402,7 @@ def run_checks(
         s in ("func-annot", "annotate", "db-fetch") for s in subcommands
     )
     if db_relevant:
-        # lazy: dbfetch pulls in pyhmmer and requests, which the probes must be able to report broken
-        from eukan.functional.dbfetch import check_databases
-        db_dir = db_dir or Path("databases")
+        db_dir = db_dir or DEFAULT_DB_DIR
         db_results = check_databases(db_dir, homology_db=homology_db)
 
     return passed, failed, db_results, python_results
