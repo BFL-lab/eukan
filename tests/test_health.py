@@ -155,11 +155,11 @@ class TestToolRegistry:
         assert "augustus" in names
         assert "samtools" in names
 
-    # stringtie/rnaspades were replaced by Trinity (both modes) in the active
-    # pipeline. They're dormant: required_by is intentionally empty so
-    # `eukan check assemble` doesn't demand them, but they keep a conda_package
-    # so they stay installable via environment.yml.
-    _DORMANT = frozenset({"stringtie", "rnaspades"})
+    # stringtie was replaced by Trinity (genome-guided) in the active pipeline.
+    # It's dormant: required_by is intentionally empty so `eukan check assemble`
+    # doesn't demand it, but it keeps a conda_package so it stays installable via
+    # environment.yml.
+    _DORMANT = frozenset({"stringtie"})
 
     def test_tool_fields(self):
         """Tools should have all required fields populated."""

@@ -147,7 +147,7 @@ from eukan.infra.layout import step_work_dir
 )
 @optgroup.option(
     "--memory-gb", type=int, default=None,
-    help="Assembly memory cap in GiB (Trinity --max_memory / rnaSPAdes -m). "
+    help="Assembly memory cap in GiB (Trinity --max_memory). "
          "Defaults to 60 percent of currently-available memory (floored at 4 GiB).",
 )
 @optgroup.group("Re-run steps")

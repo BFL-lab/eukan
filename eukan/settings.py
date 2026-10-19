@@ -316,10 +316,6 @@ class AssemblyConfig(_StepRunSettings):
     isoforms / fuses neighbouring loci."""
 
     # --- de novo + combinr consolidation routine ---
-    rnaspades: bool = True
-    """DORMANT: rnaSPAdes is no longer in the active pipeline (Trinity covers de
-    novo + genome-guided). Configures the kept-but-unwired rnaspades module; no
-    effect unless it is re-wired into the assembly STEPS (assembly/pipeline.py)."""
     min_sl_fragment: int = 25
     """Minimum length (nt) of a fragment kept after in-silico SL trans-splicing."""
     sl_sequence: str | None = None
@@ -403,7 +399,7 @@ class AssemblyConfig(_StepRunSettings):
 
     memory_gb: int = Field(
         default_factory=lambda: _default_assembly_memory_gb(),
-        description="Assembly memory cap in GiB (Trinity --max_memory / rnaSPAdes -m).",
+        description="Assembly memory cap in GiB (Trinity --max_memory).",
     )
 
     @model_validator(mode="after")

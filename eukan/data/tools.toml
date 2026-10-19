@@ -107,18 +107,6 @@ required_by = []
 conda_package = "stringtie"
 min_version = "3.0"
 
-[rnaspades]
-binary = "rnaspades.py"
-version_cmd = ["rnaspades.py", "--version"]
-# DORMANT: Trinity (de novo) replaced rnaSPAdes in the active pipeline. Kept
-# installable (conda_package retained, so it stays in environment.yml) in case
-# the unwired rnaspades module is re-activated; required_by emptied so
-# `eukan check assemble` does not demand it.
-required_by = []
-# rnaspades.py ships in the bioconda 'spades' package.
-conda_package = "spades"
-min_version = "4.3"
-
 [trinity]
 binary = "Trinity"
 version_cmd = ["Trinity", "--version"]

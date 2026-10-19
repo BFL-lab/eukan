@@ -53,7 +53,6 @@ dependencies:
   - rmblast
   - samtools>=1.20
   - snap
-  - spades>=4.3
   - spaln>=3.0
   - stringtie>=3.0
   - table2asn>=1.28
