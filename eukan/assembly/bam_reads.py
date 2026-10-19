@@ -4,9 +4,9 @@ Primary-alignment filtering, mRNA-oriented soft-clip extraction, intron
 walking and splice-site dinucleotide lookup, used by the soft-clip diagnostic
 (:mod:`eukan.assembly.bam_diagnostic`), the junction table
 (:mod:`eukan.assembly.align_hints`), poly-A characterization
-(:mod:`eukan.assembly.polya`), SL acceptor detection, the SL cut, strand
-correction and the dormant BAM intron splitter. CIGAR op codes are pysam's
-(``pysam.CMATCH``, ``pysam.CREF_SKIP``, ...).
+(:mod:`eukan.assembly.polya`), SL acceptor detection, the SL cut and strand
+correction. CIGAR op codes are pysam's (``pysam.CMATCH``, ``pysam.CREF_SKIP``,
+...).
 """
 
 from __future__ import annotations
