@@ -9,7 +9,7 @@ from typing import Any
 import click
 from click_option_group import optgroup
 
-from eukan.cli._framework import PreformattedEpilogCommand, drop_none
+from eukan.cli._framework import PreformattedEpilogCommand, given
 from eukan.infra.layout import step_work_dir
 
 
@@ -121,10 +121,10 @@ def prep_submission(**opts: Any) -> None:
 
     print_command = opts.pop("print_command")
     dry_run = opts.pop("dry_run")
-    opts["extra_args"] = shlex.split(opts["extra_args"]) if opts["extra_args"] else None
-    config = SubmissionConfig(**drop_none(
-        **opts, work_dir=step_work_dir("prep-submission"), manifest_dir=Path.cwd(),
-    ))
+    opts["extra_args"] = shlex.split(opts["extra_args"])
+    config = SubmissionConfig(
+        **given(opts), work_dir=step_work_dir("prep-submission"), manifest_dir=Path.cwd(),
+    )
     config.discover()
 
     sqn = run_prep_submission(config, print_only=print_command, dry_run=dry_run)

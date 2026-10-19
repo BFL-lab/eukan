@@ -2,8 +2,9 @@
 
 Settings are resolved in this order (last wins):
   1. Defaults defined here
-  2. Environment variables prefixed with EUKAN_
-  3. CLI flags (applied by the eukan.cli commands when constructing models)
+  2. Environment variables prefixed with EUKAN_ (EUKAN_ASSEMBLE_, EUKAN_REPEATS_,
+     EUKAN_FUNC_, EUKAN_SUBMIT_ for the other configs)
+  3. Options given on the eukan command line
 """
 
 from __future__ import annotations

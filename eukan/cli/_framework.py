@@ -187,15 +187,19 @@ def _format_disk_full(exc: BaseException) -> tuple[str, list[str]] | None:
 # ---------------------------------------------------------------------------
 
 
-def drop_none(**kwargs) -> dict:
-    """Build a kwargs dict, dropping keys whose value is ``None``.
+def given(opts: dict) -> dict:
+    """The options given on the command line, without those click filled in
+    from their defaults.
 
-    Keeps the CLI → config plumbing terse without losing the ability for
-    pydantic-settings to fill unset fields from environment variables: an
-    explicit ``None`` from a missing CLI flag must not overwrite a value
-    that source would have provided.
+    A field whose option was left out then comes from its EUKAN_* environment
+    variable, else from the config's default -- the value --help shows, which
+    tests/test_cli_env.py keeps equal to the click default.
     """
-    return {k: v for k, v in kwargs.items() if v is not None}
+    ctx = click.get_current_context()
+    return {
+        k: v for k, v in opts.items()
+        if ctx.get_parameter_source(k) is not click.core.ParameterSource.DEFAULT
+    }
 
 
 def numcpu_option(func):

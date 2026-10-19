@@ -12,9 +12,9 @@ from eukan.cli._framework import (
     FULL_CODE_TABLE,
     PreformattedEpilogCommand,
     code_option,
-    drop_none,
     force_option,
     genome_option,
+    given,
     numcpu_option,
 )
 from eukan.infra.layout import step_work_dir
@@ -212,9 +212,9 @@ def assemble(**opts: Any) -> None:
         raise click.UsageError("--defuse needs a protein DB; supply --uniprot.")
 
     run_flags = {k: opts.pop(k) for k in list(opts) if k.startswith("run_") or k == "force"}
-    config = AssemblyConfig(**drop_none(
-        **opts, work_dir=step_work_dir("assemble"), manifest_dir=Path.cwd(),
-    ))
+    config = AssemblyConfig(
+        **given(opts), work_dir=step_work_dir("assemble"), manifest_dir=Path.cwd(),
+    )
 
     force_steps = force_steps_from_run_flags(**run_flags)
     run_assembly(config, force_steps=force_steps or None)

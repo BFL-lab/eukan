@@ -10,9 +10,9 @@ from click_option_group import optgroup
 
 from eukan.cli._framework import (
     PreformattedEpilogCommand,
-    drop_none,
     force_option,
     genome_option,
+    given,
     numcpu_option,
 )
 from eukan.infra.layout import step_work_dir
@@ -57,9 +57,9 @@ def mask_repeats(**opts: Any) -> None:
     from eukan.settings import RepeatsConfig  # lazy: startup cost
 
     run_flags = {k: opts.pop(k) for k in list(opts) if k.startswith("run_") or k == "force"}
-    config = RepeatsConfig(**drop_none(
-        **opts, work_dir=step_work_dir("mask-repeats"), manifest_dir=Path.cwd(),
-    ))
+    config = RepeatsConfig(
+        **given(opts), work_dir=step_work_dir("mask-repeats"), manifest_dir=Path.cwd(),
+    )
 
     force_steps = force_steps_from_run_flags(**run_flags)
     masked = run_repeats(config, force_steps=force_steps or None)

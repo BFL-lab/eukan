@@ -143,6 +143,8 @@ poetry run eukan assemble -g genome.fasta -l left.fq -r right.fq -S RF
 
 ## Subcommands
 
+Settings can also come from environment variables: `EUKAN_<SETTING>` for `annotate` (e.g. `EUKAN_NUM_CPU=8`, `EUKAN_GENETIC_CODE=6`), `EUKAN_ASSEMBLE_<SETTING>` for `assemble` (e.g. `EUKAN_ASSEMBLE_MAX_INTRON_LEN=2000`), and `EUKAN_REPEATS_`, `EUKAN_FUNC_` and `EUKAN_SUBMIT_` for `mask-repeats`, `func-annot` and `prep-submission`. `<SETTING>` is the field name in `eukan/settings.py`, which can differ from the flag (`--max-intron` sets `max_intron_len`, `--code` sets `genetic_code`). A flag given on the command line wins over its variable, and the variable wins over the default `--help` shows.
+
 ### `eukan annotate`
 
 Run the genome annotation pipeline. When run in the same directory as `eukan assemble`, transcript evidence (FASTA, GFF3, RNA-seq hints) is discovered automatically. UTRs and alternative isoforms are folded in from the transcript evidence by the combinr consensus engine.

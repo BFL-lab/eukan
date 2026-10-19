@@ -12,8 +12,8 @@ from eukan.cli._framework import (
     FULL_CODE_TABLE,
     PreformattedEpilogCommand,
     code_option,
-    drop_none,
     genome_option,
+    given,
     numcpu_option,
 )
 from eukan.infra.layout import step_work_dir
@@ -98,11 +98,11 @@ def annotate(**opts: Any) -> None:
     from eukan.settings import PipelineConfig  # lazy: startup cost
 
     run_flags = {k: opts.pop(k) for k in list(opts) if k.startswith("run_")}
-    # Only pass fields explicitly set by the user; pydantic-settings
-    # fills the rest from env vars / defaults.
-    config = PipelineConfig(**drop_none(
-        **opts, work_dir=step_work_dir("annotate"), manifest_dir=Path.cwd(),
-    ))
+    # Only the options given on the command line; the config fills the rest
+    # from EUKAN_* env vars or its defaults.
+    config = PipelineConfig(
+        **given(opts), work_dir=step_work_dir("annotate"), manifest_dir=Path.cwd(),
+    )
     config.discover()
 
     force_steps = force_steps_from_run_flags(spaln_ssp=config.spaln_ssp, **run_flags)

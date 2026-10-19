@@ -10,8 +10,8 @@ from click_option_group import optgroup
 
 from eukan.cli._framework import (
     PreformattedEpilogCommand,
-    drop_none,
     force_option,
+    given,
     numcpu_option,
 )
 from eukan.infra.databases import HOMOLOGY_DBS
@@ -83,8 +83,8 @@ def func_annot(**opts: Any) -> None:
         )
 
     force = opts.pop("force")
-    config = FunctionalConfig(**drop_none(
-        **opts, work_dir=step_work_dir("func-annot"), manifest_dir=Path.cwd(),
-    ))
+    config = FunctionalConfig(
+        **given(opts), work_dir=step_work_dir("func-annot"), manifest_dir=Path.cwd(),
+    )
     run_functional_annotation(config, force=force)
     click.echo("Done.")
