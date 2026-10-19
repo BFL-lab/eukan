@@ -65,7 +65,10 @@ class TestCheckTool:
         gm = tmp_path / "gmes_linux_64_4"
         gm.mkdir()
         petap = gm / "gmes_petap.pl"
-        petap.write_text("#!/bin/sh\necho '# -------------------'\necho 'Usage: gmes_petap.pl'\n")
+        petap.write_text(
+            "#!/bin/sh\necho '# -------------------'\necho 'Usage: gmes_petap.pl'\n"
+            "echo\necho 'GeneMark-ES Suite version 4.71_lic'\n"
+        )
         petap.chmod(0o755)
         (gm / "check_install.bash").write_text(check_install)
         monkeypatch.setenv("PATH", f"{gm}{os.pathsep}{os.environ['PATH']}")
@@ -94,7 +97,8 @@ class TestCheckTool:
         )
         result = check_tool(genemark)
         assert result.ok
-        assert result.version_output == "# -------------------"
+        # The suite's version line, not the first line of the usage banner.
+        assert result.version_output == "GeneMark-ES Suite version 4.71_lic"
 
     def test_direct_sigill_detected(self):
         """A binary killed by SIGILL should be flagged as broken."""

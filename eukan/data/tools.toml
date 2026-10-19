@@ -10,6 +10,8 @@
 # Per-tool fields (all optional unless marked required):
 #   binary          = executable name on PATH                           (required)
 #   version_cmd     = command to probe the tool (exit 0 or stdout/stderr = success)
+#   version_line    = regex selecting the probe output line `eukan check` shows
+#                     as the version (default: the first line)
 #   required_by     = which eukan subcommands need this tool
 #   conda_package   = bioconda/conda-forge package name (omit if not available)
 #   min_version     = minimum version for conda pin (omit for unpinned)
@@ -71,6 +73,8 @@ env_vars = [{ var = "QUARRY_PATH" }]
 [genemark]
 binary = "gmes_petap.pl"
 version_cmd = ["gmes_petap.pl"]
+# Its usage text opens with a rule line; the suite version comes a few lines on.
+version_line = "Suite version"
 required_by = ["annotate"]
 install_hint = "Requires a license from https://topaz.gatech.edu/GeneMark/license_download.cgi"
 # gmes_petap.pl runs without the license key; GeneMark's own check runs gmhmme3,

@@ -8,6 +8,9 @@ Schema (per-tool, all fields optional unless noted)::
 
     binary          = "augustus"                     # required
     version_cmd     = ["augustus", "--version"]      # default: [binary]
+    version_line    = "Suite version"                # regex picking the probe's
+                                                     # version line; default: its
+                                                     # first line
     required_by     = ["annotate"]                   # subcommands needing this tool
     conda_package   = "augustus"                     # omit if not on bioconda
     min_version     = "3.5"                          # conda pin; omit for unpinned
@@ -73,6 +76,7 @@ class Tool:
     conda_pin: str | None = None
     install_hint: str | None = None
     install_check: str | None = None
+    version_line: str | None = None
 
 
 def _find_tools_toml() -> Path | None:
@@ -93,6 +97,7 @@ def _parse_tool(name: str, cfg: dict[str, Any]) -> Tool:
         name=name,
         binary=cfg["binary"],
         version_cmd=tuple(cfg.get("version_cmd", [cfg["binary"]])),
+        version_line=cfg.get("version_line"),
         required_by=tuple(cfg.get("required_by", ())),
         env_vars=env_vars,
         conda_path_dirs=tuple(cfg.get("conda_path_dirs", ())),

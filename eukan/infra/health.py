@@ -14,6 +14,7 @@ import importlib
 import io
 import os
 import pkgutil
+import re
 import shutil
 import signal
 import subprocess
@@ -107,6 +108,16 @@ class CheckResult:
         return not self.problems
 
 
+def _version_line(tool: Tool, output: str) -> str:
+    """The probe output line matching the tool's ``version_line``, else its first."""
+    lines = output.split("\n")
+    if tool.version_line:
+        for line in lines:
+            if re.search(tool.version_line, line):
+                return line
+    return lines[0]
+
+
 def check_tool(tool: Tool) -> CheckResult:
     """Check if a tool is available and responds to its version command."""
     binary_path = shutil.which(tool.binary)
@@ -178,10 +189,9 @@ def check_tool(tool: Tool) -> CheckResult:
         output = str(e)
         version_ok = False
 
-    if crash_sig:
-        version_output = f"crashed with {crash_sig}"
-    else:
-        version_output = output.split("\n")[0][:120] if output else ""
+    version_output = (
+        f"crashed with {crash_sig}" if crash_sig else _version_line(tool, output)[:120]
+    )
 
     return CheckResult(
         tool=tool,
