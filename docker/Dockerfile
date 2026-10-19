@@ -1,7 +1,8 @@
 # Dockerfile for eukan genome annotation pipeline.
 #
 # Multi-stage build:
-#   Stage 1 (builder) — installs conda env, compiles fitild, installs GeneMark
+#   Stage 1 (builder) — installs the conda env, compiles fitild and the spaln
+#                       utilities, installs combinr, GeneMark and eukan
 #   Stage 2 (runtime) — copies only the conda env into a slim Debian base
 #
 # GeneMark is optional — if gmes_linux_64*.tar.gz and gm_key_64.gz are
@@ -46,9 +47,9 @@ SHELL ["conda", "run", "-n", "eukan", "/bin/bash", "-c"]
 
 # Trinity's bundled C++ needs no special handling here: the conda env installs
 # bioconda's current trinity build (compiled -march=x86-64-v3, AVX2/BMI2). The
-# former x86-64-v2 pins (star/augustus/spaln/spades/stringtie/trinity) were
-# dropped now that the deployment host is AVX2-capable, so this image requires
-# an x86-64-v3 (Haswell+/Broadwell+) CPU at runtime.
+# former x86-64-v2 conda pins were dropped now that the deployment host is
+# AVX2-capable, so this image requires an x86-64-v3 (Haswell+/Broadwell+) CPU
+# at runtime.
 # scripts/fix-trinity-avx2.sh remains only as a manual recovery tool for hosts
 # without AVX2 (it rebuilds Trinity's binaries at a lower -march).
 #
