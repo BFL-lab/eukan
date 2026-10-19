@@ -10,11 +10,19 @@ TTY_ARGS=()
 [[ -t 0 ]] && TTY_ARGS+=(-i)
 [[ -t 1 ]] && TTY_ARGS+=(-t)
 
+# A GeneMark key at ~/.gm_key overrides the one baked into the image, so a
+# renewed licence needs no rebuild. GeneMark reads $HOME/.gm_key, and the
+# image's HOME is /home/eukan whatever UID --user runs as.
+KEY_ARGS=()
+[[ -f "${HOME}/.gm_key" ]] && KEY_ARGS+=(
+    --mount "type=bind,source=${HOME}/.gm_key,target=/home/eukan/.gm_key,readonly")
+
 exec docker run --rm \
     ${TTY_ARGS[@]+"${TTY_ARGS[@]}"} \
     --user "$(id -u):$(id -g)" \
     --workdir "$WORKDIR" \
     --mount "type=bind,source=${WORKDIR},target=${WORKDIR}" \
+    ${KEY_ARGS[@]+"${KEY_ARGS[@]}"} \
     -e TZ="${TZ:-UTC}" \
     "$IMAGE" \
     "$@"

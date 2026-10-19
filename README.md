@@ -20,6 +20,8 @@ docker build -t eukan -f docker/Dockerfile .
 
 To include **GeneMark** ([license required](https://topaz.gatech.edu/GeneMark/license_download.cgi)), place `gmes_linux_64*.tar.gz` and `gm_key_64.gz` in the project root before building; the build fails if the archive is there without its key. If both are omitted, the build will succeed but `eukan check` will report GeneMark as missing.
 
+The GeneMark key expires. When `~/.gm_key` exists on the host, `eukan-docker` mounts it read-only over the key baked into the image, so a renewed key needs no rebuild: `gunzip -c gm_key_64.gz > ~/.gm_key`. Without `~/.gm_key` the baked key is used.
+
 The image creates a user with UID/GID 1000 whose home is `/home/eukan`; `eukan-docker` runs as your own UID/GID. If yours differ, build with `--build-arg USER_ID=$(id -u) --build-arg GROUP_ID=$(id -g)` so the container's home is writable by you.
 
 A separate **development image** (built on top of the `eukan` image) adds test tooling (NCBI datasets CLI, SRA Toolkit, procps):
