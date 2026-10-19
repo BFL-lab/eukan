@@ -356,7 +356,7 @@ For UniProt mode, hits with e-values between 1e-3 and the cutoff are reported as
 
 ### `eukan prep-submission`
 
-Validate and package an annotated genome for NCBI submission. Wraps NCBI's `table2asn` with the standard recipe (`-split-logs -W -J -Z -euk -T -V b` plus `-c/-M/-a`), producing a `.sqn` upload-ready file alongside `.val`, `.dr`, and `.stats` validator reports for iterative GFF3 refinement. When run after `eukan annotate` and `eukan func-annot`, the genome (from `eukan-run.json`) and annotated GFF3 (`final.mod.gff3`, falling back to `final.gff3`) are auto-discovered.
+Validate and package an annotated genome for NCBI submission. Wraps NCBI's `table2asn` with the standard recipe (`-split-logs -W -J -Z -euk -T -V b` plus `-c/-M/-a`), producing a `.sqn` upload-ready file alongside `.val`, `.dr`, and `.stats` validator reports for iterative GFF3 refinement. When run after `eukan annotate` and `eukan func-annot`, the genome `eukan annotate` ran on (from `eukan-run.json`) and annotated GFF3 (`final.mod.gff3`, falling back to `final.gff3`) are auto-discovered.
 
 ```
 Usage: eukan prep-submission [OPTIONS]
@@ -600,12 +600,12 @@ When `--spsp` is used, protein alignment results are written to a separate direc
 
 ### Run tracking and resume
 
-All pipelines write to a shared `eukan-run.json` manifest in the working directory, tracking per-step status, timing, and output checksums. This enables:
+All pipelines write to a shared `eukan-run.json` manifest in the working directory, tracking per-step status, timing, and output checksums, and for each pipeline its latest run's status, timing, CPUs, tool versions and inputs. This enables:
 
 - **Resume**: Re-running a subcommand skips steps that already completed.
 - **Selective re-run**: Use `--run-*` flags to force specific steps to re-execute.
 - **Integrity checking**: Before reusing a completed step, the pipeline checks that its output still exists, is non-empty, matches its recorded checksum (text outputs and any file up to 256 MiB) and still parses as GFF where applicable, and that the inputs and settings the step tracks are unchanged. A step that fails any check is rebuilt automatically, with a warning in the log, and a step left interrupted is cleaned up and re-run.
-- **Progress monitoring**: `eukan status` reads the manifest and shows progress across all pipelines.
+- **Progress monitoring**: `eukan status` reads the manifest and shows a block per pipeline (its latest run's status, inputs and settings), then every step's status.
 
 ```bash
 # View run status

@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -12,12 +13,16 @@ from eukan.cli.status import format_status
 from eukan.infra import manifest as manifest_mod
 from eukan.infra import utils
 from eukan.infra.manifest import (
+    ASSEMBLY,
+    MANIFEST_FILE,
+    PipelineRecord,
     RunManifest,
     StepRecord,
     StepStatus,
     load_manifest,
     save_manifest,
 )
+from eukan.infra.pipeline import StepSpec, run_simple_pipeline
 from eukan.infra.steps import (
     SENTINEL,
     _should_verify_md5,
@@ -27,14 +32,16 @@ from eukan.infra.steps import (
     pipeline_step,
 )
 from eukan.infra.utils import md5_file
+from eukan.settings import AssemblyConfig
 
 
 class TestManifestIO:
     def test_round_trip(self, tmp_path):
         """Save and load should preserve all fields."""
-        manifest = RunManifest(
+        manifest = RunManifest()
+        manifest.pipelines["annotation"] = PipelineRecord(
             started_at="2026-01-01T00:00:00+00:00",
-            genome="/data/genome.fa",
+            genome=Path("/data/genome.fa"),
             kingdom="protist",
             genetic_code="6",
             num_cpu=8,
@@ -47,11 +54,13 @@ class TestManifestIO:
         loaded = load_manifest(tmp_path)
 
         assert loaded is not None
-        assert loaded.genome == "/data/genome.fa"
-        assert loaded.kingdom == "protist"
-        assert loaded.num_cpu == 8
+        assert loaded.pipelines["annotation"] == manifest.pipelines["annotation"]
         assert "genemark" in loaded.steps
         assert loaded.steps["genemark"].duration_seconds == 120.5
+        # The version 1 run-level fields are no longer written.
+        written = json.loads((tmp_path / MANIFEST_FILE).read_text())
+        assert set(written) == {"version", "pipelines", "steps"}
+        assert written["version"] == "2"
 
     def test_load_missing(self, tmp_path):
         assert load_manifest(tmp_path) is None
@@ -61,10 +70,10 @@ class TestManifestIO:
         assert load_manifest(tmp_path) is None
 
     def test_pydantic_serialization(self):
-        manifest = RunManifest(started_at="2026-01-01", genome="g.fa")
+        manifest = RunManifest(pipelines={"repeats": PipelineRecord(genome=Path("g.fa"))})
         text = manifest.model_dump_json()
         loaded = RunManifest.model_validate_json(text)
-        assert loaded.genome == "g.fa"
+        assert loaded.pipelines["repeats"].genome == Path("g.fa")
 
 
 class TestSaveManifestMerge:
@@ -102,14 +111,75 @@ class TestSaveManifestMerge:
         assert on_disk.steps["repeats/modeler"].status == StepStatus.completed
         assert "assembly/minimap2" in on_disk.steps
 
-    def test_run_level_change_is_kept(self, tmp_path):
-        a, b = self._two_copies(tmp_path)
-        b.status = "completed"
+    def test_pipeline_record_change_is_kept(self, tmp_path):
+        a, b = self._two_copies(tmp_path, pipelines={"repeats": PipelineRecord()})
+        b.pipelines["repeats"].status = "completed"
         save_manifest(tmp_path, b)
         a.steps["assembly/minimap2"] = self._completed("assembly/minimap2")
+        save_manifest(tmp_path, a)  # a still holds the running record
+
+        assert load_manifest(tmp_path).pipelines["repeats"].status == "completed"
+
+    def test_copies_saving_different_pipelines_keep_both(self, tmp_path):
+        a, b = self._two_copies(tmp_path)
+        b.pipelines["repeats"] = PipelineRecord(num_cpu=3)
+        save_manifest(tmp_path, b)
+        a.pipelines["assembly"] = PipelineRecord(num_cpu=5)
         save_manifest(tmp_path, a)
 
-        assert load_manifest(tmp_path).status == "completed"
+        on_disk = load_manifest(tmp_path).pipelines
+        assert (on_disk["repeats"].num_cpu, on_disk["assembly"].num_cpu) == (3, 5)
+
+
+class TestVersion1Manifest:
+    """tests/data/eukan-run.v1.json: written by the version 1 code (eukan
+    assemble's driver with one stub step, before per-pipeline records; paths
+    and two tool versions filled in by hand). Its run-level fields describe
+    assembly, which created it."""
+
+    FIXTURE = Path(__file__).parent / "data" / "eukan-run.v1.json"
+    V1_FIELDS = (
+        "status", "started_at", "finished_at", "genome", "proteins", "kingdom",
+        "genetic_code", "num_cpu", "has_transcripts", "tool_versions",
+    )
+
+    def test_loads_with_its_run_level_fields(self):
+        manifest = RunManifest.model_validate_json(self.FIXTURE.read_text())
+        assert (manifest.version, manifest.genome, manifest.num_cpu) == (
+            "1", "/data/run/genome.fa", 4,
+        )
+        assert manifest.pipelines == {}
+        assert manifest.steps["assembly/minimap2"].status == StepStatus.completed
+
+    def test_resumes_unchanged_and_keeps_its_fields(self, tmp_path):
+        shutil.copy(self.FIXTURE, tmp_path / MANIFEST_FILE)
+        (tmp_path / "assemble").mkdir()
+        (tmp_path / "assemble" / "reads.txt").write_text("reads\n")  # the recorded output
+        ran = []
+        config = AssemblyConfig(
+            genome=tmp_path / "genome.fa", work_dir=tmp_path / "assemble",
+            manifest_dir=tmp_path, num_cpu=2,
+        )
+        run_simple_pipeline(
+            ASSEMBLY, [StepSpec("minimap2", ran.append, output="reads.txt")], config,
+        )
+
+        assert ran == []  # still complete: skipped
+        before = json.loads(self.FIXTURE.read_text())
+        after = json.loads((tmp_path / MANIFEST_FILE).read_text())
+        # Kept (a null one is left out, which reads back the same).
+        assert {f: after.get(f) for f in self.V1_FIELDS} == {f: before[f] for f in self.V1_FIELDS}
+        assert after["steps"] == before["steps"]
+        assert after["version"] == "2"
+        assert after["pipelines"]["assembly"]["status"] == "completed"
+        assert after["pipelines"]["assembly"]["num_cpu"] == 2
+
+    def test_status_shows_its_run_level_fields(self):
+        output = format_status(RunManifest.model_validate_json(self.FIXTURE.read_text()))
+        assert "Genome: /data/run/genome.fa" in output
+        assert "CPUs: 4" in output
+        assert "trinity" in output
+        assert "assembly: completed" in output  # from its steps
 
 
 class TestPipelineStepContextManager:
@@ -312,12 +382,12 @@ class TestInterruptionDetection:
 
 class TestFormatStatus:
     def test_basic_format(self):
-        manifest = RunManifest(
+        manifest = RunManifest(pipelines={"annotation": PipelineRecord(
             started_at="2026-01-01T00:00:00+00:00",
-            genome="/data/genome.fa",
+            genome=Path("/data/genome.fa"),
             kingdom="protist",
             num_cpu=8,
-        )
+        )})
         manifest.steps["genemark"] = StepRecord(
             name="genemark", status=StepStatus.completed,
             duration_seconds=120.5,
@@ -334,6 +404,35 @@ class TestFormatStatus:
         assert "augustus" in output
         assert "failed" in output
         assert "exit code 1" in output
+
+    def test_one_block_per_pipeline(self):
+        manifest = RunManifest(pipelines={
+            "repeats": PipelineRecord(
+                status="completed", genome=Path("/data/genome.fa"), num_cpu=3,
+            ),
+            "annotation": PipelineRecord(
+                genome=Path("/data/genome.masked.fasta"), proteins=[Path("/data/p.faa")],
+                kingdom="fungus", genetic_code="11", has_transcripts=False, num_cpu=8,
+                tool_versions={"augustus": "3.5.0"},
+            ),
+        })
+
+        blocks = format_status(manifest).split("\n\n")
+        assert blocks[0].splitlines() == [
+            "annotation: running",
+            "  Started: ",
+            "  Genome: /data/genome.masked.fasta",
+            "  Proteins: /data/p.faa",
+            "  Kingdom: fungus",
+            "  Genetic code: 11",
+            "  Transcript evidence: no",
+            "  CPUs: 8",
+            "  Tool versions:",
+            "    augustus             3.5.0",
+        ]
+        assert blocks[1].splitlines() == [
+            "repeats: completed", "  Started: ", "  Genome: /data/genome.fa", "  CPUs: 3",
+        ]
 
 
 class TestToolVersionSnapshot:

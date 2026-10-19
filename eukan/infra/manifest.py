@@ -11,6 +11,11 @@ The manifest enables:
 - Resume: re-run skips completed steps
 - Reproducibility: exact record of what ran and with what versions
 - Diagnostics: ``eukan status`` reads the manifest to report progress
+
+Each pipeline keeps its own run-level record (status, timing, CPUs, tool
+versions, inputs) under ``pipelines``, so pipelines sharing a run dir do not
+overwrite one another's. Version 1 manifests held a single set of run-level
+fields instead; those are still read and kept, never written.
 """
 
 from __future__ import annotations
@@ -93,20 +98,53 @@ class StepRecord(BaseModel):
     error: str | None = None
 
 
-class RunManifest(BaseModel):
-    """Full pipeline run manifest -- serialized to eukan-run.json."""
+class PipelineRecord(BaseModel):
+    """One pipeline's latest run in this run dir.
 
-    version: str = "1"
+    Its driver writes it when the run starts (``running``) and again when it
+    ends (``completed``, or ``failed`` if it raised or was interrupted), with
+    the run's CPUs, the installed tool versions and the inputs the pipeline
+    takes; the inputs it does not take stay ``None``.
+    """
+
     status: str = "running"
     started_at: str = ""
     finished_at: str | None = None
-    genome: str = ""
-    proteins: list[str] = Field(default_factory=list)
-    kingdom: str | None = None
-    genetic_code: str = ""
     num_cpu: int = 1
-    has_transcripts: bool = False
     tool_versions: dict[str, str] = Field(default_factory=dict)
+    genome: Path | None = None
+    proteins: list[Path] | None = None
+    kingdom: str | None = None
+    genetic_code: str | None = None
+    has_transcripts: bool | None = None
+
+
+# The run-level fields of a version 1 manifest, which whichever pipeline created
+# it set once. None in a manifest created since, and then left out of the file.
+_V1_FIELDS = (
+    "status", "started_at", "finished_at", "genome", "proteins", "kingdom",
+    "genetic_code", "num_cpu", "has_transcripts", "tool_versions",
+)
+
+
+class RunManifest(BaseModel):
+    """Full pipeline run manifest -- serialized to eukan-run.json."""
+
+    version: str = "2"
+    # Version 1 run-level fields (see _V1_FIELDS): read from older manifests
+    # (eukan status, prep-submission's genome discovery) and kept, never written.
+    status: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    genome: str | None = None
+    proteins: list[str] | None = None
+    kingdom: str | None = None
+    genetic_code: str | None = None
+    num_cpu: int | None = None
+    has_transcripts: bool | None = None
+    tool_versions: dict[str, str] | None = None
+    # Keyed by PipelineName.
+    pipelines: dict[str, PipelineRecord] = Field(default_factory=dict)
     steps: dict[str, StepRecord] = Field(default_factory=dict)
     # This copy as last loaded or saved; save_manifest writes only what changed
     # since, so copies saving to one run dir keep each other's changes.
@@ -141,9 +179,9 @@ def save_manifest(work_dir: Path, manifest: RunManifest) -> None:
     Several ``eukan`` invocations, and annotation's concurrent steps, save to
     one eukan-run.json. Under the lock the file on disk is re-read, and only
     what this copy changed since it was last loaded or saved (step records,
-    run-level fields) is written over it, so a writer keeps the step records
-    others saved meanwhile. Writes to a temp file first, then renames --
-    prevents corruption if the process crashes mid-write. Thread-safe within a
+    pipeline records, top-level fields) is written over it, so a writer keeps
+    the records others saved meanwhile. Writes to a temp file first, then
+    renames -- prevents corruption if the process crashes mid-write. Thread-safe within a
     process via ``_manifest_lock``; cross-process safe via an fcntl lock on the
     target path so two simultaneous ``eukan`` invocations against the same
     work_dir don't tear writes.
@@ -181,59 +219,28 @@ def _write_merged(work_dir: Path, manifest: RunManifest) -> None:
         merged = on_disk.model_dump(mode="json")
         synced = manifest._synced
         for field, value in mine.items():
-            if field != "steps" and value != synced.get(field):
+            if field not in ("pipelines", "steps") and value != synced.get(field):
                 merged[field] = value
-        for key, record in mine["steps"].items():
-            if record != synced.get("steps", {}).get(key):
-                merged["steps"][key] = record
+        for section in ("pipelines", "steps"):
+            for key, record in mine[section].items():
+                if record != synced.get(section, {}).get(key):
+                    merged[section][key] = record
+    final = RunManifest.model_validate(merged)
+    unset_v1 = {field for field in _V1_FIELDS if getattr(final, field) is None}
     target = work_dir / MANIFEST_FILE
     tmp = target.with_suffix(".tmp")
-    tmp.write_text(RunManifest.model_validate(merged).model_dump_json(indent=2) + "\n")
+    tmp.write_text(final.model_dump_json(indent=2, exclude=unset_v1) + "\n")
     tmp.replace(target)
     manifest._synced = mine
 
 
-def init_manifest(config: Any) -> RunManifest:
-    """Create a new manifest from a pipeline config, snapshotting tool versions.
-
-    Defensive against partial configs: only ``PipelineConfig`` carries
-    every field below. ``AssemblyConfig`` / ``RepeatsConfig`` /
-    ``FunctionalConfig`` populate what they have and leave the rest at
-    their defaults — so whichever pipeline runs first in a clean
-    work_dir gets a coherent (if sparse) record. Subsequent pipelines
-    sharing the manifest are free to add their step records.
-    """
-    kingdom = getattr(config, "kingdom", None)
-    proteins = getattr(config, "proteins", None) or []
-    # Normalize scalar paths (FunctionalConfig has a single `proteins: Path`,
-    # PipelineConfig has `list[Path]`).
-    if isinstance(proteins, (str, Path)):
-        proteins = [proteins]
-    return RunManifest(
-        started_at=_now(),
-        genome=str(getattr(config, "genome", "")),
-        proteins=[str(p) for p in proteins],
-        kingdom=kingdom.value if kingdom else None,
-        genetic_code=getattr(config, "genetic_code", "") or "",
-        num_cpu=getattr(config, "num_cpu", 1),
-        has_transcripts=bool(getattr(config, "has_transcripts", False)),
-        tool_versions=_snapshot_tool_versions(),
-    )
-
-
-def get_or_create_manifest(work_dir: Path, config: Any = None) -> RunManifest:
+def get_or_create_manifest(work_dir: Path) -> RunManifest:
     """Load existing manifest or create a fresh one.
 
-    This is the preferred entry point for all pipelines.  A single
-    eukan-run.json is shared across assembly, annotation, and functional
-    pipelines running from the same work directory.
+    A single eukan-run.json is shared across the pipelines running from the
+    same run dir; each driver opens it through ``infra.pipeline.pipeline_run``.
     """
-    manifest = load_manifest(work_dir)
-    if manifest:
-        return manifest
-    if config is not None:
-        return init_manifest(config)
-    return RunManifest(started_at=_now(), tool_versions=_snapshot_tool_versions())
+    return load_manifest(work_dir) or RunManifest()
 
 
 # ---------------------------------------------------------------------------

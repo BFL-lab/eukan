@@ -1,0 +1,29 @@
+{
+  "version": "1",
+  "status": "running",
+  "started_at": "2026-10-19T14:17:01.723301+00:00",
+  "finished_at": null,
+  "genome": "/data/run/genome.fa",
+  "proteins": [],
+  "kingdom": null,
+  "genetic_code": "1",
+  "num_cpu": 4,
+  "has_transcripts": false,
+  "tool_versions": {
+    "minimap2": "2.30",
+    "trinity": "2.15.2"
+  },
+  "steps": {
+    "assembly/minimap2": {
+      "name": "assembly/minimap2",
+      "status": "completed",
+      "started_at": "2026-10-19T14:17:01.724109+00:00",
+      "finished_at": "2026-10-19T14:17:01.725395+00:00",
+      "duration_seconds": 0.0,
+      "output_file": "assemble/reads.txt",
+      "output_md5": "ca1250db1d77ce4308657341015cfa3f",
+      "input_md5": null,
+      "error": null
+    }
+  }
+}

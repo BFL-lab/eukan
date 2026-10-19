@@ -18,11 +18,9 @@ from eukan.infra.logging import get_logger
 from eukan.infra.manifest import (
     ANNOTATION,
     RunManifest,
-    get_or_create_manifest,
-    save_manifest,
     step_key,
 )
-from eukan.infra.pipeline import run_orchestrated_step
+from eukan.infra.pipeline import pipeline_run, run_orchestrated_step
 from eukan.infra.steps import step_dir
 from eukan.settings import PipelineConfig
 from eukan.validation import sanitize_genome_fasta, validate_fasta, validate_gff
@@ -158,24 +156,10 @@ def run_annotation_pipeline(
     else:
         log.info("No transcript evidence found. Running protein-only annotation.")
 
-    # Load or create shared manifest (used by all pipelines in this work_dir).
     # Each step decides on its own record whether it still has to run, so a
     # resume with nothing left to do skips every step.
-    manifest = get_or_create_manifest(config.manifest_dir, config)
-    save_manifest(config.manifest_dir, manifest)
-
-    try:
-        result = _execute_steps(config, manifest, frozenset(force_steps or ()))
-        manifest.status = "completed"
-        manifest.finished_at = manifest.steps[
-            max(manifest.steps, key=lambda k: manifest.steps[k].finished_at or "")
-        ].finished_at
-        save_manifest(config.manifest_dir, manifest)
-        return result
-    except Exception:
-        manifest.status = "failed"
-        save_manifest(config.manifest_dir, manifest)
-        raise
+    with pipeline_run(ANNOTATION, config) as manifest:
+        return _execute_steps(config, manifest, frozenset(force_steps or ()))
 
 
 # Single source of truth: step name (no prefix) -> --run-* CLI flag that

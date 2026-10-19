@@ -454,7 +454,8 @@ class SubmissionConfig(_StepRunSettings):
     """Configuration for NCBI submission preparation (eukan prep-submission).
 
     Wraps NCBI's table2asn validator. :meth:`discover` fills in ``genome``
-    from ``eukan-run.json`` and ``gff3`` from ``work_dir`` (preferring
+    from ``eukan-run.json`` (the genome annotate ran on, else mask-repeats',
+    else assemble's) and ``gff3`` from ``work_dir`` (preferring
     ``final.mod.gff3`` over ``final.gff3``) when not given explicitly.
     """
 
@@ -506,21 +507,27 @@ class SubmissionConfig(_StepRunSettings):
         from eukan.infra import artifacts
         from eukan.infra.artifacts import Artifact
         from eukan.infra.layout import sibling_step_dir
-        from eukan.infra.manifest import load_manifest
+        from eukan.infra.manifest import ANNOTATION, ASSEMBLY, REPEATS, load_manifest
 
         if self.genome is None:
             # Manifest lives at the run-dir root (manifest_dir); fall back
-            # to legacy per-step locations for older runs.
+            # to legacy per-step locations for older runs. A version 1 manifest
+            # holds one genome, that of whichever pipeline created it.
             for candidate_dir in (
                 self.manifest_dir,
                 sibling_step_dir(self.work_dir, "annotate"),
                 self.work_dir,
             ):
                 manifest = load_manifest(candidate_dir)
-                if manifest and manifest.genome:
-                    discovered = Path(manifest.genome)
-                    self.genome = discovered
-                    log.info("Auto-discovered genome from eukan-run.json: %s", discovered)
+                if manifest is None:
+                    continue
+                records = [manifest.pipelines.get(p) for p in (ANNOTATION, REPEATS, ASSEMBLY)]
+                genomes = [r.genome for r in records if r and r.genome]
+                if manifest.genome:
+                    genomes.append(Path(manifest.genome))
+                if genomes:
+                    self.genome = genomes[0]
+                    log.info("Auto-discovered genome from eukan-run.json: %s", self.genome)
                     break
 
         if self.gff3 is None:

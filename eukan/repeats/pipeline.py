@@ -6,14 +6,10 @@ from pathlib import Path
 
 from eukan.exceptions import ConfigurationError
 from eukan.infra.logging import get_logger
-from eukan.infra.manifest import (
-    REPEATS,
-    get_or_create_manifest,
-    save_manifest,
-    step_key,
-)
+from eukan.infra.manifest import REPEATS, step_key
 from eukan.infra.pipeline import (
     StepSpec,
+    pipeline_run,
     run_orchestrated_step,
 )
 from eukan.infra.pipeline import (
@@ -85,7 +81,6 @@ def run_repeats(
     ``run_orchestrated_step`` primitive.
     """
     config.ensure_dirs()
-    manifest = get_or_create_manifest(config.manifest_dir, config)
     forced = set(force_steps or ())
 
     if forced:
@@ -95,59 +90,58 @@ def run_repeats(
         # below by is_step_complete / run_orchestrated_step, which rebuild them.
         active = [s.name for s in _STEPS]
 
-    save_manifest(config.manifest_dir, manifest)
-
-    families: Path | None = None
-    if "modeler" in active:
-        if config.lib:
-            log.info("Using user-provided repeat library: %s — skipping RepeatModeler.", config.lib)
-            families = config.lib
-        else:
-            modeler_key = step_key(REPEATS, "modeler")
-            # RepeatModeler builds the library from the genome: a changed genome rebuilds it.
-            modeler_inputs = [config.genome]
-            cached = (
-                is_step_complete(config.manifest_dir, manifest, modeler_key, modeler_inputs)
-                if modeler_key not in forced else None
-            )
-            if isinstance(cached, Path):
-                families = cached
-            else:
-                run_orchestrated_step(
-                    config.manifest_dir, manifest, modeler_key,
-                    _run_modeler_step, config,
-                    step_dir=config.work_dir / "modeler",
-                    force=modeler_key in forced,
-                    output_file=_modeler_output(config),
-                    input_files=modeler_inputs,
-                )
-                families = _modeler_output(config)
-
-    masked_output = config.work_dir / f"{config.name}.masked.fasta"
-    if "masker" in active:
-        if families is None:
+    with pipeline_run(REPEATS, config) as manifest:
+        families: Path | None = None
+        if "modeler" in active:
             if config.lib:
+                log.info("Using user-provided repeat library: %s — skipping RepeatModeler.", config.lib)
                 families = config.lib
             else:
-                cached = is_step_complete(
-                    config.manifest_dir, manifest, step_key(REPEATS, "modeler"),
+                modeler_key = step_key(REPEATS, "modeler")
+                # RepeatModeler builds the library from the genome: a changed genome rebuilds it.
+                modeler_inputs = [config.genome]
+                cached = (
+                    is_step_complete(config.manifest_dir, manifest, modeler_key, modeler_inputs)
+                    if modeler_key not in forced else None
                 )
-                if not isinstance(cached, Path):
-                    raise ConfigurationError(
-                        "RepeatMasker step requested but no families library found.",
-                        hint="Run --run-modeler first or pass --lib.",
+                if isinstance(cached, Path):
+                    families = cached
+                else:
+                    run_orchestrated_step(
+                        config.manifest_dir, manifest, modeler_key,
+                        _run_modeler_step, config,
+                        step_dir=config.work_dir / "modeler",
+                        force=modeler_key in forced,
+                        output_file=_modeler_output(config),
+                        input_files=modeler_inputs,
                     )
-                families = cached
+                    families = _modeler_output(config)
 
-        # A changed library (a rebuilt one, or another --lib) or genome re-runs it.
-        masker_key = step_key(REPEATS, "masker")
-        run_orchestrated_step(
-            config.manifest_dir, manifest, masker_key,
-            _run_masker_step, config, families,
-            step_dir=config.work_dir / "masker",
-            force=masker_key in forced,
-            output_file=masked_output,
-            input_files=[families, config.genome],
-        )
+        masked_output = config.work_dir / f"{config.name}.masked.fasta"
+        if "masker" in active:
+            if families is None:
+                if config.lib:
+                    families = config.lib
+                else:
+                    cached = is_step_complete(
+                        config.manifest_dir, manifest, step_key(REPEATS, "modeler"),
+                    )
+                    if not isinstance(cached, Path):
+                        raise ConfigurationError(
+                            "RepeatMasker step requested but no families library found.",
+                            hint="Run --run-modeler first or pass --lib.",
+                        )
+                    families = cached
 
-    return masked_output
+            # A changed library (a rebuilt one, or another --lib) or genome re-runs it.
+            masker_key = step_key(REPEATS, "masker")
+            run_orchestrated_step(
+                config.manifest_dir, manifest, masker_key,
+                _run_masker_step, config, families,
+                step_dir=config.work_dir / "masker",
+                force=masker_key in forced,
+                output_file=masked_output,
+                input_files=[families, config.genome],
+            )
+
+        return masked_output

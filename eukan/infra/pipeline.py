@@ -6,12 +6,14 @@ A :class:`StepSpec` is a tool-agnostic description of one pipeline step
 case (assembly, repeats); :func:`run_orchestrated_step` is the lower-level
 primitive used directly by pipelines whose execution graph isn't a
 straight line (annotation's phases, functional's JSON-cache dance).
+:func:`pipeline_run` opens the manifest for a driver and records the run.
 """
 
 from __future__ import annotations
 
 import shutil
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,8 +21,11 @@ from typing import Any
 from eukan.infra.logging import get_logger
 from eukan.infra.manifest import (
     PipelineName,
+    PipelineRecord,
     RunManifest,
     StepStatus,
+    _now,
+    _snapshot_tool_versions,
     get_or_create_manifest,
     save_manifest,
     step_key,
@@ -127,6 +132,52 @@ def force_steps_from_run_flags(
 
 
 # ---------------------------------------------------------------------------
+# Pipeline run record
+# ---------------------------------------------------------------------------
+
+
+# The inputs each pipeline's record holds: those its config takes from the user.
+_RECORDED_INPUTS: dict[PipelineName, Callable[[Any], dict[str, Any]]] = {
+    PipelineName.ANNOTATION: lambda c: {
+        "genome": c.genome, "proteins": c.proteins, "kingdom": c.kingdom,
+        "genetic_code": c.genetic_code, "has_transcripts": c.has_transcripts,
+    },
+    PipelineName.ASSEMBLY: lambda c: {"genome": c.genome, "genetic_code": c.genetic_code},
+    PipelineName.FUNCTIONAL: lambda c: {"proteins": [c.proteins]},
+    PipelineName.REPEATS: lambda c: {"genome": c.genome},
+}
+
+
+@contextmanager
+def pipeline_run(pipeline: PipelineName, config: Any) -> Iterator[RunManifest]:
+    """Yield the run dir's manifest with *pipeline*'s record of this run in it.
+
+    The record -- running, started now, with this run's CPUs, the installed
+    tool versions and the pipeline's inputs -- replaces the one from the
+    pipeline's previous run and is saved before the body runs. Afterwards it
+    is marked completed, or failed if the body raised or was interrupted, and
+    saved again.
+    """
+    manifest = get_or_create_manifest(config.manifest_dir)
+    record = PipelineRecord(
+        started_at=_now(), num_cpu=config.num_cpu, tool_versions=_snapshot_tool_versions(),
+        **_RECORDED_INPUTS[pipeline](config),
+    )
+    manifest.version = "2"
+    manifest.pipelines[pipeline] = record
+    save_manifest(config.manifest_dir, manifest)
+    try:
+        yield manifest
+        record.status = "completed"
+    except BaseException:
+        record.status = "failed"
+        raise
+    finally:
+        record.finished_at = _now()
+        save_manifest(config.manifest_dir, manifest)
+
+
+# ---------------------------------------------------------------------------
 # Linear pipeline driver
 # ---------------------------------------------------------------------------
 
@@ -156,7 +207,6 @@ def run_simple_pipeline(
         The output path of the last executed step (or ``None`` if no
         step produced one).
     """
-    manifest = get_or_create_manifest(config.manifest_dir, config)
     forced = set(force_steps or ())
 
     # A missing/corrupt output of a completed step is detected per-step by
@@ -173,24 +223,23 @@ def run_simple_pipeline(
             continue
         active.append(s)
 
-    save_manifest(config.manifest_dir, manifest)
-
     result: Path | None = None
-    for spec in active:
-        key = step_key(pipeline, spec.name)
-        output_file = (config.work_dir / spec.output) if spec.output else None
-        input_files = spec.inputs(config) if spec.inputs else None
-        input_scalars = spec.scalars(config) if spec.scalars else None
-        result = run_orchestrated_step(
-            config.manifest_dir, manifest, key,
-            spec.fn, config,
-            step_dir=config.work_dir / spec.name,
-            force=key in forced,
-            output_file=output_file,
-            clear_files=[config.work_dir / f for f in spec.clears],
-            input_files=input_files,
-            input_scalars=input_scalars,
-        )
+    with pipeline_run(pipeline, config) as manifest:
+        for spec in active:
+            key = step_key(pipeline, spec.name)
+            output_file = (config.work_dir / spec.output) if spec.output else None
+            input_files = spec.inputs(config) if spec.inputs else None
+            input_scalars = spec.scalars(config) if spec.scalars else None
+            result = run_orchestrated_step(
+                config.manifest_dir, manifest, key,
+                spec.fn, config,
+                step_dir=config.work_dir / spec.name,
+                force=key in forced,
+                output_file=output_file,
+                clear_files=[config.work_dir / f for f in spec.clears],
+                input_files=input_files,
+                input_scalars=input_scalars,
+            )
     return result
 
 

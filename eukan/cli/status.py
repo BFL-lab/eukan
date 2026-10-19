@@ -38,39 +38,58 @@ def pipeline_status(manifest: RunManifest, prefix: str) -> str:
     return "running"
 
 
+def _tool_version_lines(versions: dict[str, str], indent: str) -> list[str]:
+    if not versions:
+        return []
+    return [f"{indent}Tool versions:"] + [
+        f"{indent}  {tool:<20s} {ver}" for tool, ver in versions.items()
+    ]
+
+
 def format_status(manifest: RunManifest) -> str:
-    """Format the manifest as a human-readable status report."""
+    """Format the manifest as a human-readable status report: a block per
+    pipeline that has run, then the steps."""
     from eukan.infra.manifest import PipelineName  # lazy: startup cost
 
-    lines = [
-        f"Run: {manifest.status}",
-        f"Started: {manifest.started_at}",
-    ]
-    if manifest.finished_at:
-        lines.append(f"Finished: {manifest.finished_at}")
-    lines += [
-        f"Genome: {manifest.genome}",
-        f"Kingdom: {manifest.kingdom or 'not set'}",
-        f"CPUs: {manifest.num_cpu}",
-        "",
-    ]
+    lines: list[str] = []
+    if manifest.started_at is not None:
+        # A version 1 manifest's run-level fields: those of whichever pipeline
+        # created it.
+        lines += [f"Run: {manifest.status}", f"Started: {manifest.started_at}"]
+        if manifest.finished_at:
+            lines.append(f"Finished: {manifest.finished_at}")
+        lines += [
+            f"Genome: {manifest.genome}",
+            f"Kingdom: {manifest.kingdom or 'not set'}",
+            f"CPUs: {manifest.num_cpu}",
+            "",
+        ]
+        lines += _tool_version_lines(manifest.tool_versions or {}, "")
+        lines += [""] if manifest.tool_versions else []
 
-    if manifest.tool_versions:
-        lines.append("Tool versions:")
-        for tool, ver in manifest.tool_versions.items():
-            lines.append(f"  {tool:<20s} {ver}")
-        lines.append("")
-
-    # Per-pipeline summary above the step detail.
-    pipeline_summaries = [
-        (p, pipeline_status(manifest, p.value)) for p in PipelineName
-    ]
-    if any(status != "pending" for _, status in pipeline_summaries):
-        lines.append("Pipelines:")
-        for pipeline, status in pipeline_summaries:
-            if status == "pending":
-                continue
-            lines.append(f"  {pipeline.value:<12s} {status}")
+    for pipeline in PipelineName:
+        run = manifest.pipelines.get(pipeline)
+        if run is None:
+            # No record (it ran before version 2): status from its steps alone.
+            status = pipeline_status(manifest, pipeline.value)
+            if status != "pending":
+                lines += [f"{pipeline.value}: {status}", ""]
+            continue
+        lines.append(f"{pipeline.value}: {run.status}")
+        transcripts = run.has_transcripts
+        for label, value in (
+            ("Started", run.started_at),
+            ("Finished", run.finished_at),
+            ("Genome", run.genome),
+            ("Proteins", ", ".join(map(str, run.proteins)) if run.proteins else None),
+            ("Kingdom", run.kingdom),
+            ("Genetic code", run.genetic_code),
+            ("Transcript evidence", None if transcripts is None else "yes" if transcripts else "no"),
+            ("CPUs", run.num_cpu),
+        ):
+            if value is not None:
+                lines.append(f"  {label}: {value}")
+        lines += _tool_version_lines(run.tool_versions, "  ")
         lines.append("")
 
     lines.append("Steps:")

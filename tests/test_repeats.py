@@ -2,6 +2,7 @@
 
 from Bio import SeqIO
 
+from eukan.infra.manifest import load_manifest
 from eukan.repeats.masker import gff_to_hints
 from eukan.repeats.modeler import _salvage_partial_library, sort_and_uppercase
 from eukan.repeats.pipeline import force_steps_from_run_flags
@@ -205,6 +206,17 @@ class TestRunRepeatsResume:
         monkeypatch.setattr(pipeline, "run_modeler", fake_modeler)
         monkeypatch.setattr(pipeline, "run_masker", fake_masker)
         return pipeline.run_repeats
+
+    def test_run_is_recorded(self, tmp_path, monkeypatch):
+        run_repeats = self._stub(monkeypatch, [])
+        genome = tmp_path / "genome.fa"
+        genome.write_text(">chr1\nACGT\n")
+        run_repeats(RepeatsConfig(genome=genome, work_dir=tmp_path, num_cpu=3))
+
+        record = load_manifest(tmp_path).pipelines["repeats"]
+        assert (record.status, record.genome, record.num_cpu) == ("completed", genome, 3)
+        # Inputs mask-repeats does not take stay unset.
+        assert (record.proteins, record.kingdom, record.genetic_code) == (None, None, None)
 
     def test_run_modeler_reruns_masker(self, tmp_path, monkeypatch):
         ran: list[str] = []

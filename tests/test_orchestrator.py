@@ -20,10 +20,12 @@ from eukan.assembly.pipeline import (
 from eukan.assembly.pipeline import (
     force_steps_from_run_flags as assembly_force_steps_from_run_flags,
 )
+from eukan.cli.status import format_status
 from eukan.infra.manifest import (
     ANNOTATION,
     ASSEMBLY,
     MANIFEST_FILE,
+    REPEATS,
     RunManifest,
     StepRecord,
     StepStatus,
@@ -40,7 +42,7 @@ from eukan.infra.pipeline import (
 )
 from eukan.infra.steps import fingerprint_inputs, is_step_complete
 from eukan.infra.utils import md5_file
-from eukan.settings import AssemblyConfig, Kingdom, PipelineConfig
+from eukan.settings import AssemblyConfig, Kingdom, PipelineConfig, RepeatsConfig
 
 
 class TestForceStepsFromRunFlags:
@@ -1257,3 +1259,46 @@ class TestSkipAppliesToForcedSteps:
             )
         assert ran == ["a", "c"]
         assert "[assembly/b] skipped: disabled by configuration" in caplog.text
+
+
+class TestPipelineRecords:
+    """Each driver keeps its own record of its run in the shared manifest."""
+
+    def test_concurrent_pipelines_keep_each_others_records(self, tmp_path):
+        # mask-repeats starts and finishes while assemble is running: assemble's
+        # copy of the manifest never sees the repeats record, and saves after it.
+        assembly_cfg = AssemblyConfig(
+            genome=tmp_path / "asm.fa", work_dir=tmp_path / "assemble", manifest_dir=tmp_path,
+            num_cpu=5,
+        )
+        repeats_cfg = RepeatsConfig(
+            genome=tmp_path / "rep.fa", work_dir=tmp_path / "repeats", manifest_dir=tmp_path,
+            num_cpu=3,
+        )
+
+        def minimap2(config):
+            run_simple_pipeline(REPEATS, [StepSpec("modeler", lambda c: None)], repeats_cfg)
+
+        run_simple_pipeline(ASSEMBLY, [StepSpec("minimap2", minimap2)], assembly_cfg)
+
+        status = format_status(load_manifest(tmp_path))
+        assert "assembly: completed\n  Started: " in status
+        assert f"  Genome: {tmp_path / 'asm.fa'}\n  Genetic code: 1\n  CPUs: 5" in status
+        assert "repeats: completed\n  Started: " in status
+        assert f"  Genome: {tmp_path / 'rep.fa'}\n  CPUs: 3" in status
+
+    def test_running_while_it_runs_then_failed(self, tmp_path):
+        cfg = AssemblyConfig(genome=tmp_path / "g.fa", work_dir=tmp_path, num_cpu=2)
+        seen = []
+
+        def step(config):
+            seen.append(load_manifest(tmp_path).pipelines[ASSEMBLY].status)
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError):
+            run_simple_pipeline(ASSEMBLY, [StepSpec("a", step)], cfg)
+
+        record = load_manifest(tmp_path).pipelines[ASSEMBLY]
+        assert seen == ["running"]
+        assert record.status == "failed"
+        assert record.finished_at is not None

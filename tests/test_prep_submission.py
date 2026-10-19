@@ -7,8 +7,11 @@ from pathlib import Path
 
 import pytest
 
+from eukan.annotation import pipeline as annotation_pipeline
 from eukan.exceptions import ConfigurationError
-from eukan.settings import SubmissionConfig
+from eukan.functional import pipeline as functional_pipeline
+from eukan.infra.manifest import MANIFEST_FILE, PipelineRecord, RunManifest
+from eukan.settings import FunctionalConfig, PipelineConfig, SubmissionConfig
 from eukan.submission import build_command, run_prep_submission, shell_repr
 from eukan.submission.pipeline import _parse_val_report
 
@@ -165,6 +168,58 @@ class TestAutoDiscovery:
         )
         config.discover()
         assert config.genome == submission_inputs["genome"]
+
+    def test_discovers_genome_when_func_annot_ran_first(
+        self, submission_inputs, tmp_path: Path, monkeypatch,
+    ):
+        """func-annot, which takes no genome, created the run dir's manifest and
+        annotate ran after it: the genome annotate ran on is still found."""
+        run = tmp_path / "run"
+        proteins = tmp_path / "proteins.faa"
+        proteins.write_text(">p\nMK\n")
+
+        def search(config, cache):
+            cache.write_text('{"homology": {}, "pfam": {}}')
+            return {"homology": {}, "pfam": {}}
+
+        monkeypatch.setattr(functional_pipeline, "_search_and_cache", search)
+        monkeypatch.setattr(functional_pipeline, "annotate_fasta", lambda *a: None)
+        functional_pipeline.run_functional_annotation(FunctionalConfig(
+            proteins=proteins, work_dir=run / "func-annot", manifest_dir=run, num_cpu=1,
+        ))
+        monkeypatch.setattr(annotation_pipeline, "_execute_steps", lambda *a: None)
+        annotation_pipeline.run_annotation_pipeline(PipelineConfig(
+            genome=submission_inputs["genome"], proteins=[proteins],
+            work_dir=run / "annotate", manifest_dir=run, num_cpu=1,
+        ))
+
+        config = SubmissionConfig(
+            work_dir=run / "submission", manifest_dir=run,
+            template=submission_inputs["template"], organism="Foo bar",
+            gff3=submission_inputs["gff3"],
+        )
+        config.discover()
+        assert config.genome == submission_inputs["genome"]
+
+    def test_genome_preference_order(self, submission_inputs, tmp_path: Path):
+        """annotate's genome (often the masked one), then mask-repeats', then
+        assemble's, then a version 1 manifest's single genome."""
+        run = tmp_path / "run"
+        run.mkdir()
+        manifest = RunManifest(genome=str(tmp_path / "v1.fa"), pipelines={
+            p: PipelineRecord(genome=tmp_path / f"{p}.fa")
+            for p in ("assembly", "repeats", "annotation")
+        })
+        for expected in ("annotation", "repeats", "assembly", "v1"):
+            (run / MANIFEST_FILE).write_text(manifest.model_dump_json())
+            config = SubmissionConfig(
+                work_dir=run / "submission", manifest_dir=run,
+                template=submission_inputs["template"], organism="Foo bar",
+                gff3=submission_inputs["gff3"],
+            )
+            config.discover()
+            assert config.genome == tmp_path / f"{expected}.fa"
+            manifest.pipelines.pop(expected, None)
 
     def test_discovers_gff3_prefers_mod(self, submission_inputs, tmp_path: Path):
         work_dir = tmp_path / "wd"

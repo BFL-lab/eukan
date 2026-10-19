@@ -49,13 +49,8 @@ from eukan.functional.search import (
     run_phmmer_search,
 )
 from eukan.infra.logging import get_logger
-from eukan.infra.manifest import (
-    FUNCTIONAL,
-    get_or_create_manifest,
-    save_manifest,
-    step_key,
-)
-from eukan.infra.pipeline import run_orchestrated_step
+from eukan.infra.manifest import FUNCTIONAL, RunManifest, step_key
+from eukan.infra.pipeline import pipeline_run, run_orchestrated_step
 from eukan.infra.steps import is_step_complete, run_dir_relative
 from eukan.settings import FunctionalConfig
 
@@ -232,12 +227,16 @@ def run_functional_annotation(
 ) -> None:
     """Run the full functional annotation pipeline."""
     config.ensure_dirs()
+    with pipeline_run(FUNCTIONAL, config) as manifest:
+        _execute_steps(config, manifest, force)
+
+
+def _execute_steps(config: FunctionalConfig, manifest: RunManifest, force: bool) -> None:
+    """Run the search and annotation steps, recording them in *manifest*."""
     work_dir = config.work_dir
     # The manifest lives in manifest_dir (the run-dir root), shared with the other
     # pipelines; step outputs and sentinels stay under work_dir.
     manifest_dir = config.manifest_dir
-    manifest = get_or_create_manifest(manifest_dir, config)
-    save_manifest(manifest_dir, manifest)
 
     mode = _MODES[config.homology_db]
     cache = _search_cache_path(config)
