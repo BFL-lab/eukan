@@ -481,6 +481,20 @@ class TestToolVersionSnapshot:
         assert manifest_mod._snapshot_tool_versions()["trinity"] == "2.15.2"
         assert len(conda_calls) == 1  # the refreshed entry is reused
 
+    def test_without_conda_records_the_version_probes(self, tmp_path, monkeypatch):
+        """The Docker image has a conda env but no conda binary."""
+        (tmp_path / "env").mkdir()
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        samtools = bin_dir / "samtools"
+        samtools.write_text("#!/bin/sh\necho 'samtools 1.24'\necho 'Using htslib 1.24'\n")
+        samtools.chmod(0o755)
+        monkeypatch.setenv("PATH", str(bin_dir))  # no conda, one tool
+        monkeypatch.setenv("CONDA_PREFIX", str(tmp_path / "env"))
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+        assert manifest_mod._snapshot_tool_versions() == {"samtools": "samtools 1.24"}
+
 
 class TestMd5Cache:
     """md5_file reuses a digest within one process while the file is unchanged."""

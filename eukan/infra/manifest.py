@@ -31,6 +31,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, PrivateAttr
 
+from eukan.infra.health import check_tool
 from eukan.infra.logging import get_logger
 from eukan.infra.tools_registry import load_tools
 
@@ -257,6 +258,9 @@ def _tool_versions_cache_path() -> Path:
 def _snapshot_tool_versions() -> dict[str, str]:
     """Capture the version of every conda package in tools.toml. Best-effort, never fails.
 
+    From ``conda list``, or where there is no ``conda`` from each tool's
+    ``eukan check`` version probe (:func:`_probe_tool_versions`).
+
     Cached in ``$XDG_CACHE_HOME/eukan/tool-versions.json`` (or
     ``~/.cache/eukan/tool-versions.json``) keyed by ``CONDA_PREFIX``, its
     mtime and the package list — re-running ``conda list`` on every fresh
@@ -284,6 +288,8 @@ def _snapshot_tool_versions() -> dict[str, str]:
             pass
 
     versions = _query_conda_versions(prefix, packages)
+    if versions is None:
+        versions = _probe_tool_versions()
 
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -294,8 +300,12 @@ def _snapshot_tool_versions() -> dict[str, str]:
     return versions
 
 
-def _query_conda_versions(prefix: str, packages: list[str]) -> dict[str, str]:
-    """Run ``conda list`` once and parse the version of each of *packages*."""
+def _query_conda_versions(prefix: str, packages: list[str]) -> dict[str, str] | None:
+    """Run ``conda list`` once and parse the version of each of *packages*.
+
+    None when there is no ``conda`` to run (the Docker image ships the env
+    without it).
+    """
     try:
         result = subprocess.run(
             ["conda", "list", "-p", prefix, "--no-pip"],
@@ -303,6 +313,8 @@ def _query_conda_versions(prefix: str, packages: list[str]) -> dict[str, str]:
         )
         if result.returncode != 0:
             return {}
+    except FileNotFoundError:
+        return None
     except Exception:
         return {}
 
@@ -313,6 +325,22 @@ def _query_conda_versions(prefix: str, packages: list[str]) -> dict[str, str]:
         parts = line.split()
         if len(parts) >= 2 and parts[0] in packages:
             versions[parts[0]] = parts[1]
+    return versions
+
+
+def _probe_tool_versions() -> dict[str, str]:
+    """Each conda-packaged tool's ``eukan check`` version line, keyed by its package.
+
+    For a conda env without ``conda`` (the Docker image), where ``conda list``
+    cannot run. A banner such as ``samtools 1.24`` rather than a bare version;
+    tools whose probe fails are left out.
+    """
+    versions: dict[str, str] = {}
+    for tool in load_tools():
+        if tool.conda_package:
+            result = check_tool(tool)
+            if result.version_ok:
+                versions[tool.conda_package] = result.version_output
     return versions
 
 
