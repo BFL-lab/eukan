@@ -90,7 +90,16 @@ The `dev` group adds `pytest`, `ruff`, and `mypy`.
 - GeneMark-ES/ET/EP+:  [license required](https://topaz.gatech.edu/GeneMark/license_download.cgi)
 - combinr:  pre-built release binary from [github.com/BFL-lab/combinr/releases](https://github.com/BFL-lab/combinr/releases) (installed automatically by Docker and `scripts/install-extras.sh`)
 - fitild:  [github.com/ogotoh/fitild](https://github.com/ogotoh/fitild) (only needed for spaln-based protein alignment in default fitild mode)
-- spaln analysis utilities (`utn`, `npssm`, `exinpot`, etc.): built from [spaln source](https://github.com/ogotoh/spaln) via `make all` (only needed for `--spsp` species-specific parameter mode)
+- spaln analysis utilities (`utn`, `npssm`, `exinpot`, etc.) and their Perl scripts: built from [spaln source](https://github.com/ogotoh/spaln) (only needed for `--spsp` species-specific parameter mode). Build only the utilities, as the Docker image does: `make all` also builds fitild & co., which link gsl from `/usr/local/lib` and fail. The explicit `CFLAGS` replace configure's default `-march=native` and add the env's gsl headers:
+
+  ```bash
+  git clone --depth 1 https://github.com/ogotoh/spaln && cd spaln/src
+  CFLAGS="-O3 -I$CONDA_PREFIX/include" ./configure
+  make utn dvn exinpot npssm kmers rdn eij2ild
+  cp utn dvn exinpot npssm kmers rdn eij2ild "$CONDA_PREFIX/bin/"
+  cp ../perl/*.pl ../perl/*.pm "$CONDA_PREFIX/share/spaln/alndbs/"
+  chmod +x "$CONDA_PREFIX"/share/spaln/alndbs/*.pl
+  ```
 
 ## Usage
 
