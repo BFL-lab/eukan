@@ -166,7 +166,7 @@ eukan/
 5. SNAP training and prediction, plus CodingQuarry for fungi (and for protists in protein-only runs); with transcripts, non-fungal kingdoms skip SNAP and CodingQuarry
 6. Consensus model building, weighted by evidence type, via the external `combinr consensus` engine (weighted DP), genetic-code aware, which folds UTRs and alternative isoforms in from transcript evidence in a single pass. Protein (`prot.gff3`, CDS-format) and transcript (`nr_transcripts.gff3`, flat exon) evidence are converted to `Target=` match chains; ab initio predictions and the weights file are reused as-is. Isoform-grouping stringency is tunable via `--combinr-stringent-overlap`; the binary is resolved via `--combinr-path` or PATH. Every run also writes `combinr.evidence_report.txt` next to `consensus_models.gff3` in the `consensus_models/` step dir: per gene, the evidence supporting each exon and intron, EVM `.evm.out` style, keyed by combinr's gene IDs (not cross-referenceable by ID from `final.gff3`, whose genes get locus tags).
 7. Final GFF3 formatting with locus tags
-8. Optional functional annotation via `func-annot` (UniProt-or-KOfam plus Pfam, selected by `--homology-db`) → `final.mod.gff3`. KOfam mode is an adaptation of KofamKOALA: per-KO bit-score thresholds from `ko_list`, full vs domain score selection per KO, EC numbers parsed out of `[EC:…]` tags into a dedicated `ec_number=` GFF3 attribute, KEGG accessions emitted as `Dbxref=KEGG:K…`
+8. Optional functional annotation via `func-annot` (UniProt-or-KOfam plus Pfam, selected by `--homology-db`) → `final.mod.gff3`, with the annotated protein FASTA (`<stem>.mod.<ext>`) and the search cache (`<stem>.{phmmer,kofam}.search.json`) beside it under `func-annot/`. KOfam mode is an adaptation of KofamKOALA: per-KO bit-score thresholds from `ko_list`, full vs domain score selection per KO, EC numbers parsed out of `[EC:…]` tags into a dedicated `ec_number=` GFF3 attribute, KEGG accessions emitted as `Dbxref=KEGG:K…`
 9. Optional `prep-submission` runs NCBI's table2asn validator over `final.mod.gff3` to produce a `.sqn` plus `.val/.dr/.stats` reports for iterative GFF3 refinement
 
 ### Per-step Run Directory Layout
@@ -192,7 +192,7 @@ When adding a new cross-pipeline file, register it in both `Artifact` and `_PROD
 
 ### Run Manifest
 
-All pipelines share a single `eukan-run.json` per run dir. Step names are prefixed by pipeline (`annotation/genemark`, `assembly/minimap2`, `functional/search`, `repeats/modeler`); `prep-submission` writes no manifest. Paths in the manifest are relative to the run dir, so a moved run dir still resumes; concurrent saves merge on disk under a lock. The manifest tracks per-step status, timing, and output checksums for resume and integrity checking. Key functions: `get_or_create_manifest()` in `infra/manifest.py`; `pipeline_step()` and `is_step_complete()` in `infra/steps.py`. Each config has a `manifest_dir` field (defaults to `work_dir`) controlling where the manifest is written.
+All pipelines share a single `eukan-run.json` per run dir. Step names are prefixed by pipeline (`annotation/genemark`, `assembly/minimap2`, `functional/search`, `repeats/modeler`); `prep-submission` writes no manifest. The file is schema version 2: a `pipelines` map holds one record per pipeline (status, timings, tool versions and that pipeline's inputs), written by each driver at start and end; version-1 files still load and resume. Paths in the manifest are relative to the run dir, so a moved run dir still resumes; concurrent saves merge on disk under a lock. The manifest tracks per-step status, timing, and output checksums for resume and integrity checking. Key functions: `get_or_create_manifest()` in `infra/manifest.py`; `pipeline_step()` and `is_step_complete()` in `infra/steps.py`. Each config has a `manifest_dir` field (defaults to `work_dir`) controlling where the manifest is written.
 
 ### Pipeline Driver
 
@@ -208,6 +208,7 @@ Both wrap step-dir setup, manifest updates, and force/skip logic so that step-le
 ### Conventions
 
 - GFF3 manipulations chain through `create_gff_db(..., transform=fn)` / `transform_db()` from `gff/db.py` (in-memory gffutils DBs); the stdlib row reader `gff/rows.py` and transcript model `gff/transcripts.py` are for code that needs a few columns, not a DB
+- CLI precedence is flag > `EUKAN_*` environment variable > default: only options given on the command line are forwarded to the config, so an env var fills any option left off
 - Configs do no discovery, read no files and create no directories at construction; the CLI commands call `config.discover()` to locate prior pipeline outputs, each driver calls `config.ensure_dirs()` first, and unknown keyword arguments are rejected
 - External commands use `run_cmd(["cmd", "arg"], cwd=step_dir)` — never shell strings
 - `--kingdom` flag (fungus/protist/animal/plant) controls which predictors run
