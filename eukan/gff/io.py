@@ -104,7 +104,14 @@ def extract_sequences(
     codon_table = CodonTable.unambiguous_dna_by_id[genetic_code]
 
     for mrna, dna in iter_assembled_sequences(gff3db, genome, child_featuretype="CDS"):
-        seq = Seq(dna)
         if extract_to == "protein":
-            seq = seq.translate(table=codon_table)
+            # Read from the 5'-most CDS's phase, complete codons only: a
+            # 5'-partial model need not start (or a 3'-partial end) in frame.
+            first_cds = next(gff3db.children(
+                mrna, featuretype="CDS", order_by="start", reverse=mrna.strand == "-",
+            ))
+            dna = dna[int(first_cds.frame) if first_cds.frame in ("1", "2") else 0:]
+            seq = Seq(dna[: len(dna) - len(dna) % 3]).translate(table=codon_table)
+        else:
+            seq = Seq(dna)
         yield SeqRecord(seq, id=mrna.id, description="")
