@@ -33,12 +33,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # invalidate this layer (the multi-GB solve and download). environment.yml
 # ends with a pip step that installs eukan itself (`pip: - .`); it is cut
 # here and run in step 4, once the source has been copied in.
+#
+# Strict channel priority, as environment.yml requires: the base image's conda
+# defaults to flexible, which mixes channel builds (it pulls harfbuzz and
+# libxml2 from `defaults` under conda-forge's R stack).
 # ---------------------------------------------------------------------------
 WORKDIR /opt/eukan
 
 COPY environment.yml /opt/eukan/
 RUN sed -e '/^  - pip:$/d' -e '/^    - \.$/d' environment.yml > /tmp/environment.conda.yml \
-    && mamba env create -f /tmp/environment.conda.yml \
+    && CONDA_CHANNEL_PRIORITY=strict mamba env create -f /tmp/environment.conda.yml \
     && mamba clean -afy \
     && rm /tmp/environment.conda.yml
 
