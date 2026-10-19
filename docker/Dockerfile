@@ -14,14 +14,15 @@
 # image (identical platform digests on Docker Hub, checked 2026-10-16).
 FROM condaforge/mambaforge:24.9.2-0 AS builder
 
-# System packages needed for building fitild and spaln from source, plus
+# System packages needed for building fitild and spaln from source (zlib1g-dev:
+# the spaln utilities include zlib.h and link -lz), plus
 # curl/xz to fetch and unpack the pre-built combinr release tarball. jq must be
 # on PATH before `mamba env create`: bioconductor data packages (pulled in
 # transitively by trinity's R stack, e.g. bioconductor-genomeinfodbdata) run a
 # post-link script that calls yq -> jq to parse their data-URL JSON, and the
 # mambaforge base image does not ship jq — without it the env create aborts.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git autoconf curl ca-certificates xz-utils jq \
+    build-essential git autoconf curl ca-certificates xz-utils jq zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
@@ -76,17 +77,19 @@ RUN git clone --depth 1 https://github.com/ogotoh/fitild /opt/conda/envs/eukan/o
 # ---------------------------------------------------------------------------
 # 2b. Build spaln analysis utilities and install Perl scripts for makessp
 #     The bioconda spaln package only ships the core binaries (spaln, sortgrcd,
-#     makdbs, makmdm). Species-specific parameter generation (--spaln-ssp)
-#     additionally needs: utn, dvn, exinpot, npssm, kmers, rdn, plus the
+#     makdbs, makmdm). Species-specific parameter generation (annotate --spsp)
+#     additionally needs: utn, dvn, exinpot, npssm, kmers, rdn, eij2ild, plus the
 #     matching Perl scripts (make_eij.pl, make_ssp.pl, Util.pm, etc.).
+#     Only those utilities are built: `make all` also builds fitild & co.,
+#     which link gsl from /usr/local/lib and fail here. Explicit CFLAGS
+#     replace configure's Linux default of -march=native, which would tie the
+#     binaries to the build host's CPU; -I adds the env's gsl headers.
 # ---------------------------------------------------------------------------
 RUN git clone --depth 1 https://github.com/ogotoh/spaln /tmp/spaln_src \
     && cd /tmp/spaln_src/src \
-    && ./configure \
-    && make -j"$(nproc)" all 2>/dev/null || true \
-    && for bin in utn dvn exinpot npssm kmers rdn eij2ild; do \
-        [ -f /tmp/spaln_src/src/$bin ] && cp /tmp/spaln_src/src/$bin /opt/conda/envs/eukan/bin/ || true; \
-    done \
+    && CFLAGS="-O3 -I/opt/conda/envs/eukan/include" ./configure \
+    && make -j"$(nproc)" utn dvn exinpot npssm kmers rdn eij2ild \
+    && cp utn dvn exinpot npssm kmers rdn eij2ild /opt/conda/envs/eukan/bin/ \
     && cp /tmp/spaln_src/perl/*.pl /tmp/spaln_src/perl/*.pm \
        /opt/conda/envs/eukan/share/spaln/alndbs/ \
     && chmod +x /opt/conda/envs/eukan/share/spaln/alndbs/*.pl \
