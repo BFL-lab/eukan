@@ -271,18 +271,20 @@ RUN chmod 644 /root/.gm_key /home/eukan/.gm_key
 # any UID can write during species training / spaln --spsp.
 
 # ---------------------------------------------------------------------------
-# Environment variables (mirrors conda-activate.sh)
+# Environment variables
+#
+# CONDA_PREFIX is what eukan keys its tool environment on: at startup the CLI
+# sets every env var and PATH dir declared in eukan/data/tools.toml (ZOE,
+# AUGUSTUS_CONFIG_PATH, ALN_TAB/ALN_DBS/PERL5LIB, opt/genemark, opt/fitild/src)
+# and gives each tool it runs LD_LIBRARY_PATH=$CONDA_PREFIX/lib, exactly as in
+# a conda install. Only what no conda activation sets here is spelled out:
+# the env's bin/ on PATH, plus TRINITY_HOME and QUARRY_PATH, which the
+# trinity and codingquarry packages export from their own activate.d hooks.
 # ---------------------------------------------------------------------------
-ENV CONDA_DEFAULT_ENV=eukan \
-    PATH="/opt/conda/envs/eukan/opt/genemark:/opt/conda/envs/eukan/opt/fitild/src:/opt/conda/envs/eukan/bin:${PATH}" \
-    LD_LIBRARY_PATH="/opt/conda/envs/eukan/lib" \
-    ZOE="/opt/conda/envs/eukan/share/snap" \
-    AUGUSTUS_CONFIG_PATH="/opt/conda/envs/eukan/config" \
+ENV CONDA_PREFIX=/opt/conda/envs/eukan \
+    PATH="/opt/conda/envs/eukan/bin:${PATH}" \
     QUARRY_PATH="/opt/conda/envs/eukan/opt/codingquarry-2.0/QuarryFiles" \
     TRINITY_HOME="/opt/conda/envs/eukan/bin" \
-    ALN_TAB="/opt/conda/envs/eukan/share/spaln/table" \
-    ALN_DBS="/opt/conda/envs/eukan/share/spaln/seqdb" \
-    PERL5LIB="/opt/conda/envs/eukan/share/spaln/alndbs" \
     HOME=/home/eukan \
     USER=eukan
 
