@@ -60,6 +60,30 @@ class TestAddMissingFeats:
         cds_feats = [f for f in new_feats if f.featuretype == "CDS"]
         assert len(cds_feats) == 2
 
+    def test_CDS_from_exons_is_phased_from_the_5_prime_exon(self, db_from_string):
+        """Exon-only models (SNAP's output) are phased from each mRNA's
+        5'-most exon, where the start codon is, not from genomic coordinates."""
+        gff = (
+            "chr1\ttest\tgene\t100\t600\t.\t+\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t100\t600\t.\t+\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\ttest\texon\t100\t201\t.\t+\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\texon\t400\t600\t.\t+\t.\tID=exon2;Parent=mrna1\n"
+            "chr1\ttest\tgene\t1000\t1601\t.\t-\t.\tID=gene2\n"
+            "chr1\ttest\tmRNA\t1000\t1601\t.\t-\t.\tID=mrna2;Parent=gene2\n"
+            "chr1\ttest\texon\t1000\t1200\t.\t-\t.\tID=exon3;Parent=mrna2\n"
+            "chr1\ttest\texon\t1400\t1601\t.\t-\t.\tID=exon4;Parent=mrna2\n"
+        )
+        phases = {
+            (f.start, f.end): str(f.frame)
+            for f in add_missing_feats_to_gff3(db_from_string(gff))
+            if f.featuretype == "CDS"
+        }
+        # Plus: 102 nt at phase 0 leaves 0 for the next exon. Minus: 1400-1601
+        # (202 nt) is the 5'-most exon, leaving (3 - 202 % 3) % 3 = 2.
+        assert phases == {
+            (100, 201): "0", (400, 600): "0", (1400, 1601): "0", (1000, 1200): "2",
+        }
+
     def test_no_changes_when_complete(self, db_from_string):
         """Complete hierarchy should not generate any new features."""
         gff = (

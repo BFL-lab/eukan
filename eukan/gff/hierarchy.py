@@ -33,13 +33,18 @@ def add_missing_feats_to_gff3(
             )
             gene.attributes["ID"] = [f"{gene_id}_gene"]
 
-    # exon but no CDS → derive CDS from exons
+    # exon but no CDS → derive CDS from exons, phased from each mRNA's 5'-most
+    # exon (SNAP's exon-only models start with their start codon)
     if "CDS" not in feats and "exon" in feats:
-        for exon in gff3.features_of_type("exon"):
-            phase = (exon.start - 1) % 3 if exon.strand == "-" else (exon.end + 1) % 3
-            attrs = dict(exon.attributes)
-            attrs["ID"] = [swap_id_kind(exon.id, "exon", "CDS")]
-            yield derived_feature(exon, "CDS", attrs, frame=phase)
+        for mRNA in gff3.features_of_type("mRNA"):
+            phase = 0
+            for exon in gff3.children(
+                mRNA, featuretype="exon", order_by="start", reverse=mRNA.strand == "-",
+            ):
+                attrs = dict(exon.attributes)
+                attrs["ID"] = [swap_id_kind(exon.id, "exon", "CDS")]
+                yield derived_feature(exon, "CDS", attrs, frame=str(phase))
+                phase = (3 - ((exon.end - exon.start + 1 - phase) % 3)) % 3
 
     # CDS but no exon → derive exons from CDS
     if "exon" not in feats and "CDS" in feats:
