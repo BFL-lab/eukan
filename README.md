@@ -10,7 +10,7 @@ Currently, Eukan installation is only supported via Docker and Conda.
 
 ### Docker
 
-The Docker image installs all external tools via conda (from the same `environment.yml` used for local installs), then builds fitild from source, installs the pinned combinr release binary, and optionally includes GeneMark.
+The Docker image installs all external tools via conda (from the same `environment.yml` used for local installs), then builds fitild and the spaln `--spsp` utilities from source, installs the pinned combinr release binary, and optionally includes GeneMark. The build needs network access and only the repository checkout (plus the optional GeneMark files below); there are no build arguments to set. The image needs an x86-64-v3 CPU (see the note above).
 
 ```bash
 git clone https://github.com/BFL-lab/eukan.git
@@ -18,9 +18,11 @@ cd eukan
 docker build -t eukan -f docker/Dockerfile .
 ```
 
-To include **GeneMark** ([license required](https://topaz.gatech.edu/GeneMark/license_download.cgi)), place `gmes_linux_64*.tar.gz` and `gm_key_64.gz` in the project root before building. If omitted, the build will succeed but `eukan check` will report GeneMark as missing.
+To include **GeneMark** ([license required](https://topaz.gatech.edu/GeneMark/license_download.cgi)), place `gmes_linux_64*.tar.gz` and `gm_key_64.gz` in the project root before building; the build fails if the archive is there without its key. If both are omitted, the build will succeed but `eukan check` will report GeneMark as missing.
 
-A separate **development image** adds test tooling (NCBI datasets CLI, procps):
+The image creates a user with UID/GID 1000 whose home is `/home/eukan`; `eukan-docker` runs as your own UID/GID. If yours differ, build with `--build-arg USER_ID=$(id -u) --build-arg GROUP_ID=$(id -g)` so the container's home is writable by you.
+
+A separate **development image** (built on top of the `eukan` image) adds test tooling (NCBI datasets CLI, SRA Toolkit, procps):
 
 ```bash
 docker build -t eukan-dev -f docker/Dockerfile.dev .
@@ -92,7 +94,7 @@ The `dev` group adds `pytest`, `ruff`, and `mypy`.
 
 ### Docker
 
-Use `eukan-docker` as a wrapper to run any subcommand inside the Docker container. It bind-mounts the current directory and runs as your user:
+Use `eukan-docker` as a wrapper to run any subcommand inside the Docker container. It bind-mounts the current directory (at the same path) and runs as your user, so every input file must live under the current directory; paths outside it are not visible in the container.
 
 The typical workflow runs each subcommand from the same working directory. Each subcommand writes into its own subdirectory under that working directory (`repeats/`, `assemble/`, `annotate/`, `func-annot/`, `submission/`), and downstream subcommands auto-discover outputs from earlier ones via the cross-pipeline artifact registry — no need to pass paths between steps.
 
