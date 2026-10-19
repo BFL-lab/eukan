@@ -68,7 +68,7 @@ RUN git clone --depth 1 https://github.com/ogotoh/fitild /opt/conda/envs/eukan/o
     && make -j"$(nproc)" CFLAGS="-O3 -I/opt/conda/envs/eukan/include -L/opt/conda/envs/eukan/lib" \
     # Merge ILD models into spaln table directory
     && cat /opt/conda/envs/eukan/opt/fitild/table/IldModel*.txt \
-       > /opt/conda/envs/eukan/share/spaln/table/IldModel.txt 2>/dev/null || true \
+       > /opt/conda/envs/eukan/share/spaln/table/IldModel.txt \
     # Clean build artifacts — keep only compiled binaries and table
     && cd /opt/conda/envs/eukan/opt/fitild \
     && rm -rf .git src/*.o
@@ -115,8 +115,8 @@ RUN genemark_tar=$(ls /tmp/_genemark/gmes_linux_64*.tar.gz 2>/dev/null | head -1
         tar zxf "$genemark_tar" -C /opt/conda/envs/eukan/opt/ \
         && gm_dir=$(ls -d /opt/conda/envs/eukan/opt/gmes_linux_64* 2>/dev/null | head -1) \
         && ln -sfn "$gm_dir" /opt/conda/envs/eukan/opt/genemark \
-        && gunzip -c /tmp/_genemark/gm_key_64.gz > /root/.gm_key 2>/dev/null || true \
-        && sed -i 's|#!/usr/bin/perl|#!/usr/bin/env perl|g' /opt/conda/envs/eukan/opt/genemark/*.pl 2>/dev/null || true \
+        && gunzip -c /tmp/_genemark/gm_key_64.gz > /root/.gm_key \
+        && sed -i 's|#!/usr/bin/perl|#!/usr/bin/env perl|g' /opt/conda/envs/eukan/opt/genemark/*.pl \
         && echo "GeneMark installed from $genemark_tar"; \
     else \
         # Empty key: the runtime stage copies /root/.gm_key unconditionally.
@@ -156,6 +156,11 @@ RUN pip install .
 #   - bin/k8 — JS shell for minimap2's paftools.js only; eukan calls the
 #     minimap2 binary directly (BAM via samtools/pysam), never paftools, so the
 #     read/transcript mapping is unaffected by removing it
+#
+# The `|| true` guards here are deliberate: every command is a best-effort
+# deletion (find -exec rm also exits non-zero when it descends into a dir it
+# just removed), so a failure can only leave the image larger, never broken.
+# The trailing chmod is not guarded.
 # ---------------------------------------------------------------------------
 RUN find /opt/conda/envs/eukan -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true \
     && find /opt/conda/envs/eukan -name "*.a" -delete 2>/dev/null || true \
@@ -243,9 +248,11 @@ ARG GROUP_ID=1000
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
-    # Create non-root user
-    && groupadd -g ${GROUP_ID} eukan 2>/dev/null || true \
-    && useradd -u ${USER_ID} -g ${GROUP_ID} -m eukan 2>/dev/null || true
+    # Create non-root user. groupadd may fail only because GROUP_ID already
+    # names a group in the base image (e.g. 100 = users); useradd -g then
+    # joins that group.
+    && { groupadd -g ${GROUP_ID} eukan || true; } \
+    && useradd -u ${USER_ID} -g ${GROUP_ID} -m eukan
 
 # Copy the fully-built conda environment from the builder.
 # eukan itself (including tools.toml + configs/ under eukan/data/) lives in
@@ -255,7 +262,7 @@ COPY --link --from=builder /opt/conda/envs/eukan /opt/conda/envs/eukan
 # Copy GeneMark key — place in eukan home and /root, world-readable
 COPY --from=builder /root/.gm_key /root/.gm_key
 COPY --from=builder /root/.gm_key /home/eukan/.gm_key
-RUN chmod 644 /root/.gm_key /home/eukan/.gm_key 2>/dev/null || true
+RUN chmod 644 /root/.gm_key /home/eukan/.gm_key
 
 # AUGUSTUS config + share/spaln are already chmod a+rwX in the builder so
 # any UID can write during species training / spaln --spsp.
