@@ -11,7 +11,7 @@ TTY_ARGS=()
 [[ -t 1 ]] && TTY_ARGS+=(-t)
 
 exec docker run --rm \
-    "${TTY_ARGS[@]}" \
+    ${TTY_ARGS[@]+"${TTY_ARGS[@]}"} \
     --user "$(id -u):$(id -g)" \
     --workdir "$WORKDIR" \
     --mount "type=bind,source=${WORKDIR},target=${WORKDIR}" \
