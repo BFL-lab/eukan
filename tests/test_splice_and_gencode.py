@@ -32,10 +32,34 @@ class TestGeneticCodeGenemarkFlag:
         gc = GeneticCode(26)
         assert gc.genemark_flag == ["--gcode=26"]
 
-    def test_unsupported_code_no_flag(self):
-        """Unsupported codes should return empty list, not error."""
-        gc = GeneticCode(10)  # Euplotes — not in GeneMark's set
-        assert gc.genemark_flag == []
+    def test_code_11_runs_as_code_1(self):
+        """Code 11 (annotate's default) translates every codon as code 1 does."""
+        assert GeneticCode(11).genemark_flag == []
+
+    @pytest.mark.parametrize("code", [4, 10, 12])
+    def test_unsupported_code_raises(self, code):
+        """GeneMark would silently run any other code as code 1."""
+        from eukan.exceptions import ConfigurationError
+
+        with pytest.raises(ConfigurationError, match=f"genetic code {code}") as exc:
+            GeneticCode(code).genemark_flag  # noqa: B018
+        assert exc.value.hint is not None and "1, 6, 26, plus 11" in exc.value.hint
+
+    def test_run_genemark_raises_before_running(self, tmp_path, monkeypatch):
+        from eukan.annotation import genemark
+        from eukan.exceptions import ConfigurationError
+        from eukan.settings import PipelineConfig
+
+        def no_run(*args, **kwargs):
+            raise AssertionError("GeneMark must not run")
+
+        monkeypatch.setattr(genemark, "run_cmd", no_run)
+        genome = tmp_path / "g.fa"
+        genome.write_text(">c\nACGT\n")
+        config = PipelineConfig(genome=genome, proteins=[genome], genetic_code=4,
+                                work_dir=tmp_path)
+        with pytest.raises(ConfigurationError, match="genetic code 4"):
+            genemark.run_genemark(config)
 
 
 # ---------------------------------------------------------------------------

@@ -60,6 +60,8 @@ def _read_genemark_gtf(path: Path) -> gffutils.FeatureDB:
 def run_genemark(config: PipelineConfig, hints: Path | None = None) -> Path:
     """Run GeneMark-ES/ET gene prediction."""
     output = "genemark.gff3"
+    # Raises for a genetic code GeneMark cannot run, before any work.
+    gcode_flag = config.genetic_code_obj.genemark_flag
     sdir = step_dir(config.work_dir, "genemark")
     log.info("Running GeneMark gene prediction...")
 
@@ -82,7 +84,6 @@ def run_genemark(config: PipelineConfig, hints: Path | None = None) -> Path:
     training_type = (
         ["--ET=introns.gff", "--et_score=3"] if has_intron_hints else ["--ES"]
     )
-    gcode_flag = config.genetic_code_obj.genemark_flag
 
     if not (sdir / "genemark.gtf").exists():
         run_cmd(

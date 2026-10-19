@@ -16,6 +16,13 @@ from eukan.exceptions import ConfigurationError
 _GENEMARK_CODES: set[int] = {1, 6, 26}
 
 
+def _translates_as_standard(table) -> bool:
+    """True when *table* assigns every codon as code 1 does (starts may differ)."""
+    standard = unambiguous_dna_by_id[1]
+    return (table.forward_table == standard.forward_table
+            and set(table.stop_codons) == set(standard.stop_codons))
+
+
 class GeneticCode:
     """Wrapper around an NCBI genetic code ID.
 
@@ -70,11 +77,25 @@ class GeneticCode:
     def genemark_flag(self) -> list[str]:
         """CLI args for GeneMark's ``--gcode`` option.
 
-        Returns an empty list for code 1 (default) or unsupported codes.
+        Empty for code 1, GeneMark's default, and for any code that translates
+        every codon as code 1 does (11 differs only in its start codons).
+
+        Raises:
+            ConfigurationError: for any other code GeneMark does not support;
+                it would run it as code 1 and mispredict.
         """
-        if self._ncbi_id in _GENEMARK_CODES and self._ncbi_id != 1:
-            return [f"--gcode={self._ncbi_id}"]
-        return []
+        if self._ncbi_id in _GENEMARK_CODES:
+            return [f"--gcode={self._ncbi_id}"] if self._ncbi_id != 1 else []
+        if _translates_as_standard(self._table):
+            return []
+        as_standard = [k for k in sorted(unambiguous_dna_by_id)
+                       if k != 1 and _translates_as_standard(unambiguous_dna_by_id[k])]
+        raise ConfigurationError(
+            f"GeneMark does not support genetic code {self._ncbi_id}",
+            hint=f"GeneMark supports codes {', '.join(map(str, sorted(_GENEMARK_CODES)))}, "
+            f"plus {', '.join(map(str, as_standard))} (run as code 1, which "
+            "translates every codon the same).",
+        )
 
     # -- dunder --------------------------------------------------------------
 
