@@ -187,17 +187,19 @@ def annotate_fasta(
     homology_res: HitResults,
     hmmscan_res: HitResults,
     format_hit: HitFormatter,
+    output_dir: Path,
 ) -> Path:
     """Annotate protein FASTA headers with functional information.
 
     ``format_hit`` writes one hit of ``homology_res``: :func:`format_uniprot_hit`
-    or :func:`format_kofam_hit`, after the homology DB searched. Returns the
-    path to the annotated output file.
+    or :func:`format_kofam_hit`, after the homology DB searched. The output,
+    ``<stem>.mod<suffix>``, lands in *output_dir* (the func-annot work dir).
+    Returns its path.
     """
     homology_fmt = _format_hits(homology_res, format_hit)
     hmmscan_fmt = _format_hits(hmmscan_res, _format_pfam_hit)
 
-    output_path = proteins.parent / f"{proteins.stem}.mod{proteins.suffix}"
+    output_path = output_dir / f"{proteins.stem}.mod{proteins.suffix}"
 
     count = 0
     with open(output_path, "w") as f:

@@ -59,8 +59,8 @@ def _fake_search(calls):
     return _search_and_cache
 
 
-def _fake_annotate_fasta(proteins, homology_res, hmmscan_res, format_hit):
-    out = proteins.parent / f"{proteins.stem}.mod{proteins.suffix}"
+def _fake_annotate_fasta(proteins, homology_res, hmmscan_res, format_hit, output_dir):
+    out = output_dir / f"{proteins.stem}.mod{proteins.suffix}"
     out.write_text(">x\nMA\n")
     return out
 
@@ -89,9 +89,9 @@ def _install_counts(monkeypatch) -> dict[str, int]:
         cache.write_text(json.dumps(results))
         return results
 
-    def fake_annotate_fasta(proteins, homology_res, hmmscan_res, format_hit):
+    def fake_annotate_fasta(proteins, homology_res, hmmscan_res, format_hit, output_dir):
         counts["annotate_fasta"] += 1
-        out = proteins.parent / f"{proteins.stem}.mod{proteins.suffix}"
+        out = output_dir / f"{proteins.stem}.mod{proteins.suffix}"
         out.write_text(">s1 hypothetical protein\nMACE\n")
         return out
 
@@ -148,8 +148,8 @@ class TestMultiProteomeResume:
         fpipe.run_functional_annotation(_config(prot_b, work_dir))
 
         assert calls == ["speciesA", "speciesB"]  # each ran its own search
-        assert (tmp_path / "speciesA.phmmer.search.json").exists()
-        assert (tmp_path / "speciesB.phmmer.search.json").exists()
+        assert (work_dir / "speciesA.phmmer.search.json").exists()
+        assert (work_dir / "speciesB.phmmer.search.json").exists()
 
     def test_same_proteome_rerun_is_skipped(self, tmp_path, calls):
         work_dir = tmp_path / "func-annot"
@@ -166,8 +166,8 @@ class TestMultiProteomeResume:
         fpipe.run_functional_annotation(_config(prot, work_dir, homology_db="uniprot"))
         fpipe.run_functional_annotation(_config(prot, work_dir, homology_db="kofam"))
         assert calls == ["speciesA", "speciesA"]  # each mode writes its own cache
-        assert (tmp_path / "speciesA.phmmer.search.json").exists()
-        assert (tmp_path / "speciesA.kofam.search.json").exists()
+        assert (work_dir / "speciesA.phmmer.search.json").exists()
+        assert (work_dir / "speciesA.kofam.search.json").exists()
 
 
 # --- content-sensitivity within a scope + friendly no-op ----------------------
@@ -325,22 +325,23 @@ class TestSearchCache:
         cfg = _config(prot, work_dir)
         fpipe.run_functional_annotation(cfg)
         tracked = work_dir / self._search_record(load_manifest(work_dir)).output_file
-        for path in tmp_path.glob("speciesA.*.json"):
+        for path in work_dir.glob("speciesA.*.json"):
             if path != tracked:
                 path.unlink()
         fpipe.run_functional_annotation(cfg)
-        assert "Protein kinase domain" in (tmp_path / "speciesA.mod.faa").read_text()
+        assert "Protein kinase domain" in (work_dir / "speciesA.mod.faa").read_text()
 
     def test_lost_cache_reruns_search(self, tmp_path, monkeypatch):
         searches = self._stub_searches(monkeypatch)
         prot = tmp_path / "speciesA.faa"
         prot.write_text(">s1\nMACE\n")
-        cfg = _config(prot, tmp_path / "func-annot")
+        work_dir = tmp_path / "func-annot"
+        cfg = _config(prot, work_dir)
         fpipe.run_functional_annotation(cfg)
-        (tmp_path / "speciesA.phmmer.search.json").unlink()
+        (work_dir / "speciesA.phmmer.search.json").unlink()
         fpipe.run_functional_annotation(cfg)
         assert searches == ["phmmer", "hmmscan"] * 2
-        assert "Protein kinase domain" in (tmp_path / "speciesA.mod.faa").read_text()
+        assert "Protein kinase domain" in (work_dir / "speciesA.mod.faa").read_text()
 
     def test_record_from_the_two_file_layout_reruns_search(self, tmp_path, monkeypatch):
         # A run dir from before the single cache: the search record points at the
@@ -361,7 +362,7 @@ class TestSearchCache:
         record = self._search_record(manifest)
         record.output_file, record.output_md5 = str(old), md5_file(old)
         record.input_md5 = fingerprint_inputs(
-            files, [s for s in scalars if not s.startswith("cache=")],
+            files, [s for s in scalars if not s.startswith("cache_path=")],
         )
         save_manifest(work_dir, manifest)
 
@@ -369,6 +370,79 @@ class TestSearchCache:
 
         assert searches == ["phmmer", "hmmscan"] * 2
         assert cache.exists()
+
+    def test_record_of_a_cache_beside_the_proteome_reruns_search(self, tmp_path, monkeypatch):
+        # A run dir from before the cache moved into the work dir: the search record
+        # points at <proteome dir>/<stem>.phmmer.search.json under a fingerprint that
+        # names the cache (cache=<name>). Trusting it would skip the search and then
+        # read a cache the work dir does not have.
+        searches = self._stub_searches(monkeypatch)
+        prot = tmp_path / "speciesA.faa"
+        prot.write_text(">s1\nMACE\n")
+        work_dir = tmp_path / "func-annot"
+        cfg = _config(prot, work_dir)
+        fpipe.run_functional_annotation(cfg)
+        cache = fpipe._search_cache_path(cfg)
+        old = tmp_path / cache.name
+        cache.rename(old)
+        files, scalars = fpipe._func_step_fingerprints(cfg, cache)["search"]
+        manifest = load_manifest(work_dir)
+        record = self._search_record(manifest)
+        record.output_file, record.output_md5 = str(old), md5_file(old)
+        record.input_md5 = fingerprint_inputs(
+            files,
+            [f"cache={old.name}" if s.startswith("cache_path=") else s for s in scalars],
+            work_dir,
+        )
+        save_manifest(work_dir, manifest)
+
+        fpipe.run_functional_annotation(cfg)
+
+        assert searches == ["phmmer", "hmmscan"] * 2
+        assert cache.exists()
+        assert "Protein kinase domain" in (work_dir / "speciesA.mod.faa").read_text()
+
+
+class TestOutputLocation:
+    """The search cache and the annotated FASTA go to the func-annot work dir;
+    nothing is written next to the input proteome."""
+
+    def test_nothing_is_written_beside_the_proteome(self, tmp_path, monkeypatch):
+        TestSearchCache._stub_searches(monkeypatch)
+        prot = tmp_path / "input" / "speciesA.faa"
+        prot.parent.mkdir()
+        prot.write_text(">s1\nMACE\n")
+        work_dir = tmp_path / "func-annot"
+
+        fpipe.run_functional_annotation(_config(prot, work_dir))
+
+        assert [p.name for p in prot.parent.iterdir()] == ["speciesA.faa"]
+        assert (work_dir / "speciesA.phmmer.search.json").exists()
+        assert "Protein kinase domain" in (work_dir / "speciesA.mod.faa").read_text()
+
+    def test_same_stem_from_another_dir_is_searched_again(self, tmp_path, monkeypatch):
+        """Two proteomes named speciesA.faa write the same names into the work dir;
+        going back to the first searches it again instead of reusing the second's
+        hits."""
+        searched: list[str] = []
+
+        def phmmer(proteins, *args):
+            searched.append(proteins.parent.name)
+            return {"s1": {proteins.parent.name: {"description": "hit", "evalue": 1e-30}}}
+
+        monkeypatch.setattr(fpipe, "_run_uniprot_phmmer", phmmer)
+        monkeypatch.setattr(fpipe, "_run_pfam_hmmscan", lambda *a: {})
+        work_dir = tmp_path / "func-annot"
+        a, b = tmp_path / "a" / "speciesA.faa", tmp_path / "b" / "speciesA.faa"
+        for prot in (a, b):
+            prot.parent.mkdir()
+            prot.write_text(">s1\nMACE\n")
+
+        for prot in (a, b, a):
+            fpipe.run_functional_annotation(_config(prot, work_dir))
+
+        assert searched == ["a", "b", "a"]
+        assert "a: hit" in (work_dir / "speciesA.mod.faa").read_text()
 
 
 class TestMovedRunDir:

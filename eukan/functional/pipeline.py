@@ -15,9 +15,10 @@ The homology search has two modes controlled by ``config.homology_db``, one
   database, with per-KO score thresholds read from ``ko_list``.
 
 Pfam hmmscan runs in both modes. The search caches the homology and Pfam
-hits together in one file per proteome, whose name changes per mode
-(``phmmer.search.json`` vs ``kofam.search.json``) so that switching modes
-doesn't quietly reuse stale results.
+hits together in one file per proteome in the work dir, whose name changes per
+mode (``phmmer.search.json`` vs ``kofam.search.json``) so that switching modes
+doesn't quietly reuse stale results. The annotated FASTA goes to the work dir
+too: nothing is written next to the input proteome.
 """
 
 from __future__ import annotations
@@ -94,9 +95,9 @@ _MODES: dict[str, _HomologyMode] = {
 
 def _search_cache_path(config: FunctionalConfig) -> Path:
     """Return the search step's JSON cache (homology and Pfam hits) for the active
-    homology DB, beside the proteome."""
+    homology DB, in the work dir."""
     suffix = _MODES[config.homology_db].cache_suffix
-    return config.proteins.parent / f"{config.proteins.stem}.{suffix}.search.json"
+    return config.work_dir / f"{config.proteins.stem}.{suffix}.search.json"
 
 
 def _step_scope(config: FunctionalConfig) -> str:
@@ -104,8 +105,8 @@ def _step_scope(config: FunctionalConfig) -> str:
 
     The search/annotate steps name their cache files and outputs after the
     proteome stem, and the homology-DB mode selects the cache suffix, so two
-    different proteomes — or the same proteome run in two modes — already
-    write independent files into a shared work_dir. The manifest's
+    different proteomes — or the same proteome run in two modes — write
+    independent files into the shared work_dir. The manifest's
     skip-if-complete check, however, keys only on the step name: without a
     discriminator a second proteome inherits the first's "search complete"
     record, the search is skipped, and the pipeline then crashes reading a
@@ -114,10 +115,12 @@ def _step_scope(config: FunctionalConfig) -> str:
     Scoping every functional step key by ``(stem, mode, path-hash)`` keeps
     resume correct for each proteome+mode while still skipping a genuine
     re-run of the same one. The path hash disambiguates two proteomes that
-    share a stem but live in different directories (they have distinct cache
-    files, so they must not share a manifest record either). It hashes the
-    path as the manifest records it, relative to the run dir when the proteome
-    lies inside it, so a moved run dir keeps its keys. Scoping handles
+    share a stem but live in different directories. Those write the same file
+    names into the work_dir, the later run replacing the earlier one's, so each
+    needs its own record: going back to the first then finds its cache
+    rewritten (its checksum no longer matches) and searches it again. It
+    hashes the path as the manifest records it, relative to the run dir when
+    the proteome lies inside it, so a moved run dir keeps its keys. Scoping handles
     *which* proteome+mode; the input fingerprints (see
     :func:`_func_step_fingerprints`) handle *content* changes within one scope.
     """
@@ -196,16 +199,18 @@ def _func_step_fingerprints(
     re-hashing them every run would be prohibitive. ``num_cpu`` is deliberately
     excluded — thread count doesn't change results. The annotate steps depend
     on the search cache, so a re-run of ``search`` (which rewrites it)
-    cascades into re-annotation. The cache's name enters the search
-    fingerprint, so a record from before the current cache layout (the
-    homology and Pfam hits in two files) re-runs the search.
+    cascades into re-annotation. The cache's place in the run dir enters the
+    search fingerprint (``cache_path=``), so a record from an earlier cache
+    layout re-runs the search: the homology and Pfam hits in two files (no
+    cache scalar), or the cache beside the proteome (fingerprinted by its
+    name, as ``cache=``).
     """
     search_scalars = [
         f"homology_db={config.homology_db}",
         f"evalue={config.evalue}",
         f"pfam_db={config.pfam_db}",
         *_MODES[config.homology_db].db_scalars(config),
-        f"cache={cache.name}",
+        f"cache_path={run_dir_relative(cache, config.manifest_dir)}",
     ]
     steps: dict[str, tuple[list[Path], list[str]]] = {
         "search": ([config.proteins], search_scalars),
@@ -260,7 +265,7 @@ def run_functional_annotation(
         ) is not None
         for name, (ifiles, iscalars) in fingerprints.items()
     ):
-        fasta_out = config.proteins.parent / f"{config.proteins.stem}.mod{config.proteins.suffix}"
+        fasta_out = work_dir / f"{config.proteins.stem}.mod{config.proteins.suffix}"
         log.info(
             "Already annotated %s -> %s; re-run with -f to recompute.",
             config.proteins.name, fasta_out.name,
@@ -285,7 +290,7 @@ def run_functional_annotation(
     fasta_files, fasta_scalars = fingerprints["annotate_fasta"]
     run_orchestrated_step(
         manifest_dir, manifest, _key("annotate_fasta"),
-        annotate_fasta, config.proteins, homology_res, hmmscan_res, mode.format_hit,
+        annotate_fasta, config.proteins, homology_res, hmmscan_res, mode.format_hit, work_dir,
         step_dir=work_dir / "annotate_fasta",
         force=force,
         input_files=fasta_files,

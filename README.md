@@ -345,9 +345,10 @@ Override options:
   -f, --force                     Force re-run all steps (ignore cached outputs).
 ```
 
-Runs the chosen homology search plus hmmscan against Pfam (both via pyhmmer). Produces:
-- `input.mod.faa`: annotated FASTA with functional descriptions in headers.
-- `input.mod.gff3`: (if `--gff3` provided) GFF3 with `product`/`inference` (and, for KOfam, `Dbxref`/`ec_number`) attributes.
+Runs the chosen homology search plus hmmscan against Pfam (both via pyhmmer). Writes into `func-annot/`, never next to the inputs:
+- `<proteins stem>.mod.faa`: annotated FASTA with functional descriptions in headers (`--proteins proteins.faa` gives `func-annot/proteins.mod.faa`).
+- `<gff3 stem>.mod.gff3`: (if `--gff3` provided) GFF3 with `product`/`inference` (and, for KOfam, `Dbxref`/`ec_number`) attributes.
+- `<proteins stem>.phmmer.search.json` (`.kofam.search.json` in KOfam mode): the cached search hits, so a re-run on the same proteome skips the search.
 
 For UniProt mode, hits with e-values between 1e-3 and the cutoff are reported as marginal. For KOfam mode, hits below the per-KO bit-score threshold are tagged `[marginal KO hit]` in the FASTA description and do not contribute to the GFF3 `product`/`Dbxref`/`inference` lines — the KofamKOALA paper's evaluation showed that the adaptive thresholds yield substantially better precision/recall than a single global E-value cutoff.
 
