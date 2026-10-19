@@ -72,9 +72,9 @@ def prettify_gff3(
 ) -> Iterator[gffutils.Feature]:
     """Assign clean sequential locus tags to all features.
 
-    Yields each gene, its mRNAs and their exon and CDS children (other
-    child types, such as UTRs, are left out), with every CDS phase
-    recomputed from the mRNA's 5'-most CDS.
+    Yields each gene, then each of its mRNAs followed by that mRNA's exons and
+    then its CDSs (other child types, such as UTRs, are left out), with every
+    CDS phase recomputed from the mRNA's 5'-most CDS.
     """
     for gene_num, gene in enumerate(
         gff3.features_of_type("gene", order_by=("seqid", "start")), start=1
@@ -85,11 +85,6 @@ def prettify_gff3(
         gene.attributes["Name"] = gene_name
         gene.source = "eukannotpass"
         yield gene
-
-        child_types = {
-            f.featuretype for f in gff3.children(gene, level=2)
-            if f.featuretype in ("exon", "CDS")
-        }
 
         for mRNA_num, mRNA in enumerate(
             gff3.children(gene, featuretype="mRNA", order_by=("seqid", "start")),
@@ -103,7 +98,7 @@ def prettify_gff3(
             yield mRNA
 
             phases = _cds_phases(gff3, mRNA)
-            for child_type in child_types:
+            for child_type in ("exon", "CDS"):
                 for f_num, f in enumerate(
                     gff3.children(mRNA, featuretype=child_type), start=1
                 ):

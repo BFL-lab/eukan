@@ -1,5 +1,9 @@
 """Tests for eukan.gff.hierarchy — feature hierarchy operations."""
 
+import os
+import subprocess
+import sys
+
 from eukan.gff.hierarchy import (
     add_missing_feats_to_gff3,
     prettify_gff3,
@@ -148,3 +152,33 @@ class TestPrettifyGFF3:
         )
         types = sorted(f.featuretype for f in prettify_gff3(db_from_string(gff), "TEST"))
         assert types == ["CDS", "exon", "gene", "mRNA"]
+
+    def test_block_order_does_not_depend_on_the_hash_seed(self):
+        """Each mRNA's exons come before its CDSs under any PYTHONHASHSEED, so
+        final.gff3 is byte-stable across runs."""
+        gff = (
+            "chr1\ttest\tgene\t100\t600\t.\t+\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t100\t600\t.\t+\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\ttest\tCDS\t100\t200\t.\t+\t0\tID=cds1;Parent=mrna1\n"
+            "chr1\ttest\texon\t100\t200\t.\t+\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t400\t600\t.\t+\t1\tID=cds2;Parent=mrna1\n"
+            "chr1\ttest\texon\t400\t600\t.\t+\t.\tID=exon2;Parent=mrna1\n"
+        )
+        code = (
+            "import sys, gffutils\n"
+            "from eukan.gff.hierarchy import prettify_gff3\n"
+            "db = gffutils.create_db(sys.stdin.read(), ':memory:', from_string=True)\n"
+            "for f in prettify_gff3(db, 'TEST'):\n"
+            "    print(f)\n"
+        )
+        # Seeds 0 and 3 iterate {"exon", "CDS"} in opposite orders.
+        outs = [
+            subprocess.run(
+                [sys.executable, "-c", code], input=gff, capture_output=True, text=True,
+                check=True, env={**os.environ, "PYTHONHASHSEED": seed},
+            ).stdout
+            for seed in ("0", "3")
+        ]
+        assert outs[0] == outs[1]
+        types = [line.split("\t")[2] for line in outs[0].splitlines()]
+        assert types == ["gene", "mRNA", "exon", "exon", "CDS", "CDS"]
