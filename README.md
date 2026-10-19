@@ -222,7 +222,6 @@ Pipeline parameters:
                                   Trinity genome-guided uses it, models are split at longer introns
                                   and combinr enforces it (0 disables the split). Changing it on a
                                   resumed run re-runs them automatically. [default: 5000]
-  --phred [33|64]                 Phred quality score. [default: 33]
   -j, --jaccard-clip / --no-jaccard-clip
                                   In-house jaccard clipping of fused Trinity transcripts (needs
                                   paired reads). [default: on]

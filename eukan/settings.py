@@ -257,7 +257,6 @@ class AssemblyConfig(_StepRunSettings):
     single_reads: Path | None = None
     min_intron_len: int = 20
     max_intron_len: int = 5000
-    phred_quality: int = 33
     strand_specific: str | None = None
     non_canonical: Literal["auto", "force", "off"] = "auto"
     """Non-canonical splice mapping control. ``auto`` (default) layers the

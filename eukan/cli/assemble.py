@@ -59,7 +59,6 @@ from eukan.infra.layout import step_work_dir
     "Changing it on a resumed run re-runs the read and transcript mapping, the Trinity "
     "assembly, the split and combinr automatically. Set 0 to disable the model split.",
 )
-@optgroup.option("--phred", "phred_quality", type=click.Choice(["33", "64"]), default="33", show_default=True, help="Phred quality score.")
 @optgroup.option(
     "--jaccard-clip/--no-jaccard-clip", "-j", default=None,
     help="In-house jaccard clipping of fused Trinity transcripts (both de novo and "

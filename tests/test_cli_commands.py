@@ -129,14 +129,14 @@ class TestOptionsAreConfigFields:
         monkeypatch.setattr(eukan.assembly, "run_assembly", lambda c, **k: seen.append(c))
         result = CliRunner().invoke(cli, [
             "assemble", "-g", "g.fa", "-l", "l.fq", "-r", "r.fq", "-n", "3", "-c", "6",
-            "-m", "30", "-M", "900", "--phred", "64", "--adapter-sequence", "ACGT",
+            "-m", "30", "-M", "900", "--adapter-sequence", "ACGT",
         ])
         assert result.exit_code == 0, result.output
         (config,) = seen
         assert (config.left_reads, config.right_reads) == (run_dir / "l.fq", run_dir / "r.fq")
         assert (config.num_cpu, config.genetic_code) == (3, "6")
         assert (config.min_intron_len, config.max_intron_len) == (30, 900)
-        assert (config.phred_quality, config.adapter_sequences) == (64, ["ACGT"])
+        assert config.adapter_sequences == ["ACGT"]
 
 
 class TestCodeTableEpilog:
