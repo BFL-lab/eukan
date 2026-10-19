@@ -119,7 +119,9 @@ RUN genemark_tar=$(ls /tmp/_genemark/gmes_linux_64*.tar.gz 2>/dev/null | head -1
         && sed -i 's|#!/usr/bin/perl|#!/usr/bin/env perl|g' /opt/conda/envs/eukan/opt/genemark/*.pl 2>/dev/null || true \
         && echo "GeneMark installed from $genemark_tar"; \
     else \
-        echo "GeneMark files not found — skipping (install manually later)"; \
+        # Empty key: the runtime stage copies /root/.gm_key unconditionally.
+        : > /root/.gm_key \
+        && echo "GeneMark files not found — skipping (install manually later)"; \
     fi && rm -rf /tmp/_genemark
 
 # ---------------------------------------------------------------------------
