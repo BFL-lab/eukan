@@ -15,6 +15,10 @@ Schema (per-tool, all fields optional unless noted)::
                                                      # min_version in environment.yml
                                                      # (e.g. to hold a CPU-compatible build)
     install_hint    = "..."                          # shown when tool missing
+    install_check   = "check_install.bash"           # the tool's own install check: a
+                                                     # bash script beside the resolved
+                                                     # binary that `eukan check` runs
+                                                     # when the version probe passes
 
     env_vars = [                                     # env vars the tool needs
         { var = "AUGUSTUS_CONFIG_PATH", path = "config" },
@@ -68,6 +72,7 @@ class Tool:
     min_version: str | None = None
     conda_pin: str | None = None
     install_hint: str | None = None
+    install_check: str | None = None
 
 
 def _find_tools_toml() -> Path | None:
@@ -96,6 +101,7 @@ def _parse_tool(name: str, cfg: dict[str, Any]) -> Tool:
         min_version=cfg.get("min_version"),
         conda_pin=cfg.get("conda_pin"),
         install_hint=cfg.get("install_hint"),
+        install_check=cfg.get("install_check"),
     )
 
 

@@ -536,7 +536,7 @@ Pipeline parameters:
                                   it, every registered database is checked.
 ```
 
-Checks Python dependencies, probes each external tool with a version/help command, and verifies database integrity. Exits 0 if all checks pass, 1 if any fail.
+Checks Python dependencies, probes each external tool with a version/help command (and runs GeneMark's own install check, which catches a missing or expired license key), and verifies database integrity. Exits 0 if all checks pass, 1 if any fail.
 
 ```bash
 # Check everything

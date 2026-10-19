@@ -1,6 +1,7 @@
 """Tests for eukan.infra.health."""
 
 import importlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -55,6 +56,45 @@ class TestCheckTool:
         assert result.found
         assert result.version_ok
         assert result.version_output == "samtools 1.21"
+
+    @staticmethod
+    def _fake_genemark(tmp_path, monkeypatch, check_install):
+        """The registry's genemark entry, with a GeneMark dir on PATH whose
+        gmes_petap.pl prints its usage banner and whose check_install.bash is
+        *check_install*."""
+        gm = tmp_path / "gmes_linux_64_4"
+        gm.mkdir()
+        petap = gm / "gmes_petap.pl"
+        petap.write_text("#!/bin/sh\necho '# -------------------'\necho 'Usage: gmes_petap.pl'\n")
+        petap.chmod(0o755)
+        (gm / "check_install.bash").write_text(check_install)
+        monkeypatch.setenv("PATH", f"{gm}{os.pathsep}{os.environ['PATH']}")
+        (genemark,) = [t for t in load_tools() if t.name == "genemark"]
+        return genemark
+
+    def test_genemark_with_an_ended_license_fails(self, tmp_path, monkeypatch):
+        """gmes_petap.pl runs without the key, so only GeneMark's own install
+        check (gmhmme3) shows that the license period has ended."""
+        genemark = self._fake_genemark(tmp_path, monkeypatch, (
+            'echo "Checking GeneMark-ES installation"\n'
+            'echo "GeneMark.hmm is set"\n'
+            'echo "Your license period has ended" >&2\n'
+            'echo "Error, unexpected condition was detected"\n'
+            "exit 1\n"
+        ))
+        result = check_tool(genemark)
+        assert result.problems == [
+            "install check failed: Your license period has ended "
+            "Error, unexpected condition was detected",
+        ]
+
+    def test_genemark_whose_install_check_passes_is_ok(self, tmp_path, monkeypatch):
+        genemark = self._fake_genemark(
+            tmp_path, monkeypatch, 'echo "All required components for GeneMark-ES were found"\n',
+        )
+        result = check_tool(genemark)
+        assert result.ok
+        assert result.version_output == "# -------------------"
 
     def test_direct_sigill_detected(self):
         """A binary killed by SIGILL should be flagged as broken."""

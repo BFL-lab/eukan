@@ -73,6 +73,9 @@ binary = "gmes_petap.pl"
 version_cmd = ["gmes_petap.pl"]
 required_by = ["annotate"]
 install_hint = "Requires a license from https://topaz.gatech.edu/GeneMark/license_download.cgi"
+# gmes_petap.pl runs without the license key; GeneMark's own check runs gmhmme3,
+# which reports a missing or expired key.
+install_check = "check_install.bash"
 conda_path_dirs = ["opt/genemark"]
 
 [diamond]

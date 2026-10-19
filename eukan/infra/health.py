@@ -1,8 +1,10 @@
 """Pre-flight checks for external tool availability.
 
 Reads the tool registry from tools.toml (via :mod:`tools_registry`) and
-verifies that each tool is installed, on PATH, and responds to a
-version/help probe. Also checks database integrity via the manifest.
+verifies that each tool is installed, on PATH, responds to a version/help
+probe and passes its own install check where it declares one (GeneMark's,
+which catches an expired license key). Also checks database integrity via
+the manifest.
 The report is rendered by :mod:`eukan.cli.check`.
 """
 
@@ -79,6 +81,9 @@ class CheckResult:
     version_output: str
     env_ok: bool
     crash_signal: str | None = None
+    # Why the tool's own install check (``install_check``) failed; None if it passed
+    # or was not run.
+    install_error: str | None = None
 
     @property
     def problems(self) -> list[str]:
@@ -90,6 +95,8 @@ class CheckResult:
             problems.append(f"crashed with {self.crash_signal}")
         elif not self.version_ok:
             problems.append(f"version check failed: {self.version_output or 'no output'}")
+        elif self.install_error:
+            problems.append(f"install check failed: {self.install_error}")
         if not self.env_ok:
             missing = ", ".join(f"${v}" for v in _missing_env_vars(self.tool))
             problems.append(f"env not set: {missing}")
@@ -184,7 +191,36 @@ def check_tool(tool: Tool) -> CheckResult:
         version_output=version_output,
         env_ok=_check_env(tool),
         crash_signal=crash_sig,
+        install_error=(
+            _install_check_error(tool.install_check, binary_path)
+            if version_ok and tool.install_check else None
+        ),
     )
+
+
+def _install_check_error(script_name: str, binary_path: str) -> str | None:
+    """Run the install check *script_name* beside the resolved *binary_path*; return
+    what it printed if it failed (its stderr, then its last stdout line), else None.
+
+    It runs in an empty directory, since GeneMark's check_install.bash also
+    test-runs gmhmme3 when it finds ./GeneMark-E-tests, and without the
+    subprocess_env() LD_LIBRARY_PATH, whose conda libtinfo makes the system bash
+    print a warning.
+    """
+    script = Path(binary_path).resolve().parent / script_name
+    with tempfile.TemporaryDirectory() as cwd:
+        try:
+            result = subprocess.run(
+                ["bash", str(script)], cwd=cwd, capture_output=True, text=True,
+                errors="replace", timeout=10, stdin=subprocess.DEVNULL,
+            )
+        except subprocess.TimeoutExpired:
+            return f"{script_name} timed out"
+    if result.returncode == 0:
+        return None
+    lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
+    lines += [line.strip() for line in result.stdout.splitlines() if line.strip()][-1:]
+    return " ".join(lines) or f"{script_name} exited with {result.returncode}"
 
 
 def _check_env(tool: Tool) -> bool:
