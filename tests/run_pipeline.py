@@ -451,7 +451,7 @@ def test_pipeline_cmd(
             click.echo("  Submission prep complete.")
         except Exception as e:
             click.echo(f"\n  Submission prep failed: {e}")
-            click.echo("  See submission/genome.val and .dr for validator details.")
+            click.echo("  See the .val and .dr reports under submission/ for validator details.")
 
     # ================================================================
     # Summary
@@ -479,8 +479,9 @@ def test_pipeline_cmd(
     func_faa = work_dir / "func-annot" / "predicted_proteins.mod.faa"
     if func_faa.exists():
         click.echo(f"  Annotated proteins: {func_faa}")
-    sqn = work_dir / "submission" / f"{genome.stem}.sqn"
-    if sqn.exists():
+    # Named after the genome prep-submission discovers (annotate's sanitized
+    # copy), not the one this routine passed to annotate.
+    for sqn in sorted((work_dir / "submission").glob("*.sqn")):
         click.echo(f"  NCBI .sqn:          {sqn}")
     click.echo("\n  View run details: eukan status -d <step-dir>")
 
