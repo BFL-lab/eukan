@@ -26,14 +26,6 @@ Algorithm (faithful to Trinity, see ``trinityrnaseq/util/support_scripts/``):
 5. Split the contig at the clip points (segments shorter than ``min_segment``
    dropped).
 
-DORMANT with the unwired stringtie module (Trinity replaced StringTie): the
-genome-anchored StringTie GTF is clipped the same way (:func:`_clip_stringtie_gtf`):
-reads are mapped to StringTie's spliced transcripts, the same coverage troughs are
-found, and the transcript>exon models are split at them (:func:`_split_models_at_clips`)
-into ``stringtie.jaccard.gff3`` — so a StringTie transcript fusing two adjacent loci is
-broken just as the de novo path keeps them separate. :func:`resolve_stringtie_models`
-prefers that clipped GFF3 over the raw GTF (no live step calls it).
-
 Jaccard clipping needs read PAIRS; with single-end reads the step is a no-op.
 """
 
@@ -49,8 +41,6 @@ from Bio import SeqIO
 
 from eukan.assembly.minimap2 import map_reads_to_transcripts
 from eukan.assembly.tracks import TRANSCRIPT_SETS, jaccard_output_name
-from eukan.gff.transcripts import Transcript, read_transcripts, split_at, stitch, write_transcripts
-from eukan.infra.genome import ContigIndex
 from eukan.infra.logging import get_logger
 from eukan.settings import AssemblyConfig
 
@@ -71,13 +61,6 @@ _REPOSITION_HALF_WIN = _TROUGH_WIN // 2  # coverage-reposition search radius (10
 # tell a fusion from noise, so the gate stops relaxing (never over-clips a real
 # single transcript that simply has a thin patch).
 _MAX_ADAPTIVE_TROUGH = 0.30
-
-# DORMANT (StringTie path): the genome-guided StringTie GTF and the clipped sibling
-# the jaccard step writes for it. Not produced by the active Trinity pipeline, so
-# the run_jaccard StringTie branch and resolve_stringtie_models below are no-ops
-# unless the kept-but-unwired stringtie module is re-activated.
-_STRINGTIE_GTF = "stringtie.gtf"
-STRINGTIE_JACCARD_GFF3 = "stringtie.jaccard.gff3"
 
 
 # ---------------------------------------------------------------------------
@@ -374,11 +357,7 @@ class _ClipKnobs(TypedDict):
 
 
 def _clip_knobs(config: AssemblyConfig) -> _ClipKnobs:
-    """Bundle the config's jaccard detection knobs as ``find_clip_points`` kwargs.
-
-    Single source for both the de novo FASTA and StringTie GTF clip paths so the
-    two stay in lockstep as knobs are added.
-    """
+    """Bundle the config's jaccard detection knobs as ``find_clip_points`` kwargs."""
     return {
         "max_trough": config.jaccard_max_trough,
         "min_delta": config.jaccard_min_delta,
@@ -426,7 +405,7 @@ def _clip_one_fasta(config: AssemblyConfig, src: Path, out: Path) -> tuple[int, 
 
 
 def run_jaccard(config: AssemblyConfig) -> None:
-    """Jaccard-clip both Trinity transcript FASTAs (and a dormant StringTie GTF).
+    """Jaccard-clip both Trinity transcript FASTAs.
 
     No-op on single-end reads (read-pair bridging is the clip signal).
     """
@@ -450,113 +429,3 @@ def run_jaccard(config: AssemblyConfig) -> None:
             "Jaccard clip %s -> %s: %d -> %d sequences (%d contigs split).",
             src.name, out.name, n_in, n_out, n_clipped,
         )
-
-    # Genome-guided StringTie models: clip the GTF the same way (read-pair troughs
-    # on the spliced transcripts) so a fused StringTie locus is split too.
-    gtf = wd / _STRINGTIE_GTF
-    if gtf.exists() and gtf.stat().st_size > 0:
-        n_in, n_split = _clip_stringtie_gtf(config)
-        log.info(
-            "Jaccard clip %s -> %s: %d models (%d fused models split).",
-            gtf.name, STRINGTIE_JACCARD_GFF3, n_in, n_split,
-        )
-
-
-# ---------------------------------------------------------------------------
-# GFF3 / GTF clip path (genome-anchored transcript>exon models)
-# ---------------------------------------------------------------------------
-
-
-def _split_models_at_clips(
-    gff: str | Path, clip_map: dict[str, list[int]], min_segment: int
-) -> tuple[list[Transcript], int]:
-    """Parse transcript models from *gff* and split each at its clip positions.
-
-    *clip_map* maps transcript id -> spliced-transcript clip positions (the same
-    coordinate space as a read-to-spliced-FASTA mapping). Returns
-    ``(out_models, n_split)``; transcripts absent from *clip_map* (or whose clips
-    all fall in sub-*min_segment* pieces) pass through unchanged.
-    """
-    out_models: list[Transcript] = []
-    n_split = 0
-    for tx in read_transcripts(gff):
-        clips = clip_map.get(tx.tid)
-        split = split_at(tx, clips, min_segment) if clips else None
-        if split:
-            out_models.extend(split)
-            n_split += 1
-        else:
-            out_models.append(tx)
-    return out_models, n_split
-
-
-# ---------------------------------------------------------------------------
-# Genome-guided StringTie GTF clip (read-pair troughs on spliced transcripts)
-# ---------------------------------------------------------------------------
-
-
-def resolve_stringtie_models(work_dir: Path) -> Path:
-    """The StringTie model file downstream steps read.
-
-    The jaccard-clipped ``stringtie.jaccard.gff3`` when the jaccard step produced it
-    (so a fused StringTie locus is already split), else the raw ``stringtie.gtf``.
-    Mirrors how ``map_transcripts`` prefers the de novo ``.jaccard.fasta`` sibling.
-    """
-    clipped = work_dir / STRINGTIE_JACCARD_GFF3
-    if clipped.exists() and clipped.stat().st_size > 0:
-        return clipped
-    return work_dir / _STRINGTIE_GTF
-
-
-def _write_spliced_fasta(
-    models: list[Transcript], genome: str | Path, out_fasta: Path
-) -> None:
-    """Write each model's spliced sequence (5'->3', RC on ``-``) keyed by transcript id.
-
-    Same orientation convention as :func:`eukan.gff.io.iter_assembled_sequences`
-    (ascending-genomic exon concat, reverse-complemented on the minus strand), so
-    read-to-FASTA fragment spans land in the same 5'->3' spliced space the clip
-    splitter (:func:`eukan.gff.transcripts.split_at`) expects.
-    """
-    with ContigIndex(genome) as contigs, open(out_fasta, "w") as fh:
-        for tx in models:
-            fh.write(f">{tx.tid}\n{stitch(tx, contigs)}\n")
-
-
-def _clip_stringtie_gtf(config: AssemblyConfig) -> tuple[int, int]:
-    """Jaccard-clip the genome-guided StringTie GTF; return ``(n_models, n_split)``.
-
-    Maps read pairs to StringTie's spliced transcripts, finds coverage troughs the
-    same way as the de novo FASTA path (coverage-adaptive via ``jaccard_greediness``),
-    and splits the genome-anchored models at those junctions into
-    ``stringtie.jaccard.gff3``. A no-op (empty clip map) still rewrites the file so
-    downstream consistently reads the clipped artifact.
-    """
-    wd = config.work_dir
-    gtf = wd / _STRINGTIE_GTF
-    models = read_transcripts(gtf)
-    out_gff = wd / STRINGTIE_JACCARD_GFF3
-    if not models:
-        write_transcripts([], out_gff)
-        return 0, 0
-
-    spliced = wd / "stringtie.spliced.fasta"
-    _write_spliced_fasta(models, config.genome, spliced)
-    bam = map_reads_to_transcripts(config, spliced, "stringtie")
-
-    handle = pysam.AlignmentFile(str(bam), "rb")
-    ref_len = dict(zip(handle.references, handle.lengths, strict=False))
-    handle.close()
-
-    clip_map: dict[str, list[int]] = {}
-    for ref, spans in iter_fragment_spans(bam):
-        if not spans:
-            continue
-        clips = find_clip_points(spans, ref_len[ref], **_clip_knobs(config))
-        if clips:
-            clip_map[ref] = clips
-
-    out_models, n_split = _split_models_at_clips(gtf, clip_map, config.min_sl_fragment)
-    write_transcripts(out_models, out_gff)
-    spliced.unlink(missing_ok=True)
-    return len(models), n_split

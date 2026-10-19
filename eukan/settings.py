@@ -295,26 +295,6 @@ class AssemblyConfig(_StepRunSettings):
     clipping stringent; raise it to allow splitting on fainter low-coverage troughs."""
     diagnose_softclips: bool = True
 
-    # --- Genome-guided assembly (StringTie) stringency ---
-    # DORMANT: StringTie is no longer in the active pipeline (Trinity covers both
-    # de novo and genome-guided). These fields configure the kept-but-unwired
-    # stringtie module and have no effect unless it is re-wired into the assembly
-    # STEPS (assembly/pipeline.py).
-    stringtie_min_coverage: float = 1.5
-    """StringTie ``-c``: minimum per-bp read coverage for a transcript to be
-    assembled. Raised above StringTie's default of 1 to suppress low-coverage
-    spurious models."""
-    stringtie_min_isoform_fraction: float = 0.1
-    """StringTie ``-f``: minimum isoform abundance as a fraction of a locus's
-    dominant isoform. Raised above StringTie's default of 0.01 to drop minor
-    noise isoforms that inflate the genome-guided set."""
-    stringtie_min_junction_coverage: float = 1.0
-    """StringTie ``-j``: minimum number of spliced reads spanning a junction for it
-    to be kept. Left at StringTie's default of 1, but exposed so it can be raised:
-    a single spurious junction read (e.g. from noisy mapping in dense or
-    trans-spliced genomes) otherwise becomes a splice-graph edge and inflates
-    isoforms / fuses neighbouring loci."""
-
     # --- de novo + combinr consolidation routine ---
     min_sl_fragment: int = 25
     """Minimum length (nt) of a fragment kept after in-silico SL trans-splicing."""

@@ -155,25 +155,13 @@ class TestToolRegistry:
         assert "augustus" in names
         assert "samtools" in names
 
-    # stringtie was replaced by Trinity (genome-guided) in the active pipeline.
-    # It's dormant: required_by is intentionally empty so `eukan check assemble`
-    # doesn't demand it, but it keeps a conda_package so it stays installable via
-    # environment.yml.
-    _DORMANT = frozenset({"stringtie"})
-
     def test_tool_fields(self):
         """Tools should have all required fields populated."""
         tools = load_tools()
         for tool in tools:
             assert tool.binary
             assert tool.version_cmd
-            if tool.name in self._DORMANT:
-                # Dormant tools: no subcommand requires them, but they stay
-                # installable (conda_package retained for environment.yml).
-                assert tool.required_by == ()
-                assert tool.conda_package
-            else:
-                assert len(tool.required_by) > 0
+            assert len(tool.required_by) > 0
 
     def test_minimap2_registered(self):
         """minimap2 (bioconda >= 2.29 for splice:sr) is registered for assemble."""

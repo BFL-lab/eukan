@@ -96,17 +96,6 @@ conda_package = "minimap2"
 # 2.29 introduced the splice:sr short-read spliced preset used for read mapping.
 min_version = "2.29"
 
-[stringtie]
-binary = "stringtie"
-version_cmd = ["stringtie", "--version"]
-# DORMANT: Trinity (genome-guided) replaced StringTie in the active pipeline.
-# Kept installable (conda_package retained, so it stays in environment.yml) in
-# case the unwired stringtie module is re-activated; required_by emptied so
-# `eukan check assemble` does not demand it.
-required_by = []
-conda_package = "stringtie"
-min_version = "3.0"
-
 [trinity]
 binary = "Trinity"
 version_cmd = ["Trinity", "--version"]

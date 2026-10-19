@@ -1,10 +1,9 @@
 """Transcript models as plain records: read, write, split and stitch.
 
-The assembly steps hand transcript models to each other as gene>mRNA>exon GFF3
-(and read StringTie's transcript>exon GTF). This module holds the one record type
-and the one reader, writer, splitter, streaming cut loop and sequence stitcher for
-them. It reads rows
-with :mod:`eukan.gff.rows` instead of building a gffutils database, which is about
+The assembly steps hand transcript models to each other as gene>mRNA>exon GFF3.
+This module holds the one record type and the one reader, writer, splitter,
+streaming cut loop and sequence stitcher for them. It reads rows with
+:mod:`eukan.gff.rows` instead of building a gffutils database, which is about
 30x slower on a genome-wide model set.
 """
 
@@ -57,8 +56,8 @@ def iter_transcripts(path: str | Path) -> Iterator[Transcript]:
     A transcript is an ``mRNA``/``transcript`` row (id from ``ID`` or
     ``transcript_id``) plus its ``exon`` rows (``Parent`` or ``transcript_id``);
     the transcript row is optional. Each transcript's rows must be contiguous, as
-    eukan, StringTie and combinr write them: rows interleaved with another
-    transcript's come out as separate records. Contig, strand and source are taken
+    eukan and combinr write them: rows interleaved with another transcript's come
+    out as separate records. Contig, strand and source are taken
     from the transcript's first row, exons are sorted by start, and transcripts
     without exons are dropped.
     """
