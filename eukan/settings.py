@@ -21,6 +21,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from eukan.exceptions import ConfigurationError
 from eukan.infra.databases import DATABASES, DEFAULT_DB_DIR, HomologyDb
+from eukan.infra.layout import sibling_step_dir
 from eukan.infra.logging import get_logger
 from eukan.infra.utils import available_cpus
 
@@ -61,7 +62,7 @@ class _StepRunSettings(BaseSettings):
     def _known_genetic_code(cls, value: int | str) -> str:
         # Fail at construction, not at the first step that translates (after
         # minimap2 and Trinity in assembly). Stored as the canonical string.
-        from eukan.infra.genetic_code import GeneticCode
+        from eukan.infra.genetic_code import GeneticCode  # lazy: startup cost (Bio.Data.CodonTable)
         try:
             return str(GeneticCode(value))
         except ConfigurationError as exc:
@@ -89,7 +90,7 @@ class _StepRunSettings(BaseSettings):
     @cached_property
     def genetic_code_obj(self):
         """Return a :class:`~eukan.infra.genetic_code.GeneticCode` for this config's code."""
-        from eukan.infra.genetic_code import GeneticCode
+        from eukan.infra.genetic_code import GeneticCode  # lazy: startup cost (Bio.Data.CodonTable)
         return GeneticCode(self.genetic_code)
 
 
@@ -162,8 +163,8 @@ class PipelineConfig(_StepRunSettings):
         Building the config reads no files; the CLI calls this once it is built.
         """
         log = get_logger(__name__)
-        from eukan.infra import artifacts
-        from eukan.infra.artifacts import Artifact
+        from eukan.infra import artifacts  # lazy: startup cost (manifest, health)
+        from eukan.infra.artifacts import Artifact  # lazy: startup cost (manifest, health)
 
         # If the user set any of the three explicitly, don't override their intent
         field_to_artifact = {
@@ -504,10 +505,14 @@ class SubmissionConfig(_StepRunSettings):
         Building the config reads no files; the CLI calls this once it is built.
         """
         log = get_logger(__name__)
-        from eukan.infra import artifacts
-        from eukan.infra.artifacts import Artifact
-        from eukan.infra.layout import sibling_step_dir
-        from eukan.infra.manifest import ANNOTATION, ASSEMBLY, REPEATS, load_manifest
+        from eukan.infra import artifacts  # lazy: startup cost (manifest, health)
+        from eukan.infra.artifacts import Artifact  # lazy: startup cost (manifest, health)
+        from eukan.infra.manifest import (  # lazy: startup cost (pydantic models, health)
+            ANNOTATION,
+            ASSEMBLY,
+            REPEATS,
+            load_manifest,
+        )
 
         if self.genome is None:
             # Manifest lives at the run-dir root (manifest_dir); fall back

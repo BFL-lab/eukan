@@ -78,7 +78,7 @@ def validate_gff(path: Path) -> bool:
     Raises:
         GFFValidationError: If the file cannot be parsed or has invalid features.
     """
-    import gffutils
+    import gffutils  # lazy: startup cost
 
     try:
         count = 0
