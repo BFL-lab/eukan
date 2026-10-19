@@ -164,6 +164,20 @@ class TestPrettifyGFF3:
         # The 5'-most CDS on the minus strand (400-601, 202 nt) is phase 0.
         assert self._cds_frames(db_from_string(gff)) == {(400, 601): "0", (100, 200): "2"}
 
+    def test_five_prime_partial_keeps_its_first_cds_phase(self, db_from_string):
+        """A 5'-partial model (combinr's partial5) has no start codon to anchor
+        phase 0: its producer's phase stands, and the rest follow from it."""
+        gff = (
+            "chr1\ttest\tgene\t100\t600\t.\t+\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t100\t600\t.\t+\t.\tID=mrna1;Parent=gene1;partial5=true\n"
+            "chr1\ttest\texon\t100\t200\t.\t+\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\texon\t400\t600\t.\t+\t.\tID=exon2;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t100\t200\t.\t+\t2\tID=cds1;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t400\t600\t.\t+\t.\tID=cds2;Parent=mrna1\n"
+        )
+        # 101 nt at phase 2 leaves (3 - 99 % 3) % 3 = 0 for the next CDS.
+        assert self._cds_frames(db_from_string(gff)) == {(100, 200): "2", (400, 600): "0"}
+
     def test_only_exon_and_cds_children_are_written(self, db_from_string):
         """UTR features are left out; exons extending past the CDS carry them."""
         gff = (

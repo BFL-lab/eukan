@@ -61,12 +61,20 @@ def add_missing_feats_to_gff3(
 
 
 def _cds_phases(gff3: gffutils.FeatureDB, mRNA: gffutils.Feature) -> dict[str, str]:
-    """Phase of each CDS of *mRNA*, walking from the 5'-most CDS (phase 0)."""
+    """Phase of each CDS of *mRNA*, walking from the 5'-most CDS.
+
+    That CDS is phase 0, where the start codon is, unless the model is
+    5'-partial (combinr's ``partial5=true``): with no start codon to anchor
+    it, the phase its producer gave stands.
+    """
+    partial5 = mRNA.attributes.get("partial5") == ["true"]
     phases: dict[str, str] = {}
     phase = 0
-    for cds in gff3.children(
+    for i, cds in enumerate(gff3.children(
         mRNA, featuretype="CDS", order_by="start", reverse=mRNA.strand == "-",
-    ):
+    )):
+        if i == 0 and partial5 and cds.frame in ("0", "1", "2"):
+            phase = int(cds.frame)
         phases[cds.id] = str(phase)
         phase = (3 - ((cds.end - cds.start + 1 - phase) % 3)) % 3
     return phases
@@ -79,7 +87,7 @@ def prettify_gff3(
 
     Yields each gene, then each of its mRNAs followed by that mRNA's exons and
     then its CDSs (other child types, such as UTRs, are left out), with every
-    CDS phase recomputed from the mRNA's 5'-most CDS.
+    CDS phase recomputed from the mRNA's 5'-most CDS (see :func:`_cds_phases`).
     """
     for gene_num, gene in enumerate(
         gff3.features_of_type("gene", order_by=("seqid", "start")), start=1
