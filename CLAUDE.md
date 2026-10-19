@@ -117,7 +117,6 @@ eukan/
 │   ├── bam_reads.py    # Per-read BAM primitives: primary filter, soft-clip extraction, intron walk, dinucleotides
 │   ├── align_hints.py  # RNA-seq intron/coverage hint emission from the read BAM
 │   ├── bam_diagnostic.py # Post-mapping soft-clip + intron BAM walk → trans-splicing / non-canonical-splice verdict
-│   ├── bam_introns.py  # DORMANT: max-intron-bounded BAM filter (only stringtie.py uses it)
 │   ├── trinity.py      # Trinity genome-guided + de novo assembly (the active assembler, both modes)
 │   ├── tracks.py       # Single source of truth: TRANSCRIPT_SETS + every per-track filename/suffix
 │   ├── jaccard.py      # In-house jaccard fusion-clip (replaces Trinity --jaccard_clip; minimap2-based, tunable)
@@ -129,8 +128,6 @@ eukan/
 │   ├── sl_cut.py       # Genomic SL cut of transcript models at trans-splice acceptors → {stem}.cut.gff3
 │   ├── polya.py        # Poly-A characterization + unmapped de-novo transcript output
 │   ├── combinr.py      # combinr-assemble consolidation → nr_transcripts.{fasta,gff3} + hints_rnaseq.gff
-│   ├── rnaspades.py    # DORMANT: rnaSPAdes de novo (kept, unwired — Trinity replaced it)
-│   ├── stringtie.py    # DORMANT: StringTie genome-guided (kept, unwired — Trinity replaced it)
 │   └── sl_depletion.py # SL-motif primitives (FASTA depletion path retired for the genomic SL cut)
 │
 ├── repeats/            # Repeat masking pipeline
