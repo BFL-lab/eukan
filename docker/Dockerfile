@@ -1,8 +1,9 @@
 # Dockerfile for eukan genome annotation pipeline.
 #
 # Multi-stage build:
-#   Stage 1 (builder) — installs the conda env, compiles fitild and the spaln
-#                       utilities, installs combinr, GeneMark and eukan
+#   Stage 1 (builder) — installs the conda env, compiles fitild, the spaln
+#                       utilities and Trinity's ParaFly, installs combinr,
+#                       GeneMark and eukan
 #   Stage 2 (runtime) — copies only the conda env into a slim Debian base
 #
 # GeneMark is optional — if gmes_linux_64*.tar.gz and gm_key_64.gz are
@@ -113,6 +114,25 @@ RUN git clone --depth 1 https://github.com/ogotoh/spaln /tmp/spaln_src \
 COPY scripts/install-extras.sh /opt/eukan/scripts/
 RUN bash scripts/install-extras.sh combinr \
     && combinr --version
+
+# ---------------------------------------------------------------------------
+# 2d. Trinity's ParaFly, rebuilt with OpenMP
+#
+# Trinity runs its batches of independent commands (Butterfly, and Phase 2's
+# per-partition assemblies, de novo and genome-guided) through
+# trinity-plugins/BIN/ParaFly. bioconda's build passes -fopenmp only to the
+# linker, so ParaFly's `omp parallel for` is compiled out and the commands
+# run one at a time whatever --CPU says. Recompile the shipped source with
+# the base's g++, as for fitild and spaln. Static, so it loads no libgomp or
+# libstdc++ at run time and behaves the same under whatever LD_LIBRARY_PATH
+# eukan or Trinity sets; ld's dlopen warning comes from libgomp's offload
+# plugin loader, which ParaFly (no `omp target` code) never runs. The grep
+# fails the build if the OpenMP runtime did not get linked in.
+# ---------------------------------------------------------------------------
+RUN cd /opt/conda/envs/eukan/bin/trinity-plugins \
+    && /usr/bin/g++ -O2 -fopenmp -static -o BIN/ParaFly \
+       ParaFly/src/ParaFly.cpp ParaFly/src/argProcessor.cpp \
+    && grep -aq GOMP_parallel BIN/ParaFly
 
 # ---------------------------------------------------------------------------
 # 3. GeneMark (optional — requires user-provided license files)
