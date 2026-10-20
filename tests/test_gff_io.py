@@ -84,6 +84,30 @@ class TestExtractSequences:
 
         assert str(records[0].seq) == "MK*"
 
+    def test_minus_strand_multi_CDS_reads_its_highest_CDS_phase(self, tmp_path):
+        """On the minus strand the 5'-most CDS is the highest-coordinate one:
+        its phase (2), not the lowest CDS's (1), sets the reading frame."""
+        genome_path = tmp_path / "genome.fa"
+        # 5'->3': GC | CTG AAT AGC GGC TTC TGG TAA, split 9 + 7 + 7 nt over
+        # 45-53, 28-34 and 11-17; the genome holds their reverse complements.
+        seq = "N" * 10 + "TTACCAG" + "N" * 10 + "AAGCCGC" + "N" * 10 + "TATTCAGGC" + "N" * 47
+        genome_path.write_text(f">chr1\n{seq}\n")
+        gff_path = tmp_path / "test.gff3"
+        gff_path.write_text(
+            "chr1\ttest\tgene\t11\t53\t.\t-\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t11\t53\t.\t-\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\ttest\tCDS\t11\t17\t.\t-\t1\tID=cds3;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t28\t34\t.\t-\t2\tID=cds2;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t45\t53\t.\t-\t2\tID=cds1;Parent=mrna1\n"
+        )
+
+        records = list(extract_sequences(gff_path, genome_path, "protein", 1))
+
+        # Read from phase 0 this is A*IAASG; from the lowest CDS's phase, PE*RLLV.
+        protein = str(records[0].seq)
+        assert "*" not in protein[:-1]
+        assert protein == "LNSGFW*"
+
     def test_cdna_extraction(self, tmp_path):
         """Should extract cDNA (nucleotide) sequences."""
         genome_path = tmp_path / "genome.fa"

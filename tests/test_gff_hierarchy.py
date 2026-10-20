@@ -84,6 +84,25 @@ class TestAddMissingFeats:
             (100, 201): "0", (400, 600): "0", (1400, 1601): "0", (1000, 1200): "2",
         }
 
+    def test_minus_strand_CDS_phases_walk_down_from_the_highest_exon(self, db_from_string):
+        """A minus-strand model is phased from its highest-coordinate exon down,
+        each exon's phase set by the bases its 5' neighbour leaves over."""
+        gff = (
+            "chr1\ttest\tgene\t1000\t1700\t.\t-\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t1000\t1700\t.\t-\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\ttest\texon\t1000\t1099\t.\t-\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\texon\t1300\t1351\t.\t-\t.\tID=exon2;Parent=mrna1\n"
+            "chr1\ttest\texon\t1601\t1700\t.\t-\t.\tID=exon3;Parent=mrna1\n"
+        )
+        phases = {
+            (f.start, f.end): str(f.frame)
+            for f in add_missing_feats_to_gff3(db_from_string(gff))
+            if f.featuretype == "CDS"
+        }
+        # 1601-1700: 100 nt at phase 0 leave 1 base, so 1300-1351 is in phase 2;
+        # its 52 nt less those 2 leave 2 bases, so 1000-1099 is in phase 1.
+        assert phases == {(1601, 1700): "0", (1300, 1351): "2", (1000, 1099): "1"}
+
     def test_no_changes_when_complete(self, db_from_string):
         """Complete hierarchy should not generate any new features."""
         gff = (
