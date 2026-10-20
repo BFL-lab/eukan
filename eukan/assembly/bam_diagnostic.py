@@ -17,27 +17,35 @@ Extracts and aggregates:
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from eukan.assembly.polya import PolyAStats, tally_clip
+import pysam
 
-if TYPE_CHECKING:
-    import pysam
+from eukan.assembly.bam_reads import (
+    dinucleotide,
+    extract_clips,
+    iter_primary_alignments,
+    walk_introns,
+)
+from eukan.assembly.polya import (
+    PolyAStats,
+    characterize_polya_bam,
+    has_section,
+    stats_to_dict,
+    tally_clip,
+    write_polya_section,
+)
+from eukan.assembly.sl_depletion import is_adapter
+from eukan.infra.artifacts import Artifact
+from eukan.infra.genome import ContigIndex
+from eukan.infra.logging import get_logger
 
-
-_CIGAR_M = 0
-_CIGAR_D = 2
-_CIGAR_N = 3
-_CIGAR_SOFT_CLIP = 4
-_CIGAR_EQ = 7
-_CIGAR_X = 8
-_CIGAR_REF_CONSUMING = frozenset([_CIGAR_M, _CIGAR_D, _CIGAR_N, _CIGAR_EQ, _CIGAR_X])
-
-_RC_TABLE = str.maketrans("ACGTNacgtn", "TGCANtgcan")
+log = get_logger(__name__)
 
 # Per-locus key cap. Statistically the dominant key arrives among the
 # first few clips at any locus (≥94% prevalence at depth ≥ a few), so
@@ -58,10 +66,6 @@ _TS_MODERATE_MIN_READS = 1000
 _NC_CANONICAL_PCT_EXTENSIVE = 80.0  # canonical% below this -> EXTENSIVE
 _NC_CANONICAL_PCT_MODERATE = 95.0   # canonical% below this -> MODERATE, else ABSENT
 _NC_DINUC_REPORT_MIN_PCT = 1.0      # min % for a non-canonical dinuc to be named
-
-
-def _reverse_complement(seq: str) -> str:
-    return seq.translate(_RC_TABLE)[::-1]
 
 
 def _hamming_distance(a: str, b: str) -> int:
@@ -294,11 +298,27 @@ class DiagnosticReport:
     polya: PolyAStats = field(default_factory=PolyAStats)
 
 
+class TransSplicingLevel(StrEnum):
+    """:attr:`TransSplicingCall.call`, as the summary JSON spells it."""
+
+    STRONG = "STRONG"
+    MODERATE = "MODERATE"
+    ABSENT = "ABSENT"
+
+
+class NonCanonicalSpliceLevel(StrEnum):
+    """:attr:`NonCanonicalSpliceCall.call`, as the summary JSON spells it."""
+
+    EXTENSIVE = "EXTENSIVE"
+    MODERATE = "MODERATE"
+    ABSENT = "ABSENT"
+
+
 @dataclass
 class TransSplicingCall:
     """Categorical verdict on whether trans-splicing is present."""
 
-    call: str  # "STRONG" | "MODERATE" | "ABSENT"
+    call: TransSplicingLevel
     top_non_trivial_cluster_key: str
     top_non_trivial_cluster_consensus: str
     top_non_trivial_cluster_n_loci: int
@@ -310,7 +330,7 @@ class TransSplicingCall:
 class NonCanonicalSpliceCall:
     """Categorical verdict on non-canonical splice prevalence."""
 
-    call: str  # "EXTENSIVE" | "MODERATE" | "ABSENT"
+    call: NonCanonicalSpliceLevel
     canonical_pct: float
     top_non_canonical_dinuc: str
 
@@ -323,56 +343,6 @@ class Verdict:
     non_canonical_splice: NonCanonicalSpliceCall
 
 
-def _iter_primary_alignments(
-    bam: pysam.AlignmentFile, *, min_mapq: int,
-) -> Iterable[pysam.AlignedSegment]:
-    """Yield primary, mapped, MAPQ-passing reads with a usable cigar+seq."""
-    for read in bam:
-        if read.is_unmapped or read.is_secondary or read.is_supplementary:
-            continue
-        if read.mapping_quality < min_mapq:
-            continue
-        if read.cigartuples is None or read.query_sequence is None:
-            continue
-        yield read
-
-
-def _extract_clips(
-    read: pysam.AlignedSegment, min_clip_len: int,
-) -> Iterable[tuple[str, str, int]]:
-    """Yield ``(side, mRNA_orient_seq, anchor_pos)`` for each soft-clip end.
-
-    BAM stores sequences in reference orientation, so a leading clip on a
-    reverse-mapped read is the 3' end of the mRNA (and its sequence is
-    the reverse complement of the original sequencer read). We
-    normalize: the side label is in mRNA orientation, and the sequence is
-    flipped to match.
-    """
-    cigar = read.cigartuples
-    seq = read.query_sequence
-    ref_end = read.reference_end
-    if cigar is None or seq is None or ref_end is None:
-        return
-
-    op0, len0 = cigar[0]
-    if op0 == _CIGAR_SOFT_CLIP and len0 >= min_clip_len:
-        clip_seq = seq[:len0]
-        anchor_pos = read.reference_start
-        if read.is_reverse:
-            yield "3p", _reverse_complement(clip_seq), anchor_pos
-        else:
-            yield "5p", clip_seq, anchor_pos
-
-    op_last, len_last = cigar[-1]
-    if op_last == _CIGAR_SOFT_CLIP and len_last >= min_clip_len:
-        clip_seq = seq[-len_last:]
-        anchor_pos = ref_end - 1
-        if read.is_reverse:
-            yield "5p", _reverse_complement(clip_seq), anchor_pos
-        else:
-            yield "3p", clip_seq, anchor_pos
-
-
 def _cluster_key(side: str, seq: str, k: int) -> str:
     """Return the K-bp substring anchored at the alignment boundary."""
     seq = seq.upper()
@@ -381,22 +351,6 @@ def _cluster_key(side: str, seq: str, k: int) -> str:
     if side == "5p":
         return seq[-k:]
     return seq[:k]
-
-
-def _walk_introns(
-    read: pysam.AlignedSegment,
-) -> Iterable[tuple[str, int, int]]:
-    """Yield ``(chrom, intron_start, intron_end_exclusive)`` for each N op."""
-    chrom = read.reference_name
-    cigar = read.cigartuples
-    if chrom is None or cigar is None:
-        return
-    pos = read.reference_start
-    for op, length in cigar:
-        if op == _CIGAR_N:
-            yield chrom, pos, pos + length
-        if op in _CIGAR_REF_CONSUMING:
-            pos += length
 
 
 def _short_fits_long(short: str, long: str, side: str) -> bool:
@@ -478,46 +432,11 @@ def _share_bucket(share: int) -> str:
     return ">1000"
 
 
-def _dinucleotide(
-    contigs, chrom: str, intron_start: int, intron_end: int,
-) -> str | None:
-    """Look up the donor/acceptor dinucleotide pair on the genome + strand.
+@dataclass(frozen=True)
+class DiagnosticParams:
+    """The tunables of :func:`diagnose_bam`; the pipeline runs the defaults.
 
-    Returns ``"XX-YY"`` (e.g. ``"GT-AG"`` for + strand canonical,
-    ``"CT-AC"`` for - strand canonical, matching STAR's motif
-    convention), or ``None`` when the contig or coordinates fall outside
-    the genome index. The reverse-strand canonical pair is reported
-    distinctly so a downstream check can detect canonical sites without
-    needing the read's transcribed strand.
-    """
-    rec = contigs.get(chrom)
-    if rec is None or rec.seq is None:
-        return None
-    genome_seq = rec.seq
-    if intron_end > len(genome_seq) or intron_start < 0:
-        return None
-    donor = str(genome_seq[intron_start : intron_start + 2]).upper()
-    acceptor = str(genome_seq[intron_end - 2 : intron_end]).upper()
-    return f"{donor}-{acceptor}"
-
-
-def diagnose_bam(
-    bam_path: Path,
-    genome_path: Path,
-    *,
-    min_clip_len: int = 8,
-    cluster_key_len: int = 12,
-    min_mapq: int = 20,
-    top_n: int = 15,
-    hamming_tolerance: int = 2,
-    cluster_hamming_tolerance: int = 1,
-    min_consistency_fraction: float = 0.95,
-    consensus_min_majority_fraction: float = 0.6,
-) -> DiagnosticReport:
-    """Stream a BAM and return aggregated soft-clip + intron + locus stats.
-
-    One sequential pass over the BAM; no index required. Three knobs
-    tune motif consolidation over the same K-bp anchored window:
+    Three knobs tune motif consolidation over the same K-bp anchored window:
 
     - ``hamming_tolerance`` — per-locus consolidation. Tracked clip
       keys at a locus are considered to match the dominant key if
@@ -541,10 +460,25 @@ def diagnose_bam(
     sequence. Lower values let the consensus extend further into noisier
     columns; higher values terminate sooner. Default 0.6.
     """
-    import pysam
 
-    from eukan.infra.genome import ContigIndex
+    min_clip_len: int = 8
+    cluster_key_len: int = 12
+    min_mapq: int = 20
+    top_n: int = 15
+    hamming_tolerance: int = 2
+    cluster_hamming_tolerance: int = 1
+    min_consistency_fraction: float = 0.95
+    consensus_min_majority_fraction: float = 0.6
 
+
+def diagnose_bam(
+    bam_path: Path, genome_path: Path, params: DiagnosticParams = DiagnosticParams(),
+) -> DiagnosticReport:
+    """Stream a BAM and return aggregated soft-clip + intron + locus stats.
+
+    One sequential pass over the BAM; no index required. *params* holds the
+    clustering and consolidation knobs (:class:`DiagnosticParams`).
+    """
     n_reads_scanned = 0
     n_reads_with_clip = 0
     clips_by_side: Counter[str] = Counter()
@@ -561,18 +495,18 @@ def diagnose_bam(
     with ContigIndex(genome_path) as contigs:
         bam = pysam.AlignmentFile(str(bam_path), "rb")
         try:
-            for read in _iter_primary_alignments(bam, min_mapq=min_mapq):
+            for read in iter_primary_alignments(bam, min_mapq=params.min_mapq):
                 n_reads_scanned += 1
                 had_clip = False
                 chrom_name = read.reference_name
                 if chrom_name is None:
                     continue
-                for side, seq, anchor_pos in _extract_clips(read, min_clip_len):
+                for side, seq, anchor_pos in extract_clips(read, params.min_clip_len):
                     had_clip = True
                     clips_by_side[side] += 1
                     tally_clip(polya, side, seq, chrom_name)
                     locus = (chrom_name, anchor_pos, side)
-                    key = _cluster_key(side, seq, cluster_key_len)
+                    key = _cluster_key(side, seq, params.cluster_key_len)
                     cluster_loci.setdefault(key, set()).add(locus)
                     cluster_reads[key] += 1
                     cluster_examples.setdefault(key, seq)
@@ -581,7 +515,7 @@ def diagnose_bam(
                     ld.n_clips += 1
                     if len(seq) > len(ld.longest_clip):
                         ld.longest_clip = seq
-                    if len(seq) >= cluster_key_len:
+                    if len(seq) >= params.cluster_key_len:
                         if key in ld.long_key_counts or len(ld.long_key_counts) < LOCUS_KEY_CAP:
                             ld.long_key_counts[key] += 1
                     else:
@@ -590,9 +524,9 @@ def diagnose_bam(
                 if had_clip:
                     n_reads_with_clip += 1
 
-                for chrom, intron_start, intron_end in _walk_introns(read):
+                for chrom, intron_start, intron_end in walk_introns(read):
                     n_introns += 1
-                    pair = _dinucleotide(contigs, chrom, intron_start, intron_end)
+                    pair = dinucleotide(contigs, chrom, intron_start, intron_end)
                     if pair is not None:
                         dinuc[pair] += 1
         finally:
@@ -603,7 +537,7 @@ def diagnose_bam(
     keys_sorted = sorted(
         cluster_reads.items(), key=lambda kv: (-kv[1], kv[0]),
     )
-    canonical_map = _canonicalize_keys(keys_sorted, cluster_hamming_tolerance)
+    canonical_map = _canonicalize_keys(keys_sorted, params.cluster_hamming_tolerance)
 
     canon_cluster_loci: dict[str, set[tuple[str, int, str]]] = {}
     canon_cluster_reads: Counter[str] = Counter()
@@ -624,7 +558,7 @@ def diagnose_bam(
     top_keys = sorted(
         canon_cluster_to_loci_count.items(),
         key=lambda kv: (-kv[1], -canon_cluster_reads[kv[0]], kv[0]),
-    )[:top_n]
+    )[:params.top_n]
     top_clusters = [(k, n_loci, canon_cluster_reads[k]) for k, n_loci in top_keys]
 
     # Build a consensus sequence for each top-N cluster from its member
@@ -654,16 +588,16 @@ def diagnose_bam(
         clips: list[str] = []
         for loc in loci_by_side[dominant_side]:
             lc = locus_data[loc].longest_clip
-            if len(lc) < cluster_key_len:
+            if len(lc) < params.cluster_key_len:
                 continue
-            if _cluster_key(dominant_side, lc, cluster_key_len) not in raw_keys:
+            if _cluster_key(dominant_side, lc, params.cluster_key_len) not in raw_keys:
                 continue
             clips.append(lc)
         if not clips:
             continue
         consensus = _cluster_consensus(
             clips, dominant_side,
-            min_majority_fraction=consensus_min_majority_fraction,
+            min_majority_fraction=params.consensus_min_majority_fraction,
         )
         if consensus:
             canon_cluster_consensus[seed] = consensus
@@ -692,9 +626,9 @@ def diagnose_bam(
 
     locus_consistency = _build_locus_consistency_stats(
         locus_data, canon_cluster_to_loci_count, canonical_map,
-        hamming_tolerance=hamming_tolerance,
-        min_consistency_fraction=min_consistency_fraction,
-        top_n=top_n,
+        hamming_tolerance=params.hamming_tolerance,
+        min_consistency_fraction=params.min_consistency_fraction,
+        top_n=params.top_n,
     )
 
     return DiagnosticReport(
@@ -827,25 +761,25 @@ def compute_verdict(report: DiagnosticReport) -> Verdict:
     if top is not None:
         key, n_loci, n_reads = top
         if n_loci >= _TS_STRONG_MIN_LOCI and n_reads >= _TS_STRONG_MIN_READS:
-            ts_call = "STRONG"
+            ts_call = TransSplicingLevel.STRONG
         elif n_loci >= _TS_MODERATE_MIN_LOCI and n_reads >= _TS_MODERATE_MIN_READS:
-            ts_call = "MODERATE"
+            ts_call = TransSplicingLevel.MODERATE
         else:
-            ts_call = "ABSENT"
+            ts_call = TransSplicingLevel.ABSENT
     else:
         key, n_loci, n_reads = "", 0, 0
-        ts_call = "ABSENT"
+        ts_call = TransSplicingLevel.ABSENT
 
     sl_bucket_pct = 0.0
     if lc.n_loci_consistent:
         sl_bucket_pct = 100.0 * lc.motif_share_histogram.get(">1000", 0) / lc.n_loci_consistent
 
     if intron.canonical_pct < _NC_CANONICAL_PCT_EXTENSIVE:
-        nc_call = "EXTENSIVE"
+        nc_call = NonCanonicalSpliceLevel.EXTENSIVE
     elif intron.canonical_pct < _NC_CANONICAL_PCT_MODERATE:
-        nc_call = "MODERATE"
+        nc_call = NonCanonicalSpliceLevel.MODERATE
     else:
-        nc_call = "ABSENT"
+        nc_call = NonCanonicalSpliceLevel.ABSENT
 
     nc_top_label = "none above 1%"
     for dinuc, n in intron.by_dinucleotide.items():
@@ -914,35 +848,127 @@ def to_summary_dict(report: DiagnosticReport, verdict: Verdict) -> dict:
             "n_loci_inconsistent": lc.n_loci_inconsistent,
             "n_loci_short_only": lc.n_loci_short_only,
             "motif_share_histogram": lc.motif_share_histogram,
-            "deepest_loci": [
-                {
-                    "chrom": r.chrom, "pos": r.pos, "side": r.side,
-                    "n_clips": r.n_clips, "status": r.status,
-                    "motif_key": r.motif_key, "motif_share": r.motif_share,
-                    "longest_clip": r.longest_clip,
-                }
-                for r in lc.deepest_loci
-            ],
+            "deepest_loci": [asdict(r) for r in lc.deepest_loci],
         },
-        "verdict": {
-            "trans_splicing": {
-                "call": verdict.trans_splicing.call,
-                "top_non_trivial_cluster_key":
-                    verdict.trans_splicing.top_non_trivial_cluster_key,
-                "top_non_trivial_cluster_consensus":
-                    verdict.trans_splicing.top_non_trivial_cluster_consensus,
-                "top_non_trivial_cluster_n_loci":
-                    verdict.trans_splicing.top_non_trivial_cluster_n_loci,
-                "top_non_trivial_cluster_n_reads":
-                    verdict.trans_splicing.top_non_trivial_cluster_n_reads,
-                "sl_bucket_pct_of_consistent":
-                    verdict.trans_splicing.sl_bucket_pct_of_consistent,
-            },
-            "non_canonical_splice": {
-                "call": verdict.non_canonical_splice.call,
-                "canonical_pct": verdict.non_canonical_splice.canonical_pct,
-                "top_non_canonical_dinuc":
-                    verdict.non_canonical_splice.top_non_canonical_dinuc,
-            },
-        },
+        "verdict": asdict(verdict),
     }
+
+
+def load_verdict(wd: Path) -> Verdict | None:
+    """The verdict :func:`to_summary_dict` wrote to *wd*'s soft-clip summary, or
+    ``None`` when there is no summary or it does not hold a whole verdict."""
+    try:
+        v = json.loads((wd / Artifact.SOFTCLIP_DIAGNOSTIC.value).read_text())["verdict"]
+        ts, nc = v["trans_splicing"], v["non_canonical_splice"]
+        return Verdict(
+            TransSplicingCall(**(ts | {"call": TransSplicingLevel(ts["call"])})),
+            NonCanonicalSpliceCall(**(nc | {"call": NonCanonicalSpliceLevel(nc["call"])})),
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# The pipeline step: diagnose the read BAM, write the summary, log the verdict
+# ---------------------------------------------------------------------------
+
+
+def _log_read_polya(pa: PolyAStats, bam_name: str) -> None:
+    """INFO-log the read-BAM poly-A soft-clip tally (no-op when there are none)."""
+    if pa.n_polya or pa.n_polyt:
+        log.info(
+            "Poly-A soft-clips in %s: %d poly-A (3') + %d poly-T (5') of %d clips "
+            "(%.3f%% poly-A; mean %.1f bp, max %d bp).",
+            bam_name, pa.n_polya, pa.n_polyt, pa.n_clips_examined,
+            pa.polya_pct_of_clips, pa.polya_mean_len, pa.polya_len_max,
+        )
+
+
+def _log_trans_splicing_verdict(ts: TransSplicingCall) -> None:
+    """Log the trans-splicing verdict, flagging when the dominant soft-clip motif
+    is actually residual sequencing adapter rather than a genuine spliced leader.
+
+    Reads aren't adapter-trimmed upstream, so Illumina/Nextera read-through can be
+    the dominant soft-clip cluster and masquerade as trans-splicing. Surfacing it
+    here (in the soft-clip analysis) tells the user to adapter-trim rather than
+    trust a phantom spliced leader; SL detection separately excludes it.
+    """
+    label = ts.top_non_trivial_cluster_consensus or ts.top_non_trivial_cluster_key
+    if label and (
+        is_adapter(ts.top_non_trivial_cluster_consensus)
+        or is_adapter(ts.top_non_trivial_cluster_key)
+    ):
+        note = (
+            f"; the {ts.call} trans-splicing signal is attributable to it"
+            if ts.call in (TransSplicingLevel.STRONG, TransSplicingLevel.MODERATE)
+            else ""
+        )
+        log.warning(
+            "Soft-clip analysis: the dominant soft-clip motif %s matches a known "
+            "sequencing adapter%s. This is residual adapter read-through, not a "
+            "spliced leader; adapter-trim the reads before assembly. SL detection "
+            "excludes it by default (--no-sl-adapter-filter to override).",
+            label, note,
+        )
+        return
+    if ts.call in (TransSplicingLevel.STRONG, TransSplicingLevel.MODERATE):
+        log.warning(
+            "Trans-splicing signal %s: top motif %s spans %d loci (%d reads). "
+            "Reads may need splice-leader trimming before annotation.",
+            ts.call,
+            label,
+            ts.top_non_trivial_cluster_n_loci,
+            ts.top_non_trivial_cluster_n_reads,
+        )
+    else:
+        log.info("Trans-splicing signal: ABSENT")
+
+
+def run_softclip_diagnostic(bam: Path, genome: Path, wd: Path) -> None:
+    """Walk the aligner BAM for soft-clip + intron motifs and log a verdict.
+
+    Idempotent: if the summary JSON already exists, this is a no-op. The
+    verdict surfaces trans-splicing and non-canonical splice prevalence so the
+    user knows whether downstream gene prediction will need special handling
+    (read pre-processing for trans-splicing; ``--splice-permissive`` for
+    non-canonical splice landscapes).
+    """
+    summary_path = wd / Artifact.SOFTCLIP_DIAGNOSTIC.value
+    if not bam.exists():
+        return
+    if summary_path.exists():
+        log.info("Soft-clip diagnostic already produced %s, skipping", summary_path.name)
+        # The poly-A "reads" section is a later addition and is written separately
+        # from the SL summary, so backfill it (cheap poly-A-only pass over the read
+        # BAM) when an existing or pre-feature summary would otherwise skip it — else
+        # the section is silently never produced on resume / force / upgrade-in-place.
+        if not has_section(wd, "reads"):
+            # At diagnose_bam's MAPQ floor, so the backfill matches the full walk.
+            pa = characterize_polya_bam(bam, "reads", min_mapq=DiagnosticParams().min_mapq)
+            write_polya_section(wd, "reads", stats_to_dict(pa))
+            _log_read_polya(pa, bam.name)
+        return
+
+    log.info("Running soft-clip / intron diagnostic over %s...", bam.name)
+    report = diagnose_bam(bam, genome)
+    verdict = compute_verdict(report)
+
+    with open(summary_path, "w") as f:
+        json.dump(to_summary_dict(report, verdict), f, indent=2)
+
+    # Poly-A characterization of the read soft-clips (separate from the SL verdict),
+    # piggy-backing on the single diagnose_bam walk just performed.
+    write_polya_section(wd, "reads", stats_to_dict(report.polya))
+    _log_read_polya(report.polya, bam.name)
+
+    _log_trans_splicing_verdict(verdict.trans_splicing)
+
+    nc = verdict.non_canonical_splice
+    if nc.call in (NonCanonicalSpliceLevel.EXTENSIVE, NonCanonicalSpliceLevel.MODERATE):
+        log.warning(
+            "Non-canonical splice signal %s: canonical fraction %.2f%% "
+            "(top non-canonical %s). Consider --splice-permissive on the annotate step.",
+            nc.call, nc.canonical_pct, nc.top_non_canonical_dinuc,
+        )
+    else:
+        log.info("Canonical splice site usage typical: %.2f%%", nc.canonical_pct)

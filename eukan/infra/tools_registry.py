@@ -1,13 +1,16 @@
 """Shared loader for tools.toml.
 
 Single source of truth consumed by :mod:`eukan.infra.health`,
-:mod:`eukan.infra.environ`, :mod:`eukan.infra.conda_env`, and
-``scripts/generate-env.py``.
+:mod:`eukan.infra.environ`, :mod:`eukan.infra.manifest` (tool versions)
+and ``scripts/generate-env.py``.
 
 Schema (per-tool, all fields optional unless noted)::
 
     binary          = "augustus"                     # required
     version_cmd     = ["augustus", "--version"]      # default: [binary]
+    version_line    = "Suite version"                # regex picking the probe's
+                                                     # version line; default: its
+                                                     # first line
     required_by     = ["annotate"]                   # subcommands needing this tool
     conda_package   = "augustus"                     # omit if not on bioconda
     min_version     = "3.5"                          # conda pin; omit for unpinned
@@ -15,6 +18,10 @@ Schema (per-tool, all fields optional unless noted)::
                                                      # min_version in environment.yml
                                                      # (e.g. to hold a CPU-compatible build)
     install_hint    = "..."                          # shown when tool missing
+    install_check   = "check_install.bash"           # the tool's own install check: a
+                                                     # bash script beside the resolved
+                                                     # binary that `eukan check` runs
+                                                     # when the version probe passes
 
     env_vars = [                                     # env vars the tool needs
         { var = "AUGUSTUS_CONFIG_PATH", path = "config" },
@@ -68,11 +75,8 @@ class Tool:
     min_version: str | None = None
     conda_pin: str | None = None
     install_hint: str | None = None
-
-    @property
-    def env_var_names(self) -> tuple[str, ...]:
-        """Names of every env var this tool declares."""
-        return tuple(e.var for e in self.env_vars)
+    install_check: str | None = None
+    version_line: str | None = None
 
 
 def _find_tools_toml() -> Path | None:
@@ -93,6 +97,7 @@ def _parse_tool(name: str, cfg: dict[str, Any]) -> Tool:
         name=name,
         binary=cfg["binary"],
         version_cmd=tuple(cfg.get("version_cmd", [cfg["binary"]])),
+        version_line=cfg.get("version_line"),
         required_by=tuple(cfg.get("required_by", ())),
         env_vars=env_vars,
         conda_path_dirs=tuple(cfg.get("conda_path_dirs", ())),
@@ -101,6 +106,7 @@ def _parse_tool(name: str, cfg: dict[str, Any]) -> Tool:
         min_version=cfg.get("min_version"),
         conda_pin=cfg.get("conda_pin"),
         install_hint=cfg.get("install_hint"),
+        install_check=cfg.get("install_check"),
     )
 
 

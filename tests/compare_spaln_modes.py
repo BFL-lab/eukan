@@ -26,13 +26,14 @@ configure_process_env()
 import gffutils
 
 from eukan.annotation.alignment import align_proteins
+from eukan.infra.layout import step_work_dir
 from eukan.settings import PipelineConfig
 
 BASE = Path(__file__).resolve().parent.parent
 DATA = BASE / "tests" / "data"
 PIPELINE_RUN = BASE / "tests" / "pipeline-run"
-ASSEMBLY = PIPELINE_RUN / "assembly"
-ANNOTATION = PIPELINE_RUN / "annotation"
+ASSEMBLE = step_work_dir("assemble", PIPELINE_RUN)
+ANNOTATE = step_work_dir("annotate", PIPELINE_RUN)
 PROTEINS = DATA / "proteins.faa"
 
 
@@ -53,15 +54,17 @@ def run_mode(spaln_ssp: bool) -> Path:
     print(f"{'='*60}")
 
     config = PipelineConfig(
-        genome=ASSEMBLY / "genome.sanitized.fasta",
+        # The header-sanitized genome copy that eukan annotate writes into its
+        # work dir (from an unmasked tests/data/genome.fasta).
+        genome=ANNOTATE / "genome.sanitized.fasta",
         proteins=[PROTEINS],
-        work_dir=ANNOTATION,
+        work_dir=ANNOTATE,
         num_cpu=4,
         spaln_ssp=spaln_ssp,
-        transcripts_fasta=ASSEMBLY / "nr_transcripts.fasta" if spaln_ssp else None,
+        transcripts_fasta=ASSEMBLE / "nr_transcripts.fasta" if spaln_ssp else None,
     )
-    genemark_gff = ANNOTATION / "genemark" / "genemark.gtf"
-    intron_hints = ANNOTATION / "genemark" / "introns.gff"
+    genemark_gff = ANNOTATE / "genemark" / "genemark.gtf"
+    intron_hints = ANNOTATE / "genemark" / "introns.gff"
 
     result = align_proteins(
         config,
@@ -98,7 +101,7 @@ def compare(fitild_gff3: Path, ssp_gff3: Path) -> None:
 
 if __name__ == "__main__":
     # The fitild result should already exist from a previous pipeline run
-    fitild_gff3 = ANNOTATION / "prot_align" / "prot.gff3"
+    fitild_gff3 = ANNOTATE / "prot_align" / "prot.gff3"
     if not fitild_gff3.exists():
         print("No existing fitild result found. Running fitild mode first...")
         fitild_gff3 = run_mode(spaln_ssp=False)

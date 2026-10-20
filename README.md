@@ -10,7 +10,7 @@ Currently, Eukan installation is only supported via Docker and Conda.
 
 ### Docker
 
-The Docker image installs all external tools via conda (from the same `environment.yml` used for local installs), then builds fitild from source, installs the pinned combinr release binary, and optionally includes GeneMark.
+The Docker image installs all external tools via conda (from the same `environment.yml` used for local installs), then builds fitild and the spaln `--spsp` utilities from source, installs the pinned combinr release binary, and optionally includes GeneMark. The build needs network access and only the repository checkout (plus the optional GeneMark files below); there are no build arguments to set. The image needs an x86-64-v3 CPU (see the note above).
 
 ```bash
 git clone https://github.com/BFL-lab/eukan.git
@@ -18,9 +18,13 @@ cd eukan
 docker build -t eukan -f docker/Dockerfile .
 ```
 
-To include **GeneMark** ([license required](https://topaz.gatech.edu/GeneMark/license_download.cgi)), place `gmes_linux_64*.tar.gz` and `gm_key_64.gz` in the project root before building. If omitted, the build will succeed but `eukan check` will report GeneMark as missing.
+To include **GeneMark** ([license required](https://topaz.gatech.edu/GeneMark/license_download.cgi)), place `gmes_linux_64*.tar.gz` and `gm_key_64.gz` in the project root before building; the build fails if the archive is there without its key. If both are omitted, the build will succeed but `eukan check` will report GeneMark as missing.
 
-A separate **development image** adds test tooling (NCBI datasets CLI, procps):
+The GeneMark key expires. When `~/.gm_key` exists on the host, `eukan-docker` mounts it read-only over the key baked into the image, and GeneMark uses the host key instead. A renewed key then needs no rebuild (`gunzip -c gm_key_64.gz > ~/.gm_key`), but the host key must be kept current: an expired `~/.gm_key` breaks GeneMark even in a freshly built image with a valid key. Without `~/.gm_key` the baked key is used.
+
+The image creates a user with UID/GID 1000 whose home is `/home/eukan`; `eukan-docker` runs as your own UID/GID. If yours differ, build with `--build-arg USER_ID=$(id -u) --build-arg GROUP_ID=$(id -g)` so the container's home is writable by you.
+
+A separate **development image** (built on top of the `eukan` image) adds test tooling (NCBI datasets CLI, SRA Toolkit, procps):
 
 ```bash
 docker build -t eukan-dev -f docker/Dockerfile.dev .
@@ -56,11 +60,11 @@ A few tools aren't on conda and are installed by a helper script after creating 
 ```bash
 # Download GeneMark (license required) from:
 #   https://topaz.gatech.edu/GeneMark/license_download.cgi
-# Place gmes_linux_64*.tar.gz and gm_key_64.gz in the current directory, then:
+# Place gmes_linux_64_4.tar.gz and gm_key_64.gz in the repository root, then:
 ./scripts/install-extras.sh
 
-# Or point to a GeneMark archive elsewhere:
-./scripts/install-extras.sh --genemark-tar /path/to/gmes_linux_64_4.tar.gz
+# Or install only some of fitild, combinr and genemark:
+./scripts/install-extras.sh combinr
 ```
 
 `eukan check` will tell you exactly what's missing and how to install it.
@@ -78,21 +82,30 @@ The `dev` group adds `pytest`, `ruff`, and `mypy`.
 
 ### Dependencies
 
-**Python** (managed by Poetry): click, gffutils, biopython, pandas, requests, pydantic-settings.
+**Python** (managed by Poetry): click, click-option-group, gffutils, biopython, requests, pydantic-settings, pyhmmer, scipy, pysam.
 
-**External tools** (via Docker image or conda): AUGUSTUS, SNAP, CodingQuarry, spaln, GenomeThreader, Trinity, STAR, samtools, BLAT, jellyfish, GMAP/GSNAP, fasta36, TRF.
+**External tools** (via Docker image or conda): AUGUSTUS, SNAP, CodingQuarry, spaln, GenomeThreader, Trinity, minimap2, samtools, diamond, jellyfish, TRF, RepeatModeler, RepeatMasker, rmblast, table2asn.
 
 **Manual install**:
 - GeneMark-ES/ET/EP+:  [license required](https://topaz.gatech.edu/GeneMark/license_download.cgi)
 - combinr:  pre-built release binary from [github.com/BFL-lab/combinr/releases](https://github.com/BFL-lab/combinr/releases) (installed automatically by Docker and `scripts/install-extras.sh`)
 - fitild:  [github.com/ogotoh/fitild](https://github.com/ogotoh/fitild) (only needed for spaln-based protein alignment in default fitild mode)
-- spaln analysis utilities (`utn`, `npssm`, `exinpot`, etc.): built from [spaln source](https://github.com/ogotoh/spaln) via `make all` (only needed for `--spsp` species-specific parameter mode)
+- spaln analysis utilities (`utn`, `npssm`, `exinpot`, etc.) and their Perl scripts: built from [spaln source](https://github.com/ogotoh/spaln) (only needed for `--spsp` species-specific parameter mode). Build only the utilities, as the Docker image does: `make all` also builds fitild & co., which link gsl from `/usr/local/lib` and fail. The explicit `CFLAGS` replace configure's default `-march=native` and add the env's gsl headers:
+
+  ```bash
+  git clone --depth 1 https://github.com/ogotoh/spaln && cd spaln/src
+  CFLAGS="-O3 -I$CONDA_PREFIX/include" ./configure
+  make utn dvn exinpot npssm kmers rdn eij2ild
+  cp utn dvn exinpot npssm kmers rdn eij2ild "$CONDA_PREFIX/bin/"
+  cp ../perl/*.pl ../perl/*.pm "$CONDA_PREFIX/share/spaln/alndbs/"
+  chmod +x "$CONDA_PREFIX"/share/spaln/alndbs/*.pl
+  ```
 
 ## Usage
 
 ### Docker
 
-Use `eukan-docker` as a wrapper to run any subcommand inside the Docker container. It bind-mounts the current directory and runs as your user:
+Use `eukan-docker` as a wrapper to run any subcommand inside the Docker container. It bind-mounts the current directory (at the same path) and runs as your user, so every input file must live under the current directory; paths outside it are not visible in the container.
 
 The typical workflow runs each subcommand from the same working directory. Each subcommand writes into its own subdirectory under that working directory (`repeats/`, `assemble/`, `annotate/`, `func-annot/`, `submission/`), and downstream subcommands auto-discover outputs from earlier ones via the cross-pipeline artifact registry — no need to pass paths between steps.
 
@@ -107,13 +120,15 @@ The typical workflow runs each subcommand from the same working directory. Each 
 ./eukan-docker assemble \
     -g genome.fasta \
     -l left_reads.fastq -r right_reads.fastq \
-    -S RF --kingdom protist
+    -S RF
 
 # 4. Annotate:  auto-discovers assembly outputs, repeat hints, and databases
 ./eukan-docker annotate -g genome.fasta -p proteins.fasta --kingdom protist
 
-# 5. Functional annotation:  auto-discovers predicted proteins + databases
-./eukan-docker func-annot
+# 5. Functional annotation:  extract the predicted proteins, then annotate them
+#    (the databases from step 1 are found in databases/)
+./eukan-docker gff3toseq -g genome.fasta -i annotate/final.gff3 --output-format protein -o proteins.faa
+./eukan-docker func-annot -p proteins.faa --gff3 annotate/final.gff3
 
 # 6. NCBI submission prep (table2asn validator + .sqn)
 ./eukan-docker prep-submission -t template.sbt --organism "Genus species"
@@ -139,42 +154,55 @@ poetry run eukan assemble -g genome.fasta -l left.fq -r right.fq -S RF
 
 ## Subcommands
 
+Settings can also come from environment variables: `EUKAN_<SETTING>` for `annotate` (e.g. `EUKAN_NUM_CPU=8`, `EUKAN_GENETIC_CODE=6`), `EUKAN_ASSEMBLE_<SETTING>` for `assemble` (e.g. `EUKAN_ASSEMBLE_MAX_INTRON_LEN=2000`), and `EUKAN_REPEATS_`, `EUKAN_FUNC_` and `EUKAN_SUBMIT_` for `mask-repeats`, `func-annot` and `prep-submission`. `<SETTING>` is the field name in `eukan/settings.py`, which can differ from the flag (`--max-intron` sets `max_intron_len`, `--code` sets `genetic_code`). A flag given on the command line wins over its variable, and the variable wins over the default `--help` shows.
+
 ### `eukan annotate`
 
-Run the genome annotation pipeline. When run in the same directory as `eukan assemble`, transcript evidence (FASTA, GFF3, RNA-seq hints) and strand-specificity are discovered automatically. UTRs and alternative isoforms are folded in from the transcript evidence by the combinr consensus engine.
+Run the genome annotation pipeline. When run in the same directory as `eukan assemble`, transcript evidence (FASTA, GFF3, RNA-seq hints) is discovered automatically. UTRs and alternative isoforms are folded in from the transcript evidence by the combinr consensus engine.
 
 ```
 Usage: eukan annotate [OPTIONS]
 
 Required input:
-  -g, --genome PATH               Genome FASTA (no lower-case; pipeline soft-masks repeats). [required]
+  -g, --genome PATH               Genome FASTA with no lower-case nucleotides (the pipeline
+                                  soft-masks repeats by converting to lower-case). [required]
   -p, --proteins PATH             One or more protein FASTA files. [required]
 
 Pipeline parameters:
   -k, --kingdom [fungus|protist|animal|plant]
-                                   Target organism kingdom.
-  -n, --numcpu INTEGER             Number of CPU threads. [default: all]
-  --existing-augustus TEXT          Use pre-trained AUGUSTUS species parameters.
-  -w, --weights INTEGER            Weights: protein, gene predictions, transcripts. [default: 2 1 3]
-  -c, --code INTEGER               NCBI genetic code table number. [default: 11]
+                                  Target organism kingdom (tunes predictor parameters).
+  -n, --numcpu INTEGER            Number of CPU threads. [default: all]
+  -w, --weights INTEGER           Weights for evidence sources: protein, gene predictions,
+                                  transcripts. [default: 2, 1, 3]
+  --combinr-stringent-overlap FLOAT
+                                  combinr --stringent-overlap for the consensus --alt-splice isoform
+                                  grouping: min span overlap (% of the shorter isoform) for two
+                                  isoforms to attach to one gene (0 = any overlap). [default: 0]
+  --orf-patch [supported|all]     Patch transcript ORFs that overlap no consensus gene into the
+                                  final models, labelled eukan-orf-patch / support=transcript_orf:
+                                  'supported' only those whose CDS overlaps a protein-alignment CDS
+                                  on the same strand, 'all' every one (default: off).
+  -c, --code INTEGER              NCBI genetic code table number. [default: 11]
 
 Override options:
   -tf, --transcripts-fasta PATH   Override auto-discovered transcript FASTA.
   -tg, --transcripts-gff PATH     Override auto-discovered transcript GFF3.
   -r, --rnaseq-hints PATH         Override auto-discovered RNA-seq hints GFF.
-  --strand-specific                Transcripts are strand-oriented.
-  --splice-permissive              Allow non-canonical splice sites (GC-AG, AT-AC).
+  --combinr-path FILE             Path to the combinr binary (default: 'combinr' on PATH).
+  --splice-permissive             Allow rarer non-canonical splice sites in AUGUSTUS: drops the
+                                  default >= 1% junction-share gate (keeps >= 10 junctions, >= 50
+                                  unique reads); allows AT-AC without assembly evidence.
 
 Experimental:
-  --spsp                           Build species-specific spaln parameters from transcripts
-                                   (alternative to fitild). See "Protein alignment modes" below.
+  --spsp                          Build species-specific spaln parameters from transcripts
+                                  (alternative to fitild). See "Protein alignment modes" below.
 
 Re-run steps:
-  --run-genemark                   Force re-run GeneMark gene prediction.
-  --run-prot-align                 Force re-run protein alignment (spaln/gth).
-  --run-augustus                    Force re-run AUGUSTUS training and prediction.
-  --run-snap                       Force re-run SNAP (and CodingQuarry) prediction.
-  --run-consensus                  Force re-run combinr consensus model building.
+  --run-genemark                  Force re-run GeneMark gene prediction.
+  --run-prot-align                Force re-run protein alignment (spaln/gth).
+  --run-augustus                  Force re-run AUGUSTUS training and prediction.
+  --run-snap                      Force re-run SNAP (and CodingQuarry) prediction.
+  --run-consensus                 Force re-run consensus model building.
 ```
 
 #### Notes on `annotate` input
@@ -195,34 +223,80 @@ Required input:
   -s, --single PATH               Single-end reads.
 
 Pipeline parameters:
-  -n, --numcpu INTEGER             Number of CPUs. [default: all]
+  -n, --numcpu INTEGER            Number of CPU threads. [default: all]
   -S, --strand-specific [RF|FR|R|F]
-                                   Strand-specific library type (RF/FR for paired, R/F for single).
-  -t, --align-mode [EndToEnd|Local] STAR alignment mode. [default: Local]
-  --splice-permissive              Allow non-canonical splice sites (GC-AG, AT-AC).
-  -c, --code INTEGER               NCBI genetic code table number. [default: 1]
-  -m, --min-intron INTEGER         Min intron length. [default: 20]
-  -M, --max-intron INTEGER         Max intron length. [default: 5000]
-  --phred [33|64]                  Phred quality score. [default: 33]
-  -j, --jaccard-clip               Enable jaccard clipping.
+                                  Strand-specific library type (RF/FR for paired, R/F for single).
+  --non-canonical [auto|force|off]
+                                  Non-canonical splice re-mapping with minimap2 (-J 0 -C 3
+                                  --splice-flank=no): 'auto' when the soft-clip diagnostic finds
+                                  extensive non-canonical splicing, 'force' always, 'off' never.
+                                  [default: auto]
+  --diagnose-softclips / --no-diagnose-softclips
+                                  Run the soft-clip + intron BAM diagnostic after read mapping
+                                  (trans-splicing, non-canonical splicing; gates --non-canonical
+                                  auto). [default: on]
+  -c, --code INTEGER              NCBI genetic code table number. [default: 1]
+  -m, --min-intron INTEGER        Minimum intron length. [default: 20]
+  -M, --max-intron INTEGER        Maximum intron length, hard-imposed: minimap2 maps with it (-G),
+                                  Trinity genome-guided uses it, models are split at longer introns
+                                  and combinr enforces it (0 disables the split). Changing it on a
+                                  resumed run re-runs them automatically. [default: 5000]
+  -j, --jaccard-clip / --no-jaccard-clip
+                                  In-house jaccard clipping of fused Trinity transcripts (needs
+                                  paired reads). [default: on]
+  --jaccard-greediness FLOAT      Jaccard low-coverage sensitivity (0 = Trinity's fixed floor).
+                                  [default: 1.5]
+  --jaccard-max-trough FLOAT      Jaccard trough-depth gate; lower = more stringent. [default: 0.05]
+  --jaccard-min-delta FLOAT       Jaccard flanking-hill rise; higher = more stringent.
+                                  [default: 0.35]
+  --jaccard-max-adaptive-trough FLOAT
+                                  Ceiling on the coverage-adaptive trough gate. [default: 0.30]
+  --combinr-stringent-overlap FLOAT
+                                  combinr --stringent-overlap: min span overlap (% of the shorter
+                                  transcript) to cluster (0 = any overlap). [default: 0]
+  --sl-sequence TEXT              Override the spliced-leader sequence for trans-splice acceptor
+                                  detection.
+  --sl-cluster-window INTEGER     Genomic window (bp) for consolidating SL acceptor sites.
+                                  [default: 5]
+  --adapter-sequence TEXT         Extra adapter sequence to exclude from SL detection (repeatable).
+  --sl-adapter-filter / --no-sl-adapter-filter
+                                  Screen SL candidates against known sequencing adapters.
+                                  [default: on]
+  --combinr-path PATH             Path to the combinr binary (else PATH or
+                                  $EUKAN_ASSEMBLE_COMBINR_PATH).
+  --uniprot PATH                  SwissProt FASTA or diamond .dmnd: enables homology splice-strand
+                                  correction (unstranded libraries) and --defuse.
+  --defuse                        Split chimeric transcripts with >=2 distinct SwissProt hits
+                                  (requires --uniprot).
+  --defuse-overlap-tolerance FLOAT
+                                  Max fractional overlap for two hits to count as distinct.
+                                  [default: 0.10]
+  --memory-gb INTEGER             Assembly memory cap in GiB. [default: 60% of available, min 4]
 
 Re-run steps:
-  -A, --run-star                   Force re-run STAR read mapping.
-  -T, --run-trinity                Force re-run Trinity assembly.
-  --run-combinr                    Force re-run combinr transcript consolidation.
-  -f, --force                      Force re-run all steps.
+  -A, --run-minimap2              Force re-run minimap2 read mapping.
+  -T, --run-trinity               Force re-run Trinity de novo + genome-guided assembly.
+  --run-jaccard                   Force re-run jaccard clipping of fused transcripts.
+  --run-map-transcripts           Force re-run minimap2 transcript→genome mapping.
+  --run-strand-correct            Force re-run homology-based splice-strand correction.
+  --run-defuse                    Force re-run homology-based transcript de-fusion.
+  --run-max-intron-split          Force re-run the max-intron split of transcript models.
+  --run-sl-detect                 Force re-run SL trans-splice acceptor detection.
+  --run-sl-cut                    Force re-run the genomic SL cut of transcript models.
+  --run-combinr                   Force re-run combinr transcript consolidation.
+  -f, --force                     Force re-run all steps (ignore cached outputs).
 ```
 
-The pipeline runs STAR mapping, genome-guided + de novo Trinity assembly, and combinr transcript consolidation. STAR also profiles splice site types from junction evidence (`splice_site_summary.json`), which the annotation pipeline uses to allow non-canonical splice sites in AUGUSTUS. If no step flags (`-A`, `-T`, `--run-combinr`) are given, all steps run.
+The pipeline runs minimap2 read mapping, genome-guided + de novo Trinity assembly, jaccard clipping of fused transcripts, minimap2 transcript→genome mapping, homology splice-strand correction (with `--uniprot`) and de-fusion (with `--defuse`), the max-intron split, spliced-leader acceptor detection and cut, and combinr transcript consolidation. The read-mapping step also profiles splice site types from junction evidence (`splice_site_summary.json`), which the annotation pipeline uses to allow non-canonical splice sites in AUGUSTUS. With no step flags, every enabled step runs and steps already completed in the work dir are skipped. A step flag (`-A`/`--run-minimap2`, `-T`/`--run-trinity`, `--run-jaccard`, `--run-map-transcripts`, `--run-strand-correct`, `--run-defuse`, `--run-max-intron-split`, `--run-sl-detect`, `--run-sl-cut`, `--run-combinr`) re-runs only that step plus every downstream step that consumes its output; `-f` alone re-runs every step.
 
 #### Soft-clip + intron BAM diagnostic
 
-Immediately after STAR mapping, `eukan assemble` walks the sorted BAM once to produce `softclip_diagnostic_summary.json`. It surfaces two signals downstream gene prediction needs to know about:
+Immediately after minimap2 read mapping, `eukan assemble` walks the sorted BAM once to produce `softclip_diagnostic_summary.json`. It surfaces two signals downstream gene prediction needs to know about:
 
 - **Trans-splicing** — soft-clip ends are clustered by a K-bp substring anchored at the alignment boundary (K=12 by default), with Hamming-tolerant per-locus consolidation and cross-locus canonicalization. A *few* clusters supported by *many* genomic loci is the trans-splicing fingerprint (the splice-leader sequence sits on the 5' end of every trans-spliced transcript). The top non-low-complexity cluster's K-bp anchor key is reported alongside a per-column majority-vote *consensus motif* that extends past the anchor — for kinetoplastid datasets this typically recovers ~30–40 bp of the conserved SL. The verdict is categorical (`STRONG` / `MODERATE` / `ABSENT`) and a WARNING is logged when present so the user knows reads may need splice-leader trimming before annotation.
 - **Non-canonical splice usage** — the per-N-cigar-op donor/acceptor dinucleotide histogram is rolled up into a `canonical_pct` plus a top non-canonical pair. Verdict (`EXTENSIVE` / `MODERATE` / `ABSENT`) tracks the prevalence; `EXTENSIVE` is the signal that the genome warrants `--splice-permissive` on `eukan annotate`.
 
-The diagnostic is idempotent (skipped if its summary already exists in the work dir) and adds ~30s per 100M reads on top of STAR's runtime. Tune the consensus stringency with `consensus_min_majority_fraction` on `diagnose_bam()` when invoking the library directly; defaults are tuned for whole-genome RNA-seq.
+The diagnostic runs once per read mapping: the non-canonical re-map within a run reuses its summary, and a re-run of the read-mapping step rebuilds it. It adds ~30s per 100M reads on top of minimap2's runtime. Tune the consensus stringency with `consensus_min_majority_fraction` on `diagnose_bam()` when invoking the library directly; defaults are tuned for whole-genome RNA-seq.
 
 ### `eukan mask-repeats`
 
@@ -236,15 +310,18 @@ Required input:
 
 Pipeline parameters:
   -n, --numcpu INTEGER            Number of CPU threads. [default: all]
-  --engine [rmblast|ncbi]         Search engine. [default: rmblast]
-  --lib PATH                      Pre-built repeat-family library FASTA. When set,
-                                  RepeatModeler is skipped.
+  --engine [rmblast|ncbi]         Search engine for BuildDatabase / RepeatMasker. [default: rmblast]
+  --lib PATH                      Pre-built repeat-family library FASTA. When set, RepeatModeler is
+                                  skipped.
 
 Re-run steps:
-  --run-modeler                   Force re-run BuildDatabase + RepeatModeler.
+  --run-modeler                   Force re-run BuildDatabase + RepeatModeler (also re-runs
+                                  RepeatMasker).
   --run-masker                    Force re-run RepeatMasker.
-  -f, --force                     Force re-run all steps.
+  -f, --force                     Force re-run all steps (ignore cached outputs).
 ```
+
+`--run-modeler` also re-runs RepeatMasker, which masks with the rebuilt library. Without step flags, RepeatMasker re-runs when its library (a rebuilt one, or another `--lib`) or the genome has changed since it last ran.
 
 Outputs (in the working directory):
 
@@ -256,7 +333,7 @@ Pass the masked genome to the next stage (`eukan annotate -g <stem>.masked.fasta
 
 ### `eukan func-annot`
 
-Add functional annotations to predicted proteins. When run after `eukan annotate` and `eukan db-fetch`, the predicted protein sequences and reference databases are discovered automatically.
+Add functional annotations to predicted proteins. The proteins are not discovered automatically: extract them from `annotate/final.gff3` with `eukan gff3toseq` and pass them with `--proteins`, and pass `--gff3 annotate/final.gff3` to get the annotated `func-annot/final.mod.gff3` that `eukan prep-submission` picks up. The reference databases default to where `eukan db-fetch` puts them (`databases/` in the current directory).
 
 Two homology sources are supported (selected with `--homology-db`); Pfam is searched in both modes:
 
@@ -269,70 +346,71 @@ Two homology sources are supported (selected with `--homology-db`); Pfam is sear
 Usage: eukan func-annot [OPTIONS]
 
 Pipeline parameters:
-  -n, --numcpu INTEGER           Number of CPUs. [default: all]
-  --homology-db [uniprot|kofam]  Homology DB to run alongside Pfam.
-                                 [default: uniprot]
-  -e, --evalue TEXT              E-value cutoff. [default: 1e-1]
+  -n, --numcpu INTEGER            Number of CPU threads. [default: all]
+  --homology-db [uniprot|kofam]   Homology source: 'uniprot' runs phmmer vs SwissProt; 'kofam' runs
+                                  hmmscan vs KOfam with per-KO bit-score thresholds. Pfam hmmscan
+                                  runs in both modes. [default: uniprot]
+  -e, --evalue TEXT               E-value cutoff. [default: 1e-1]
 
 Override options:
-  -p, --proteins PATH    Amino acid sequences FASTA.
-  --uniprot PATH         UniProt-SwissProt database FASTA.
-  --kofam PATH           KOfam pressed HMM database.
-  --ko-list PATH         KOfam ko_list TSV (per-KO thresholds + definitions).
-  --pfam PATH            Pfam HMM database.
-  --gff3 PATH            GFF3 file to annotate with functional info.
-  -f, --force            Re-run steps even if outputs exist.
+  -p, --proteins PATH             Amino acid sequences in FASTA format.
+  --uniprot PATH                  UniProt-SwissProt database FASTA.
+  --kofam PATH                    KOfam pressed HMM database.
+  --ko-list PATH                  KOfam ko_list TSV (per-KO thresholds + definitions).
+  --pfam PATH                     Pfam HMM database.
+  --gff3 PATH                     GFF3 file to annotate with functional info.
+  -f, --force                     Force re-run all steps (ignore cached outputs).
 ```
 
-Runs the chosen homology search plus hmmscan against Pfam (both via pyhmmer). Produces:
-- `input.mod.faa`: annotated FASTA with functional descriptions in headers.
-- `input.mod.gff3`: (if `--gff3` provided) GFF3 with `product`/`inference` (and, for KOfam, `Dbxref`/`ec_number`) attributes.
+Runs the chosen homology search plus hmmscan against Pfam (both via pyhmmer). Writes into `func-annot/`, never next to the inputs:
+- `<proteins stem>.mod<extension>`: annotated FASTA with functional descriptions in headers (`--proteins proteins.faa` gives `func-annot/proteins.mod.faa`).
+- `<gff3 stem>.mod<extension>`: (if `--gff3` provided) GFF3 with `product`/`inference` (and, for KOfam, `Dbxref`/`ec_number`) attributes.
+- `<proteins stem>.phmmer.search.json` (`.kofam.search.json` in KOfam mode): the cached search hits, so a re-run on the same proteome skips the search.
 
 For UniProt mode, hits with e-values between 1e-3 and the cutoff are reported as marginal. For KOfam mode, hits below the per-KO bit-score threshold are tagged `[marginal KO hit]` in the FASTA description and do not contribute to the GFF3 `product`/`Dbxref`/`inference` lines — the KofamKOALA paper's evaluation showed that the adaptive thresholds yield substantially better precision/recall than a single global E-value cutoff.
 
 ### `eukan prep-submission`
 
-Validate and package an annotated genome for NCBI submission. Wraps NCBI's `table2asn` with the standard recipe (`-split-logs -W -J -Z -euk -T -V b` plus `-c/-M/-a`), producing a `.sqn` upload-ready file alongside `.val`, `.dr`, and `.stats` validator reports for iterative GFF3 refinement. When run after `eukan annotate` and `eukan func-annot`, the genome (from `eukan-run.json`) and annotated GFF3 (`final.mod.gff3`, falling back to `final.gff3`) are auto-discovered.
+Validate and package an annotated genome for NCBI submission. Wraps NCBI's `table2asn` with the standard recipe (`-split-logs -W -J -Z -euk -T -V b` plus `-c/-M/-a`), producing a `.sqn` upload-ready file alongside `.val`, `.dr`, and `.stats` validator reports for iterative GFF3 refinement. When run after `eukan annotate` and `eukan func-annot`, the genome `eukan annotate` ran on (from `eukan-run.json`) and annotated GFF3 (`final.mod.gff3`, falling back to `final.gff3`) are auto-discovered.
 
 ```
 Usage: eukan prep-submission [OPTIONS]
 
 Required input:
-  -t, --template PATH         NCBI submission template (.sbt). [required]
+  -t, --template PATH             NCBI submission template (.sbt). [required]
 
 Source qualifiers:
-  --organism TEXT             Organism scientific name (e.g. 'Homo sapiens').
-                              Required unless --source-info is given.
-  --isolate TEXT              Isolate / strain identifier.
-  -j, --source-info TEXT      Raw -j string for table2asn (e.g.
-                              '[organism=Foo] [isolate=Bar] [country=Canada]').
-                              Overrides --organism / --isolate when set.
-  --locus-tag-prefix TEXT     NCBI-registered locus tag prefix (required for
-                              new-genome submissions).
+  --organism TEXT                 Organism scientific name (e.g. 'Homo sapiens'). Required unless
+                                  --source-info is given.
+  --isolate TEXT                  Isolate / strain identifier (optional).
+  --source-info TEXT              Raw -j string for table2asn (e.g. '[organism=Foo] [isolate=Bar]
+                                  [country=Canada]'). Overrides --organism / --isolate when set.
+  --locus-tag-prefix TEXT         NCBI-registered locus tag prefix (required for new-genome
+                                  submissions).
 
 Override options:
-  -g, --genome PATH           Override auto-discovered genome FASTA.
-  -i, --gff3 PATH             Override auto-discovered annotated GFF3.
+  -g, --genome PATH               Genome FASTA. Auto-discovered from eukan-run.json when omitted.
+  -i, --gff3 PATH                 Annotated GFF3. Defaults to final.mod.gff3 (or final.gff3) in the
+                                  working directory.
 
 Pipeline parameters:
-  --cleanup TEXT              table2asn -c cleanup flags. [default: befw]
-  --mode TEXT                 table2asn -M flatfile mode. [default: n]
-  -a, --assembly-type TEXT    table2asn -a assembly type / gap config.
-                              [default: r10k]
-  --extra-args TEXT           Extra table2asn arguments, shell-quoted
-                              (e.g. --extra-args '-split-dr -huge').
+  --cleanup TEXT                  table2asn -c cleanup flags. [default: befw]
+  --mode TEXT                     table2asn -M flatfile mode. [default: n]
+  -a, --assembly-type TEXT        table2asn -a assembly type / gap configuration. [default: r10k]
+  --extra-args TEXT               Extra table2asn arguments, shell-quoted (e.g. --extra-args
+                                  '-split-dr -huge').
   --cleanup-gff3 / --no-cleanup-gff3
-                              Pre-process the GFF3 (strip UniProt cruft, drop
-                              CDS-less mRNAs, cap inferences) before handing
-                              it to table2asn. [default: cleanup-gff3]
+                                  Pre-process the GFF3 (strip UniProt cruft, drop CDS-less mRNAs,
+                                  cap inferences) before handing it to table2asn. [default: on]
 
 Output options:
-  -o, --output-file PATH      Output .sqn path.
-                              [default: <output-dir>/<genome-stem>.sqn]
-  -d, --output-dir PATH       Output directory. [default: ./submission]
-  --print-command             Print the resolved table2asn command and exit.
-  --dry-run                   Print the command and create the output dir,
-                              but don't run table2asn.
+  -o, --output-file PATH          Output .sqn path. [default: <output-dir>/<genome-stem>.sqn]
+  -d, --output-dir PATH           Output directory for .sqn and validator reports.
+                                  [default: ./submission]
+  --print-command                 Print the resolved table2asn command and exit (no outputs
+                                  written).
+  --dry-run                       Print the command and create the output directory, but don't run
+                                  table2asn.
 ```
 
 The `.sbt` submission template must be created via [NCBI's web form](https://submit.ncbi.nlm.nih.gov/genbank/template/submission/) — it is the only mandatory file input. Outputs land in `./submission/`:
@@ -366,37 +444,36 @@ Extract protein or cDNA sequences from a GFF3 + genome.
 Usage: eukan gff3toseq [OPTIONS]
 
 Required input:
-  -g, --genome PATH                Genome FASTA. [required]
-  -i, --gff3 PATH                  GFF3 with gene models. [required]
+  -g, --genome PATH               Genome FASTA. [required]
+  -i, --gff3 PATH                 GFF3 with gene models. [required]
 
 Pipeline parameters:
-  --output-format [protein|cdna]   Output sequence type. [default: protein]
-  -c, --code INTEGER               NCBI genetic code table number. [default: 1]
+  --output-format [protein|cdna]  Output sequence type. [default: protein]
+  -c, --code INTEGER              NCBI genetic code table number. [default: 1]
 
 Output options:
-  -o, --output-file FILENAME       Write FASTA to this file ('-' for stdout).
-                                   [default: stdout]
+  -o, --output-file FILENAME      Write FASTA to this file ('-' for stdout). [default: stdout]
 ```
 
 ### `eukan db-fetch`
 
-Download reference databases. Pfam is always fetched; the homology DB to pair it with is chosen by `--homology-db`.
+Download reference databases. Without `-d`, Pfam is always fetched; the homology DB to pair it with is chosen by `--homology-db`.
 
 ```
 Usage: eukan db-fetch [OPTIONS]
 
-Options:
-  -o, --output-dir PATH          Directory to download into. [default: databases]
-  --homology-db [uniprot|kofam]  Homology DB to fetch alongside Pfam.
-                                 [default: uniprot]
-  -f, --force                    Re-download even if databases are up to date.
+Pipeline parameters:
+  -o, --output-dir PATH           Directory to download databases into. [default: databases]
+  --homology-db [uniprot|kofam]   Homology DB to fetch alongside Pfam: 'uniprot' downloads
+                                  SwissProt; 'kofam' downloads the KOfam HMM profiles + ko_list and
+                                  presses a eukaryote-only HMM database. [default: uniprot]
   -d, --database [uniprot|pfam|kofam|ko_list]
-                                 Specific database(s) to fetch. Overrides
-                                 --homology-db when given.
+                                  Specific database(s) to fetch. Overrides --homology-db when given.
+  -f, --force                     Re-download even if databases are up to date.
 ```
 
 Downloads and prepares:
-- `Pfam-A.hmm` — Pfam HMM profiles (decompressed and pressed for hmmscan). Always fetched.
+- `Pfam-A.hmm` — Pfam HMM profiles (decompressed and pressed for hmmscan). Always fetched without `-d`.
 - `uniprot_sprot.faa` — UniProt-SwissProt protein sequences (`--homology-db uniprot`, default).
 - `kofam_eukaryote.hmm` + `ko_list.tsv` — KOfam profiles and per-KO bit-score thresholds (`--homology-db kofam`). The fetcher downloads KofamKOALA's `profiles.tar.gz` and `ko_list.gz` from <https://www.genome.jp/ftp/db/kofam/>, filters profiles via the shipped `eukaryote.hal` list (~16k of ~27k KOs), concatenates them into a single HMM file, and presses it. `ko_list` is the per-KO metadata table used by `func-annot --homology-db kofam`; see the [`eukan func-annot`](#eukan-func-annot) section for the KofamKOALA citation.
 
@@ -410,19 +487,17 @@ Compare predicted gene models against a reference or previous annotation to asse
 Usage: eukan compare [OPTIONS]
 
 Required input:
-  -r, --reference PATH       Reference GFF3 file.
-  -p, --predicted PATH       Predicted GFF3 file. Repeat to compare multiple
-                             predictions against the same reference.
+  -r, --reference PATH            Reference GFF3 file. [required]
+  -p, --predicted PATH            Predicted GFF3 file. Repeat to compare multiple predictions
+                                  against the same reference. [required]
 
 Pipeline parameters:
-  -L, --label TEXT           Short label per --predicted (must appear once
-                             per --predicted, or be omitted to use file
-                             stems).
+  -L, --label TEXT                Short label per --predicted (must appear once per --predicted, or
+                                  be omitted to use file stems).
 
 Output options:
-  -o, --output-file PATH     Write per-feature details to a TSV file. In
-                             multi-prediction mode a leading 'prediction'
-                             column is prepended.
+  -o, --output-file PATH          Write per-feature details to a TSV file. In multi-prediction mode
+                                  a leading 'prediction' column is prepended.
 ```
 
 The classification system and metrics are further described in the paper referenced in [Citation](#citation). Gene-level classifications:
@@ -467,13 +542,16 @@ Verify Python dependencies, external tools, and databases.
 ```
 Usage: eukan check [OPTIONS]
 
-Options:
-  --for [annotate|assemble|mask-repeats|func-annot|db-fetch|prep-submission]
-      Only check tools needed by these subcommands. If omitted, check all.
-  --db-dir PATH   Database directory to check. [default: databases]
+Pipeline parameters:
+  --for [annotate|assemble|func-annot|db-fetch|mask-repeats|prep-submission]
+                                  Only check tools needed by these subcommands. If omitted, check
+                                  all.
+  --db-dir PATH                   Database directory to check. [default: databases]
+  --homology-db [uniprot|kofam]   When set, only check the chosen homology DB (plus Pfam). Without
+                                  it, every registered database is checked.
 ```
 
-Checks Python dependencies, probes each external tool with a version/help command, and verifies database integrity. Exits 0 if all checks pass, 1 if any fail.
+Checks Python dependencies, probes each external tool with a version/help command (and runs GeneMark's own install check, which catches a missing or expired license key), and verifies database integrity. Exits 0 if all checks pass, 1 if any fail.
 
 ```bash
 # Check everything
@@ -510,10 +588,10 @@ The annotation pipeline (`eukan annotate`) runs the following steps:
 1. **ORF finding**:  Identify ORFs in transcript assemblies (if provided). Uses the configured genetic code (`-c`/`--code`) so that alternative stop codons (e.g., code 6 where TAA/TAG encode glutamine) are handled correctly.
 2. **GeneMark**:  Ab initio gene prediction (ES mode, or ET mode if RNA-seq intron hints are available with >= 150 introns). Passes `--gcode` for non-standard genetic codes (codes 6 and 26).
 3. **Protein alignment**:  Spliced alignment via spaln (intron-rich genomes, > 25% introns/gene) or GenomeThreader (intron-poor). See [Protein alignment modes](#protein-alignment-modes).
-4. **AUGUSTUS**:  Train species-specific parameters from concordant GeneMark/protein models, then predict genes using protein + RNA-seq hints. Non-canonical splice sites (e.g., AT-AC) are allowed automatically when supported by sufficient junction evidence from STAR; `--splice-permissive` lowers the evidence thresholds.
+4. **AUGUSTUS**:  Train species-specific parameters from concordant GeneMark/protein models, then predict genes using protein + RNA-seq hints. Non-canonical splice sites (e.g., AT-AC) are allowed automatically when supported by sufficient junction evidence from the minimap2 read alignments (>= 10 junctions, >= 50 unique reads, and >= 1% of all junctions); `--splice-permissive` drops the 1% share requirement so rarer types pass.
 5. **SNAP**:  Train and predict (all kingdoms). **CodingQuarry** also runs for fungus/protist genomes.
-6. **combinr consensus**:  Build weighted consensus gene models from all evidence sources, folding in UTRs and alternative isoforms from the transcript evidence in a single pass.
-7. **Final output**:  Assign sequential locus tags and correct CDS phases. Non-overlapping transcript ORFs not captured by the consensus are patched into the final model set.
+6. **combinr consensus**:  Build weighted consensus gene models from all evidence sources, folding in UTRs and alternative isoforms from the transcript evidence in a single pass. Next to the models, `consensus_models/combinr.evidence_report.txt` lists for each gene the evidence supporting every exon and intron (EVM `.evm.out` style); it uses combinr's gene IDs from `consensus_models/consensus_models.gff3`, which `final.gff3` replaces with locus tags.
+7. **Final output**:  Assign sequential locus tags and correct CDS phases. Column 2 of `final.gff3` is `eukan`. With `--orf-patch`, transcript ORFs that overlap no consensus gene on either strand are also patched into the final model set: under `supported` only those whose CDS overlaps a CDS of the protein alignment on the same strand, under `all` every one. Their rows say `eukan-orf-patch` in column 2 and their mRNAs carry `support=transcript_orf` (the consensus mRNAs carry combinr's `support=consensus`). The patch is off by default: the patched genes have no ab initio support, and under `all` no homology support either.
 
 Output: `final.gff3` in the working directory.
 
@@ -537,12 +615,12 @@ When `--spsp` is used, protein alignment results are written to a separate direc
 
 ### Run tracking and resume
 
-All pipelines write to a shared `eukan-run.json` manifest in the working directory, tracking per-step status, timing, and output checksums. This enables:
+All pipelines write to a shared `eukan-run.json` manifest in the working directory, tracking per-step status, timing, and output checksums, and for each pipeline its latest run's status, timing, CPUs, tool versions and inputs. This enables:
 
 - **Resume**: Re-running a subcommand skips steps that already completed.
 - **Selective re-run**: Use `--run-*` flags to force specific steps to re-execute.
-- **Integrity checking**: On startup, completed steps are validated (output exists and is non-empty). If a discrepancy is found, the pipeline reports the issue and suggests the `--run-*` flag to fix it.
-- **Progress monitoring**: `eukan status` reads the manifest and shows progress across all pipelines.
+- **Integrity checking**: Before reusing a completed step, the pipeline checks that its output still exists, is non-empty, matches its recorded checksum (text outputs and any file up to 256 MiB) and still parses as GFF where applicable, and that the inputs and settings the step tracks are unchanged. A step that fails any check is rebuilt automatically, with a warning in the log, and a step left interrupted is cleaned up and re-run.
+- **Progress monitoring**: `eukan status` reads the manifest and shows a block per pipeline (its latest run's status, inputs and settings), then every step's status.
 
 ```bash
 # View run status
@@ -607,12 +685,12 @@ python tests/run_pipeline.py test-pipeline -d tests/data -w tests/pipeline-run
 ```
 
 The test pipeline runs:
-1. **Transcriptome assembly**: STAR read mapping, Trinity (genome-guided + de novo), combinr consolidation
+1. **Transcriptome assembly**: minimap2 read mapping, Trinity (genome-guided + de novo), combinr consolidation
 2. **Genome annotation**:  GeneMark, protein alignment (spaln/gth), AUGUSTUS, SNAP, combinr consensus
 
 If assembly fails, it falls back to protein-only annotation automatically.
 
-Output lands in `tests/pipeline-run/` with one subdirectory per pipeline step (`assemble/`, `annotate/`, `func-annot/`, `submission/`). View run details with `eukan status -d tests/pipeline-run/annotate`. The end-of-run summary reports the gene/mRNA counts from `final.gff3` plus the percentage of mRNAs that received a UniProt or Pfam inference.
+Output lands in `tests/pipeline-run/` with one subdirectory per pipeline step (`assemble/`, `annotate/`, `func-annot/`, `submission/`). View run details with `eukan status -d tests/pipeline-run`. The end-of-run summary reports the gene/mRNA counts from `final.gff3` plus the percentage of mRNAs that received a UniProt or Pfam inference.
 
 #### 3. Clean up
 

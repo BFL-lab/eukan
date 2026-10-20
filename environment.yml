@@ -8,7 +8,7 @@
 # Tools requiring manual installation:
 #   - genemark: Requires a license from https://topaz.gatech.edu/GeneMark/license_download.cgi
 #   - fitild: Build from source: git clone https://github.com/ogotoh/fitild && cd fitild/src && ./configure && make
-#   - combinr: Download the combinr v0.1.1 release binary from https://github.com/BFL-lab/combinr/releases and put it on PATH (or run scripts/install-extras.sh, or set EUKAN_ASSEMBLE_COMBINR_PATH).
+#   - combinr: Download the combinr v0.3.0 release binary from https://github.com/BFL-lab/combinr/releases and put it on PATH (or run scripts/install-extras.sh, or set EUKAN_ASSEMBLE_COMBINR_PATH).
 #
 # Tools bundled with parent packages (no separate install):
 #   - jellyfish: bundled with parent package
@@ -38,8 +38,9 @@ channels:
   - defaults
 
 dependencies:
-  # Python
-  - python>=3.10,<3.13
+  # Python. Capped below 3.13 because bioconda's codingquarry 2.0 has no
+  # Python 3.13 build (checked 2026-10-16); eukan itself runs on 3.13 (CI).
+  - python>=3.11,<3.13
 
   # External tools
   - augustus>=3.5
@@ -52,9 +53,7 @@ dependencies:
   - rmblast
   - samtools>=1.20
   - snap
-  - spades>=4.3
   - spaln>=3.0
-  - stringtie>=3.0
   - table2asn>=1.28
   - trf>=4.09
   - trinity>=2.15

@@ -6,14 +6,13 @@ import json
 import os
 import re
 import shutil
-from fileinput import FileInput
 from pathlib import Path
 
 import gffutils
 from Bio import SeqIO
 
 from eukan.annotation.training import build_training_set
-from eukan.exceptions import ToolEnvError
+from eukan.exceptions import ConfigurationError, ToolEnvError
 from eukan.gff import create_gff_db
 from eukan.gff.io import featuredb2gff3_file
 from eukan.infra.artifacts import Artifact, find_or_warn
@@ -29,7 +28,8 @@ log = get_logger(__name__)
 
 
 # Minimum evidence thresholds for accepting non-canonical splice sites.
-# A type must pass BOTH the absolute count AND the fraction of total junctions.
+# By default a type must pass BOTH the absolute floors AND the fraction of total
+# junctions; --splice-permissive keeps the floors and drops only the fraction.
 _MIN_JUNCTIONS = 10
 _MIN_UNIQUE_READS = 50
 _MIN_FRACTION = 0.01  # 1% of total junctions
@@ -37,28 +37,39 @@ _MIN_FRACTION = 0.01  # 1% of total junctions
 # Splice site types that AUGUSTUS already allows by default — no need to add.
 _AUGUSTUS_BUILTIN_SPLICE = {"gtag", "gcag"}
 
+# Written into a species dir right after new_species.pl creates it. config.name
+# defaults to the genome stem, which can be the name of a stock AUGUSTUS species
+# (arabidopsis, human, fly, ...), so only a dir carrying this marker is replaced.
+_SPECIES_MARKER = ".created-by-eukan"
+
 
 def _splice_type_to_augustus(name: str) -> str | None:
     """Convert a splice site type name (e.g. ``GC-AG``) to a 4-char AUGUSTUS value.
 
-    Returns ``None`` for entries that don't look like valid dinucleotide pairs
-    (e.g. ``"unknown"``).
+    Returns ``None`` for entries that aren't a pair of A/C/G/T dinucleotides:
+    ``"unknown"``, malformed names, and types with other bases such as ``NN-AC``
+    (junctions in assembly gaps). AUGUSTUS accepts only a/c/g/t patterns and
+    rejects the whole ``--allow_hinted_splicesites`` option if any one of them
+    contains anything else.
     """
-    parts = name.split("-")
-    if len(parts) == 2 and len(parts[0]) == 2 and len(parts[1]) == 2:
-        return (parts[0] + parts[1]).lower()
-    return None
+    if re.fullmatch(r"[ACGT]{2}-[ACGT]{2}", name.upper()) is None:
+        return None
+    return name.replace("-", "").lower()
 
 
 def _get_splice_sites_flag(config: PipelineConfig) -> list[str]:
-    """Build ``--allow_hinted_splicesites`` flag from STAR splice site evidence.
+    """Build ``--allow_hinted_splicesites`` flag from RNA-seq splice junction evidence.
 
     Reads ``splice_site_summary.json`` (written by the assembly pipeline)
     to determine which non-canonical splice site types have sufficient
-    evidence.  A type must pass both an absolute count threshold and a
-    proportional threshold (fraction of total junctions) to be accepted.
+    evidence.  A type must pass absolute floors (junctions and unique reads)
+    and, by default, a proportional threshold (fraction of total junctions);
+    ``allow_noncanonical_splice`` (``--splice-permissive``) drops only the
+    proportional threshold, so rare but well-supported types pass.
     All observed types that pass are included — not just the well-known
-    semi-canonical pairs (GC-AG, AT-AC).
+    semi-canonical pairs (GC-AG, AT-AC) — except types with bases other than
+    A/C/G/T (e.g. ``NN-AC`` from junctions in assembly gaps), which AUGUSTUS
+    cannot accept; those are dropped with a warning.
 
     Falls back to a blanket allowance when ``allow_noncanonical_splice``
     is set but no summary exists.
@@ -74,27 +85,38 @@ def _get_splice_sites_flag(config: PipelineConfig) -> list[str]:
 
         total_junctions = sum(s["count"] for s in summary.values())
 
-        # Use lower thresholds when --splice-permissive is set
-        if config.allow_noncanonical_splice:
-            min_junctions = 1
-            min_reads = 1
-            min_fraction = 0.0
-        else:
-            min_junctions = _MIN_JUNCTIONS
-            min_reads = _MIN_UNIQUE_READS
-            min_fraction = _MIN_FRACTION
+        # --splice-permissive drops only the share-of-all-junctions gate; the
+        # absolute floors still keep singleton (often spurious) junctions out.
+        min_fraction = 0.0 if config.allow_noncanonical_splice else _MIN_FRACTION
 
+        non_acgt: dict[str, int] = {}
         for splice_type, stats in summary.items():
             count = stats["count"]
             fraction = count / total_junctions if total_junctions > 0 else 0.0
-            if count < min_junctions or stats["unique_reads"] < min_reads or fraction < min_fraction:
+            if (
+                count < _MIN_JUNCTIONS
+                or stats["unique_reads"] < _MIN_UNIQUE_READS
+                or fraction < min_fraction
+            ):
                 continue
             aug_name = _splice_type_to_augustus(splice_type)
-            if aug_name and aug_name not in _AUGUSTUS_BUILTIN_SPLICE:
+            if aug_name is None:
+                # "unknown" = junction outside the genome, not a base problem
+                if splice_type != "unknown":
+                    non_acgt[splice_type] = count
+            elif aug_name not in _AUGUSTUS_BUILTIN_SPLICE:
                 allowed.add(aug_name)
 
+        if non_acgt:
+            log.warning(
+                "Ignoring %d splice-site types with non-ACGT bases "
+                "(junctions in assembly gaps?): %s",
+                len(non_acgt),
+                ", ".join(f"{t} ({n} junctions)" for t, n in non_acgt.items()),
+            )
+
     elif config.allow_noncanonical_splice:
-        # No STAR evidence — blanket allowance for common non-canonical types
+        # No junction evidence — blanket allowance for common non-canonical types
         allowed = {"atac"}
 
     if allowed:
@@ -105,14 +127,14 @@ def _get_splice_sites_flag(config: PipelineConfig) -> list[str]:
     return []
 
 
-def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
-    """Train and run AUGUSTUS gene prediction."""
-    output = "augustus.gff3"
-    sdir = step_dir(config.work_dir, "augustus")
-    log.info("Running AUGUSTUS training and prediction...")
+def _gather_hints(config: PipelineConfig, prot_gff3: Path) -> tuple[list[Path], str]:
+    """The hint files for prediction, and the extrinsic cfg that weights them.
 
-    # Gather hints
-    hint_files = [config.work_dir / "prot_align" / "hints_protein.gff"]
+    The protein hints sit beside the protein evidence (prot.gff3 in the alignment
+    step dir: prot_align, or prot_align_ssp with --spsp). RNA-seq hints switch the
+    cfg from AUGUSTUS's stock extrinsic.MPE.cfg to our augustus.config.
+    """
+    hint_files = [prot_gff3.parent / "hints_protein.gff"]
     if config.rnaseq_hints:
         ext_cfg = "augustus.config"
         hint_files.append(config.rnaseq_hints)
@@ -128,14 +150,13 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
     if rm_hints is not None:
         log.info("Including RepeatMasker hints: %s", rm_hints.name)
         hint_files.append(rm_hints)
+    return hint_files, ext_cfg
 
-    # Create AUGUSTUS species
-    config_path = os.environ.get("AUGUSTUS_CONFIG_PATH")
-    if not config_path:
-        raise ToolEnvError("augustus", env_var="AUGUSTUS_CONFIG_PATH")
 
-    # Install custom extrinsic config if not already present
-    ext_dest = Path(config_path) / "extrinsic" / ext_cfg
+def _install_extrinsic_cfg(config_path: Path, ext_cfg: str) -> Path:
+    """Install the package's *ext_cfg* into AUGUSTUS's extrinsic dir unless one is
+    there already; return its path there."""
+    ext_dest = config_path / "extrinsic" / ext_cfg
     if not ext_dest.exists():
         pkg_cfg = package_resource(f"configs/{ext_cfg}")
         if pkg_cfg is not None:
@@ -143,72 +164,100 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
             log.info("Installed and using extrinsic config: %s", ext_cfg)
         else:
             log.warning("Custom extrinsic config %s not found, AUGUSTUS may fail", ext_cfg)
+    return ext_dest
 
-    aug_species_dir = Path(config_path) / "species" / config.name
-    aug_cfg_file = aug_species_dir / f"{config.name}_parameters.cfg"
+
+def _set_stop_codon_probs(config: PipelineConfig, sdir: Path, cfg_file: Path) -> None:
+    """Write the stop codon frequencies into the species *cfg_file*: those etraining
+    measured, or 0/0/1 under genetic code 6."""
+    if config.genetic_code == "6":
+        stop_probs = ["0", "0", "1"]
+    else:
+        stop_probs = []
+        with open(sdir / "etraining.out") as fp:
+            for line in fp:
+                if re.search(r"(tag:|taa:|tga:)", line):
+                    stop_probs.append(re.sub(r"[()]", "", line).split()[-1])
+
+    with open(cfg_file) as fh:
+        lines = [line.rstrip() for line in fh]
+    for i, line in enumerate(lines):
+        if re.search(r"(amberprob|ochreprob|opalprob)", line) and stop_probs:
+            parts = line.split()
+            parts[1] = stop_probs.pop(0)
+            lines[i] = " ".join(parts)
+    cfg_file.write_text("".join(f"{line}\n" for line in lines))
+
+
+def _train_species(
+    config: PipelineConfig, evidence: tuple[Path, ...], sdir: Path, species_dir: Path
+) -> None:
+    """Create the AUGUSTUS species in *species_dir* and train it on the evidence
+    training set, unless this work dir has trained it already."""
+    aug_cfg_file = species_dir / f"{config.name}_parameters.cfg"
 
     # Skip training if species already exists and has been optimized
     if aug_cfg_file.exists() and (sdir / "genbank.gb.train").exists():
         log.info("[augustus] Species %s already trained, skipping to prediction.", config.name)
-    else:
-        if aug_species_dir.exists():
-            shutil.rmtree(aug_species_dir)
+        return
 
-        run_cmd(["new_species.pl", f"--species={config.name}"], cwd=sdir)
-
-        # Build training set and train
-        build_training_set(config, evidence, sdir)
-
-        # Report training set size
-        with open(sdir / "genbank.gb.train") as fh:
-            train_count = sum(1 for line in fh if line.startswith("LOCUS"))
-        with open(sdir / "genbank.gb.test") as fh:
-            test_count = sum(1 for line in fh if line.startswith("LOCUS"))
-        total = train_count + test_count
-        if total <= 500:
-            log.warning(
-                "Low AUGUSTUS training set size: %d models (%d train, %d test) "
-                "— prediction quality may be reduced",
-                total, train_count, test_count,
+    if species_dir.exists():
+        if not (species_dir / _SPECIES_MARKER).exists():
+            raise ConfigurationError(
+                f"AUGUSTUS species '{config.name}' already exists in "
+                f"{species_dir.parent} and was not created by eukan; "
+                "refusing to replace it.",
+                hint="The species name defaults to the genome file name. Train "
+                "under another name by setting EUKAN_NAME=<name> (there is no "
+                "command-line option for it) or by renaming the genome FASTA. "
+                "Delete the directory only if an earlier eukan version created it.",
             )
-        else:
-            log.info("AUGUSTUS training set: %d train, %d test models", train_count, test_count)
+        shutil.rmtree(species_dir)
 
-        run_cmd(["etraining", f"--species={config.name}", "genbank.gb.train"], cwd=sdir, out_file="etraining.out")
+    run_cmd(["new_species.pl", f"--species={config.name}"], cwd=sdir)
+    (species_dir / _SPECIES_MARKER).touch()
 
-        # Set stop codon frequencies
-        if config.genetic_code == "6":
-            stop_probs = ["0", "0", "1"]
-        else:
-            stop_probs = []
-            with open(sdir / "etraining.out") as fp:
-                for line in fp:
-                    if re.search(r"(tag:|taa:|tga:)", line):
-                        stop_probs.append(re.sub(r"[()]", "", line).split()[-1])
+    # Build training set and train
+    build_training_set(config, evidence, sdir)
 
-        with FileInput(files=[str(aug_cfg_file)], inplace=True) as f:
-            for line in f:
-                line = line.rstrip()
-                if re.search(r"(amberprob|ochreprob|opalprob)", line) and stop_probs:
-                    parts = line.split()
-                    parts[1] = stop_probs.pop(0)
-                    print(" ".join(parts))
-                else:
-                    print(line)
-
-        # Test and optimize
-        run_cmd(["augustus", f"--species={config.name}", "genbank.gb.test"], cwd=sdir)
-        run_cmd(
-            [
-                "optimize_augustus.pl", f"--species={config.name}",
-                "--onlytrain=genbank.gb.train", f"--cpus={config.num_cpu}",
-                "genbank.gb.test",
-            ],
-            cwd=sdir,
+    # Report training set size
+    with open(sdir / "genbank.gb.train") as fh:
+        train_count = sum(1 for line in fh if line.startswith("LOCUS"))
+    with open(sdir / "genbank.gb.test") as fh:
+        test_count = sum(1 for line in fh if line.startswith("LOCUS"))
+    total = train_count + test_count
+    if total <= 500:
+        log.warning(
+            "Low AUGUSTUS training set size: %d models (%d train, %d test) "
+            "— prediction quality may be reduced",
+            total, train_count, test_count,
         )
-        run_cmd(["etraining", f"--species={config.name}", "genbank.gb.train"], cwd=sdir)
-        run_cmd(["augustus", f"--species={config.name}", "genbank.gb.test"], cwd=sdir)
+    else:
+        log.info("AUGUSTUS training set: %d train, %d test models", train_count, test_count)
 
+    run_cmd(["etraining", f"--species={config.name}", "genbank.gb.train"], cwd=sdir, out_file="etraining.out")
+    _set_stop_codon_probs(config, sdir, aug_cfg_file)
+
+    # Test and optimize
+    run_cmd(["augustus", f"--species={config.name}", "genbank.gb.test"], cwd=sdir)
+    run_cmd(
+        [
+            "optimize_augustus.pl", f"--species={config.name}",
+            "--onlytrain=genbank.gb.train", f"--cpus={config.num_cpu}",
+            "genbank.gb.test",
+        ],
+        cwd=sdir,
+    )
+    run_cmd(["etraining", f"--species={config.name}", "genbank.gb.train"], cwd=sdir)
+    run_cmd(["augustus", f"--species={config.name}", "genbank.gb.test"], cwd=sdir)
+
+
+def _predict(
+    config: PipelineConfig, sdir: Path, ext_cfg: Path, hint_files: list[Path]
+) -> Path:
+    """Predict with the trained species, one AUGUSTUS per genome split in parallel,
+    and join the splits into ``augustus.gff3``."""
+    output = "augustus.gff3"
     concat_files(hint_files, sdir / "hints_all.gff")
 
     # Split genome for parallel prediction
@@ -224,7 +273,7 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
 
     base_cmd = [
         "augustus", f"--species={config.name}",
-        f"--extrinsicCfgFile={Path(config_path) / 'extrinsic' / ext_cfg}",
+        f"--extrinsicCfgFile={ext_cfg}",
         "--hintsfile=hints_all.gff", "--softmasking=1", "--UTR=off",
         *splice_sites_flag,
     ]
@@ -261,6 +310,20 @@ def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
         (sdir / f"{split.name}.gff3").unlink(missing_ok=True)
 
     return sdir / output
+
+
+def run_augustus(config: PipelineConfig, *evidence: Path) -> Path:
+    """Train and run AUGUSTUS gene prediction."""
+    sdir = step_dir(config.work_dir, "augustus")
+    log.info("Running AUGUSTUS training and prediction...")
+    hint_files, ext_cfg = _gather_hints(config, evidence[1])
+
+    config_path = os.environ.get("AUGUSTUS_CONFIG_PATH")
+    if not config_path:
+        raise ToolEnvError("augustus", env_var="AUGUSTUS_CONFIG_PATH")
+    ext_cfg_path = _install_extrinsic_cfg(Path(config_path), ext_cfg)
+    _train_species(config, evidence, sdir, Path(config_path) / "species" / config.name)
+    return _predict(config, sdir, ext_cfg_path, hint_files)
 
 
 # ---------------------------------------------------------------------------

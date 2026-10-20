@@ -26,7 +26,7 @@ from eukan.infra.logging import get_logger
 
 log = get_logger(__name__)
 
-DATA_DIR = Path("tests/data")
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 GENOME_ACCESSION_FILE = DATA_DIR / "test-genome-accession.txt"
 GENOME_ASSEMBLY_ACCESSION_FILE = DATA_DIR / "test-genome-assembly-accession.txt"
@@ -460,6 +460,6 @@ def validate_test_data(output_dir: Path) -> list[tuple[str, str, bool]]:
         if old_files > 0:
             results.append(("reads", "found _1/_3 files (need _1/_2 pairs — delete and re-download)", False))
         else:
-            results.append(("reads", "no FASTQ files found (run: eukan dev setup-test-data)", False))
+            results.append(("reads", "no FASTQ files found (run: python tests/run_pipeline.py setup-test-data)", False))
 
     return results

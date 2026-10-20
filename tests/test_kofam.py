@@ -9,7 +9,7 @@ from eukan.functional.kofam import (
     extract_ec_numbers,
     parse_ko_list,
 )
-from eukan.functional.search import _add_func_info, annotate_gff3
+from eukan.functional.search import _add_func_info, annotate_gff3, apply_kofam_hits
 from eukan.gff import create_gff_db
 
 # ---------------------------------------------------------------------------
@@ -38,7 +38,8 @@ class TestParseKoList:
             k_number="K28880",
             threshold=443.33,
             score_type="full",
-            definition="peptidoglycan beta-N-acetylmuramidase [EC:3.2.1.92]",
+            description="peptidoglycan beta-N-acetylmuramidase",
+            ec_numbers=("3.2.1.92",),
         )
 
     def test_missing_threshold_becomes_none(self, tmp_path: Path):
@@ -125,7 +126,7 @@ class TestExtractEcNumbers:
 
 
 # ---------------------------------------------------------------------------
-# KOfam attribute emission via _add_func_info / _apply_kofam_hits
+# KOfam attribute emission via _add_func_info / apply_kofam_hits
 # ---------------------------------------------------------------------------
 
 
@@ -156,7 +157,7 @@ class TestApplyKofamHits:
                 }
             }
         }
-        feats = list(_add_func_info(db, kofam_res, {}, homology_db="kofam"))
+        feats = list(_add_func_info(db, kofam_res, {}, apply_kofam_hits))
         mrna = next(f for f in feats if f.featuretype == "mRNA")
         assert mrna.attributes["product"] == ["peptidoglycan beta-N-acetylmuramidase"]
         assert mrna.attributes["ec_number"] == ["3.2.1.92"]
@@ -178,7 +179,7 @@ class TestApplyKofamHits:
                 }
             }
         }
-        feats = list(_add_func_info(db, kofam_res, {}, homology_db="kofam"))
+        feats = list(_add_func_info(db, kofam_res, {}, apply_kofam_hits))
         mrna = next(f for f in feats if f.featuretype == "mRNA")
         assert mrna.attributes["product"] == ["hypothetical protein"]
         # No KOfam attributes emitted when nothing is above threshold
@@ -203,7 +204,7 @@ class TestApplyKofamHits:
                 },
             }
         }
-        feats = list(_add_func_info(db, kofam_res, {}, homology_db="kofam"))
+        feats = list(_add_func_info(db, kofam_res, {}, apply_kofam_hits))
         mrna = next(f for f in feats if f.featuretype == "mRNA")
         assert mrna.attributes["product"] == ["stronger hit"]
         # Both KOs make it into Dbxref / inference, top-score first
@@ -230,7 +231,7 @@ class TestApplyKofamHits:
                 },
             }
         }
-        feats = list(_add_func_info(db, kofam_res, {}, homology_db="kofam"))
+        feats = list(_add_func_info(db, kofam_res, {}, apply_kofam_hits))
         mrna = next(f for f in feats if f.featuretype == "mRNA")
         assert mrna.attributes["ec_number"] == ["1.1.1.1", "2.7.1.1"]
 
@@ -257,7 +258,7 @@ class TestKofamPlusPfamCombined:
                 }
             }
         }
-        feats = list(_add_func_info(db, kofam_res, pfam_res, homology_db="kofam"))
+        feats = list(_add_func_info(db, kofam_res, pfam_res, apply_kofam_hits))
         mrna = next(f for f in feats if f.featuretype == "mRNA")
         assert mrna.attributes["inference"] == [
             "protein motif:KOFAM:K28880",
@@ -287,7 +288,7 @@ class TestEcNumberThroughCleanup:
                 }
             }
         }
-        annotated = annotate_gff3(gff, kofam_res, {}, output_dir=tmp_path, homology_db="kofam")
+        annotated = annotate_gff3(gff, kofam_res, {}, apply_kofam_hits, output_dir=tmp_path)
         cleaned = tmp_path / "cleaned.gff3"
         clean_gff3_for_submission(annotated, cleaned)
         text = cleaned.read_text()

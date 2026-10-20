@@ -4,7 +4,7 @@
 # NOTE: The `eukan` CLI sets these variables automatically at startup
 # (see eukan/data/tools.toml and eukan/infra/environ.py).
 # This script is only needed if you want to run the underlying tools
-# (SNAP, spaln, EVM, etc.) directly outside of eukan.
+# (SNAP, spaln, etc.) directly outside of eukan.
 #
 # To install:
 #   mkdir -p $CONDA_PREFIX/etc/conda/activate.d
@@ -18,8 +18,8 @@ export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"
 # SNAP requires $ZOE to point to its data directory
 export ZOE="${CONDA_PREFIX}/share/snap"
 
-# EVM scripts are in a subdirectory — add to PATH
-export PATH="${CONDA_PREFIX}/bin/EvmUtils:${CONDA_PREFIX}/bin/EvmUtils/misc:${PATH}"
+# AUGUSTUS species parameters and config
+export AUGUSTUS_CONFIG_PATH="${CONDA_PREFIX}/config"
 
 # GeneMark (if installed into $CONDA_PREFIX/opt/genemark)
 if [ -d "${CONDA_PREFIX}/opt/genemark" ]; then
@@ -32,6 +32,10 @@ if [ -d "${CONDA_PREFIX}/share/spaln/table" ]; then
 fi
 if [ -d "${CONDA_PREFIX}/share/spaln/seqdb" ]; then
     export ALN_DBS="${CONDA_PREFIX}/share/spaln/seqdb"
+fi
+# spaln's Perl modules (make_eij.pl, make_ssp.pl for annotate --spsp)
+if [ -d "${CONDA_PREFIX}/share/spaln/alndbs" ]; then
+    export PERL5LIB="${CONDA_PREFIX}/share/spaln/alndbs${PERL5LIB:+:${PERL5LIB}}"
 fi
 
 # fitild (if installed into $CONDA_PREFIX/opt/fitild)

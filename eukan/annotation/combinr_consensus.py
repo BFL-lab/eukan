@@ -27,27 +27,29 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from eukan.annotation.evidence import EVIDENCE_ROLES, _first_source_token
+from eukan.gff.rows import iter_gff3_rows, parse_attrs
+from eukan.gff.transcripts import Transcript
+from eukan.infra.combinr import run_combinr
 from eukan.infra.logging import get_logger
-from eukan.infra.runner import run_cmd
 from eukan.settings import PipelineConfig
 
 log = get_logger(__name__)
 
+# Staged ab initio prediction file -> the GFF source token its rows carry, which
+# names its ABINITIO_PREDICTION line in weights.txt (weighted weights[1]).
+_ABINITIO_SOURCES: dict[str, str] = {
+    "augustus.gff3": "augustus",
+    "snap.gff3": "snap",
+    "codingquarry.gff3": "codingquarry",
+}
 
-def _combinr_bin(config: PipelineConfig) -> str:
-    """The combinr executable: explicit ``combinr_path`` or ``combinr`` on PATH."""
-    return str(config.combinr_path) if config.combinr_path else "combinr"
 
-
-def _parse_attrs(col9: str) -> dict[str, str]:
-    attrs: dict[str, str] = {}
-    for part in col9.split(";"):
-        part = part.strip()
-        if "=" in part:
-            key, val = part.split("=", 1)
-            attrs[key.strip()] = val.strip()
-    return attrs
+def _first_source_token(gff3: Path) -> str | None:
+    """Return the GFF3 source column (col 2) of the first data line, or None."""
+    for cols in iter_gff3_rows(gff3):
+        if cols[1]:
+            return cols[1]
+    return None
 
 
 def _chains_to_match(in_gff: Path, out_gff: Path, *, feature_type: str, match_type: str) -> int:
@@ -61,39 +63,31 @@ def _chains_to_match(in_gff: Path, out_gff: Path, *, feature_type: str, match_ty
     entry. Target coordinates are cumulative over the sorted blocks (combinr only
     requires ``Target`` to be present, not meaningful). Returns the chain count.
     """
-    chains: dict[str, list] = {}  # key -> [chrom, source, strand, [(lend, rend)]]
-    order: list[str] = []
-    with open(in_gff) as fh:
-        for line in fh:
-            if line.startswith("#") or not line.strip():
-                continue
-            cols = line.rstrip("\n").split("\t")
-            if len(cols) < 9 or cols[2] != feature_type:
-                continue
-            attrs = _parse_attrs(cols[8])
-            key = attrs.get("Parent") or attrs.get("ID")
-            if not key:
-                continue
-            rec = chains.get(key)
-            if rec is None:
-                rec = [cols[0], cols[1], cols[6], []]
-                chains[key] = rec
-                order.append(key)
-            rec[3].append((int(cols[3]), int(cols[4])))
+    chains: dict[str, Transcript] = {}  # keyed by Parent (else ID), in file order
+    for cols in iter_gff3_rows(in_gff):
+        if cols[2] != feature_type:
+            continue
+        attrs = parse_attrs(cols[8])
+        key = attrs.get("Parent") or attrs.get("ID")
+        if not key:
+            continue
+        chain = chains.get(key)
+        if chain is None:
+            chain = chains[key] = Transcript(key, cols[0], cols[6], cols[1])
+        chain.exons.append((int(cols[3]), int(cols[4])))
 
     with open(out_gff, "w") as out:
-        for key in order:
-            chrom, source, strand, blocks = chains[key]
-            blocks.sort()
+        for key, chain in chains.items():
+            chain.exons.sort()
             tpos = 1
-            for lend, rend in blocks:
+            for lend, rend in chain.exons:
                 tend = tpos + (rend - lend)
                 out.write(
-                    f"{chrom}\t{source}\t{match_type}\t{lend}\t{rend}\t.\t{strand}\t."
-                    f"\tID={key};Target={key} {tpos} {tend}\n"
+                    f"{chain.chrom}\t{chain.source}\t{match_type}\t{lend}\t{rend}\t.\t"
+                    f"{chain.strand}\t.\tID={key};Target={key} {tpos} {tend}\n"
                 )
                 tpos = tend + 1
-    return len(order)
+    return len(chains)
 
 
 def _stage_combinr_inputs(
@@ -104,11 +98,10 @@ def _stage_combinr_inputs(
 ) -> bool:
     """Stage gene_predictions.gff3, prot.match.gff3, transcripts.match.gff3, weights.txt.
 
-    Uses the same ab initio concatenation and the same weight tokens (via the
-    shared :data:`~eukan.annotation.evidence.EVIDENCE_ROLES`) the consensus engine
-    scores. The protein and transcript files are converted to
-    ``Target=`` match chains rather than symlinked. Returns ``True`` when
-    transcript evidence was staged.
+    The ab initio predictions are concatenated into gene_predictions.gff3, each
+    weighted under its source token (:data:`_ABINITIO_SOURCES`). The protein and
+    transcript files are converted to ``Target=`` match chains rather than
+    symlinked. Returns ``True`` when transcript evidence was staged.
     """
     weights = [str(w) for w in config.weights]
     weight_lines: list[str] = []
@@ -122,16 +115,14 @@ def _stage_combinr_inputs(
                 )
                 weight_lines.append("\t".join(["PROTEIN", "prot_align", weights[0]]))
                 continue
-            role = EVIDENCE_ROLES.get(ev.name)
-            if role is not None:
-                _cls, token = role
+            token = _ABINITIO_SOURCES.get(ev.name)
+            if token is not None:
                 weight_lines.append("\t".join(["ABINITIO_PREDICTION", token, weights[1]]))
             with open(ev, "rb") as ef:
                 pf.write(ef.read())
 
-    have_transcripts = bool(config.has_transcripts and transcripts is not None)
-    if have_transcripts:
-        assert transcripts is not None
+    have_transcripts = transcripts is not None
+    if transcripts is not None:
         source = _first_source_token(transcripts) or "transcript"
         _chains_to_match(
             transcripts, sdir / "transcripts.match.gff3",
@@ -153,29 +144,34 @@ def run_combinr_consensus(
     """Build consensus gene models with ``combinr consensus`` into ``consensus_models.gff3``.
 
     Transcript evidence (when present) enables ``--alt-splice`` so combinr emits
-    alternative isoforms with UTRs derived from the consensus CDS.
+    alternative isoforms with UTRs derived from the consensus CDS. Every run also
+    writes ``combinr.evidence_report.txt`` beside the models: a QC report of the
+    evidence supporting each gene's exons and introns (EVM ``.evm.out`` style).
     """
     log.info("Running combinr consensus model building...")
     have_transcripts = _stage_combinr_inputs(config, sdir, evidence, transcripts)
 
-    cmd = [
-        _combinr_bin(config), "consensus",
+    args = [
+        "consensus",
         "--weights", "weights.txt",
         "--genome", str(config.genome),
         "--gene-predictions", "gene_predictions.gff3",
         "--genetic-code", str(config.genetic_code),
         "-t", str(config.num_cpu),
         "--format", "gff3",
+        # QC side-output; the flag needs combinr >= 0.3.0 (infra.combinr.MIN_VERSION).
+        "--evidence-report", "combinr.evidence_report.txt",
     ]
     if (sdir / "prot.match.gff3").exists():
-        cmd += ["--protein-alignments", "prot.match.gff3"]
+        args += ["--protein-alignments", "prot.match.gff3"]
     if have_transcripts:
-        cmd += [
+        args += [
             "--transcript-alignments", "transcripts.match.gff3",
             "--alt-splice", "--events", "combinr.alt_splice_events.tsv",
             # --stringent-overlap tunes the isoform grouping; 0 = off (any overlap).
             "--stringent-overlap", str(config.combinr_stringent_overlap),
         ]
 
-    run_cmd(cmd, cwd=sdir, out_file="consensus_models.gff3")
+    run_combinr(config, args, cwd=sdir, out_file="consensus_models.gff3")
+    log.info("combinr evidence report: %s", sdir / "combinr.evidence_report.txt")
     return sdir / "consensus_models.gff3"

@@ -22,8 +22,9 @@ CDS and intron levels:
 from __future__ import annotations
 
 from collections import defaultdict
-from itertools import permutations
 from pathlib import Path
+
+from scipy.optimize import linear_sum_assignment
 
 from eukan.compare.models import (
     FRAG_THRESHOLD,
@@ -139,6 +140,27 @@ def _group_by_parent(
     return groups
 
 
+# (genes, mRNAs by gene, CDSs by mRNA, introns by mRNA)
+_Annotation = tuple[
+    list[Interval],
+    dict[str, list[Interval]],
+    dict[str, list[Interval]],
+    dict[str, list[Interval]],
+]
+
+
+def _parse_annotation(path: Path) -> _Annotation:
+    """Read a GFF3 into the features and groupings the comparison uses."""
+    genes, mrnas, cds = _stream_features(path)
+    cds_by_mrna = _group_by_parent(cds)
+    introns_by_mrna = {
+        mid: introns
+        for mid, cds_list in cds_by_mrna.items()
+        if (introns := _derive_introns(cds_list))
+    }
+    return genes, _group_by_parent(mrnas), cds_by_mrna, introns_by_mrna
+
+
 # ---------------------------------------------------------------------------
 # Overlap computation
 # ---------------------------------------------------------------------------
@@ -161,85 +183,23 @@ def _max_pairwise_matching(
 ) -> list[tuple[Interval, Interval, int]]:
     """Match ref features to pred features by maximum pairwise overlap sum.
 
-    For small sets (<=8), tries all permutations for optimal matching.
-    For larger sets, uses greedy matching by descending overlap.
+    Solves the assignment exactly at every size and returns the matched
+    pairs that overlap, in the order of the smaller side (ref order when
+    both sides are the same size).
     """
     if not ref_feats or not pred_feats:
         return []
 
-    n_ref, n_pred = len(ref_feats), len(pred_feats)
-
-    # Dense overlap matrix.  Direct ``matrix[ri][pi]`` indexing is markedly
-    # faster than tuple-keyed dict lookups inside the permutation hot loop.
-    matrix = [[0] * n_pred for _ in range(n_ref)]
-    any_overlap = False
-    for ri, r in enumerate(ref_feats):
-        row = matrix[ri]
-        for pi, p in enumerate(pred_feats):
-            ovl = _overlap_bp(r, p)
-            if ovl > 0:
-                row[pi] = ovl
-                any_overlap = True
-
-    if not any_overlap:
-        return []
-
-    # For small problems, try optimal matching via permutation
-    if n_ref <= 8 and n_pred <= 8:
-        best_matches: list[tuple[int, int, int]] = []
-        best_sum = 0
-
-        k = min(n_ref, n_pred)
-
-        if n_ref <= n_pred:
-            ref_indices = range(n_ref)
-            for perm in permutations(range(n_pred), k):
-                total = 0
-                for ri, pi in zip(ref_indices, perm, strict=True):
-                    total += matrix[ri][pi]
-                if total > best_sum:
-                    best_sum = total
-                    best_matches = [
-                        (ri, pi, matrix[ri][pi])
-                        for ri, pi in zip(ref_indices, perm, strict=True)
-                        if matrix[ri][pi] > 0
-                    ]
-        else:
-            pred_indices = range(n_pred)
-            for perm in permutations(range(n_ref), k):
-                total = 0
-                for ri, pi in zip(perm, pred_indices, strict=True):
-                    total += matrix[ri][pi]
-                if total > best_sum:
-                    best_sum = total
-                    best_matches = [
-                        (ri, pi, matrix[ri][pi])
-                        for ri, pi in zip(perm, pred_indices, strict=True)
-                        if matrix[ri][pi] > 0
-                    ]
-
-        return [
-            (ref_feats[ri], pred_feats[pi], ovl)
-            for ri, pi, ovl in best_matches
-        ]
-
-    # Greedy fallback for larger sets — sort all nonzero pairs by overlap.
-    overlaps = [
-        (ri, pi, matrix[ri][pi])
-        for ri in range(n_ref)
-        for pi in range(n_pred)
+    matrix = [[_overlap_bp(r, p) for p in pred_feats] for r in ref_feats]
+    rows, cols = linear_sum_assignment(matrix, maximize=True)
+    pairs = [
+        (ri, pi)
+        for ri, pi in zip(rows.tolist(), cols.tolist(), strict=True)
         if matrix[ri][pi] > 0
     ]
-    overlaps.sort(key=lambda x: x[2], reverse=True)
-    used_refs: set[int] = set()
-    used_preds: set[int] = set()
-    greedy: list[tuple[Interval, Interval, int]] = []
-    for ri, pi, ovl in overlaps:
-        if ri not in used_refs and pi not in used_preds:
-            greedy.append((ref_feats[ri], pred_feats[pi], ovl))
-            used_refs.add(ri)
-            used_preds.add(pi)
-    return greedy
+    if len(ref_feats) > len(pred_feats):
+        pairs.sort(key=lambda pair: pair[1])
+    return [(ref_feats[ri], pred_feats[pi], matrix[ri][pi]) for ri, pi in pairs]
 
 
 # ---------------------------------------------------------------------------
@@ -406,26 +366,17 @@ def _classify_subfeatures(
 
 def compare_annotations(ref_path: Path, pred_path: Path) -> ComparisonResult:
     """Compare predicted annotations against a reference GFF3."""
-    ref_genes, ref_mrnas, ref_cds = _stream_features(ref_path)
-    pred_genes, pred_mrnas, pred_cds = _stream_features(pred_path)
+    return _compare_to_reference(_parse_annotation(ref_path), ref_path, pred_path)
 
-    # Group by parent
-    ref_mrnas_by_gene = _group_by_parent(ref_mrnas)
-    pred_mrnas_by_gene = _group_by_parent(pred_mrnas)
-    ref_cds_by_mrna = _group_by_parent(ref_cds)
-    pred_cds_by_mrna = _group_by_parent(pred_cds)
 
-    # Derive introns from CDS gaps
-    ref_introns_by_mrna = {
-        mid: introns
-        for mid, cds in ref_cds_by_mrna.items()
-        if (introns := _derive_introns(cds))
-    }
-    pred_introns_by_mrna = {
-        mid: introns
-        for mid, cds in pred_cds_by_mrna.items()
-        if (introns := _derive_introns(cds))
-    }
+def _compare_to_reference(
+    ref: _Annotation, ref_path: Path, pred_path: Path,
+) -> ComparisonResult:
+    """compare_annotations against an already parsed reference."""
+    ref_genes, ref_mrnas_by_gene, ref_cds_by_mrna, ref_introns_by_mrna = ref
+    pred_genes, pred_mrnas_by_gene, pred_cds_by_mrna, pred_introns_by_mrna = (
+        _parse_annotation(pred_path)
+    )
 
     # --- Gene-level classification ---
     gene_match_map, gene_records = _classify_genes(ref_genes, pred_genes)
@@ -507,8 +458,9 @@ def compare_multiple(
 ) -> MultiComparisonResult:
     """Compare a reference GFF3 against N predictions.
 
-    For each prediction, runs :func:`compare_annotations` and stamps the
-    user-supplied label onto the result. Builds a per-class powerset:
+    Parses the reference once, compares each prediction against it as
+    :func:`compare_annotations` does, and stamps the user-supplied label
+    onto the result. Builds a per-class powerset:
     for each gene-level classification in :data:`POWERSET_CLASSES`
     (``match``, ``missing``, ``merged``, ``fragmented``), records — for
     each reference gene — the sorted tuple of prediction labels whose
@@ -524,9 +476,10 @@ def compare_multiple(
     if len(set(labels)) != len(labels):
         raise ValueError("prediction labels must be unique")
 
+    ref = _parse_annotation(ref_path)
     per_pred: list[ComparisonResult] = []
     for label, path in predictions:
-        result = compare_annotations(ref_path, path)
+        result = _compare_to_reference(ref, ref_path, path)
         result.label = label
         per_pred.append(result)
 

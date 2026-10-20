@@ -19,10 +19,23 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
+from pathlib import Path
 
+import pyhmmer
 import pytest
 
 from eukan.functional import pipeline as fpipe
+from eukan.infra.manifest import (
+    MANIFEST_FILE,
+    RunManifest,
+    StepRecord,
+    StepStatus,
+    load_manifest,
+    save_manifest,
+)
+from eukan.infra.steps import fingerprint_inputs
+from eukan.infra.utils import md5_file
 from eukan.settings import FunctionalConfig
 
 
@@ -37,17 +50,17 @@ def _config(proteins, work_dir, *, homology_db="uniprot", gff3_path=None):
 # --- stubs --------------------------------------------------------------------
 
 def _fake_search(calls):
-    """A _search_and_cache stand-in recording proteome stems; writes caches."""
-    def _search_and_cache(config, homology_json, hmmscan_json):
+    """A _search_and_cache stand-in recording proteome stems; writes the cache."""
+    def _search_and_cache(config, cache):
         calls.append(config.proteins.stem)
-        homology_json.write_text(json.dumps({}))
-        hmmscan_json.write_text(json.dumps({}))
-        return homology_json
+        results = {"homology": {}, "pfam": {}}
+        cache.write_text(json.dumps(results))
+        return results
     return _search_and_cache
 
 
-def _fake_annotate_fasta(proteins, homology_res, hmmscan_res, homology_db="uniprot"):
-    out = proteins.parent / f"{proteins.stem}.mod{proteins.suffix}"
+def _fake_annotate_fasta(proteins, homology_res, hmmscan_res, format_hit, output_dir):
+    out = output_dir / f"{proteins.stem}.mod{proteins.suffix}"
     out.write_text(">x\nMA\n")
     return out
 
@@ -64,27 +77,25 @@ def calls(monkeypatch):
 def _install_counts(monkeypatch) -> dict[str, int]:
     """Stub all three steps with per-step invocation counters.
 
-    The stubs write the same output files the real steps would (JSON caches,
+    The stubs write the same output files the real steps would (JSON cache,
     ``.mod.faa``, ``.mod.gff3``) so the manifest records valid, integrity-
     checkable outputs.
     """
     counts = {"search": 0, "annotate_fasta": 0, "annotate_gff3": 0}
 
-    def fake_search(config, homology_json, hmmscan_json):
+    def fake_search(config, cache):
         counts["search"] += 1
-        homology_json.write_text("{}")
-        hmmscan_json.write_text("{}")
-        return homology_json
+        results = {"homology": {}, "pfam": {}}
+        cache.write_text(json.dumps(results))
+        return results
 
-    def fake_annotate_fasta(proteins, homology_res, hmmscan_res, homology_db="uniprot"):
+    def fake_annotate_fasta(proteins, homology_res, hmmscan_res, format_hit, output_dir):
         counts["annotate_fasta"] += 1
-        out = proteins.parent / f"{proteins.stem}.mod{proteins.suffix}"
+        out = output_dir / f"{proteins.stem}.mod{proteins.suffix}"
         out.write_text(">s1 hypothetical protein\nMACE\n")
         return out
 
-    def fake_annotate_gff3(
-        gff3_path, homology_res, hmmscan_res, output_dir=None, homology_db="uniprot"
-    ):
+    def fake_annotate_gff3(gff3_path, homology_res, hmmscan_res, apply_hits, output_dir=None):
         counts["annotate_gff3"] += 1
         out = (output_dir or gff3_path.parent) / f"{gff3_path.stem}.mod{gff3_path.suffix}"
         out.write_text("##gff-version 3\nchr1\teukan\tgene\t1\t100\t.\t+\t.\tID=g1\n")
@@ -137,8 +148,8 @@ class TestMultiProteomeResume:
         fpipe.run_functional_annotation(_config(prot_b, work_dir))
 
         assert calls == ["speciesA", "speciesB"]  # each ran its own search
-        assert (tmp_path / "speciesA.phmmer.json").exists()
-        assert (tmp_path / "speciesB.phmmer.json").exists()
+        assert (work_dir / "speciesA.phmmer.search.json").exists()
+        assert (work_dir / "speciesB.phmmer.search.json").exists()
 
     def test_same_proteome_rerun_is_skipped(self, tmp_path, calls):
         work_dir = tmp_path / "func-annot"
@@ -155,8 +166,8 @@ class TestMultiProteomeResume:
         fpipe.run_functional_annotation(_config(prot, work_dir, homology_db="uniprot"))
         fpipe.run_functional_annotation(_config(prot, work_dir, homology_db="kofam"))
         assert calls == ["speciesA", "speciesA"]  # each mode writes its own cache
-        assert (tmp_path / "speciesA.phmmer.json").exists()
-        assert (tmp_path / "speciesA.kofam.json").exists()
+        assert (work_dir / "speciesA.phmmer.search.json").exists()
+        assert (work_dir / "speciesA.kofam.search.json").exists()
 
 
 # --- content-sensitivity within a scope + friendly no-op ----------------------
@@ -232,9 +243,9 @@ class TestFuncStepFingerprints:
         proteins = tmp_path / "p.faa"
         proteins.write_text(">s\nM\n")
         cfg = _config(proteins, tmp_path)
-        hj, kj = tmp_path / "p.phmmer.json", tmp_path / "p.hmmscan.json"
+        cache = tmp_path / "p.phmmer.search.json"
 
-        fp_map = fpipe._func_step_fingerprints(cfg, hj, kj)
+        fp_map = fpipe._func_step_fingerprints(cfg, cache)
 
         search_files, search_scalars = fp_map["search"]
         assert search_files == [proteins]
@@ -245,7 +256,7 @@ class TestFuncStepFingerprints:
         assert not any("num_cpu" in s for s in search_scalars)
 
         fasta_files, _ = fp_map["annotate_fasta"]
-        assert fasta_files == [proteins, hj, kj]  # depends on both JSON caches
+        assert fasta_files == [proteins, cache]  # depends on the search cache
         assert "annotate_gff3" not in fp_map  # no gff3_path
 
     def test_gff3_entry_present_when_set(self, tmp_path):
@@ -254,18 +265,265 @@ class TestFuncStepFingerprints:
         gff3 = tmp_path / "genes.gff3"
         gff3.write_text("##gff-version 3\n")
         cfg = _config(proteins, tmp_path, gff3_path=gff3)
-        hj, kj = tmp_path / "p.phmmer.json", tmp_path / "p.hmmscan.json"
+        cache = tmp_path / "p.phmmer.search.json"
 
-        gff3_files, _ = fpipe._func_step_fingerprints(cfg, hj, kj)["annotate_gff3"]
-        assert gff3_files == [gff3, hj, kj]
+        gff3_files, _ = fpipe._func_step_fingerprints(cfg, cache)["annotate_gff3"]
+        assert gff3_files == [gff3, cache]
 
     def test_kofam_mode_scalars(self, tmp_path):
         proteins = tmp_path / "p.faa"
         proteins.write_text(">s\nM\n")
         cfg = _config(proteins, tmp_path, homology_db="kofam")
-        hj, kj = tmp_path / "p.kofam.json", tmp_path / "p.hmmscan.json"
+        cache = tmp_path / "p.kofam.search.json"
 
-        _, scalars = fpipe._func_step_fingerprints(cfg, hj, kj)["search"]
+        _, scalars = fpipe._func_step_fingerprints(cfg, cache)["search"]
         assert any(s.startswith("kofam_db=") for s in scalars)
         assert any(s.startswith("ko_list=") for s in scalars)
         assert not any(s.startswith("uniprot_db=") for s in scalars)
+
+
+# --- the search cache ---------------------------------------------------------
+
+
+_HOMOLOGY = {"s1": {"P12345": {"description": "Kinase X", "evalue": 1e-30}}}
+_PFAM = {"s1": {"Pkinase": {
+    "description": "Protein kinase domain", "evalue": 1e-20, "accession": "PF00069.1",
+}}}
+
+
+class TestSearchCache:
+    """The search caches its homology and Pfam hits together in one file, its
+    declared output, so a resume never reads a search file it does not track and
+    a lost cache re-runs the search. Runs the real _search_and_cache with the
+    database searches stubbed."""
+
+    @staticmethod
+    def _stub_searches(monkeypatch) -> list[str]:
+        searches: list[str] = []
+        monkeypatch.setattr(
+            fpipe, "_run_uniprot_phmmer",
+            lambda *a: searches.append("phmmer") or _HOMOLOGY,
+        )
+        monkeypatch.setattr(
+            fpipe, "_run_pfam_hmmscan", lambda *a: searches.append("hmmscan") or _PFAM,
+        )
+        return searches
+
+    @staticmethod
+    def _search_record(manifest):
+        (record,) = [r for k, r in manifest.steps.items() if k.startswith("functional/search")]
+        return record
+
+    def test_resume_reads_no_untracked_search_file(self, tmp_path, monkeypatch):
+        # The Pfam hits used to sit in an untracked <stem>.hmmscan.json beside the
+        # tracked homology cache: with it removed the search still counted as
+        # complete and the resume crashed reading it.
+        self._stub_searches(monkeypatch)
+        prot = tmp_path / "speciesA.faa"
+        prot.write_text(">s1\nMACE\n")
+        work_dir = tmp_path / "func-annot"
+        cfg = _config(prot, work_dir)
+        fpipe.run_functional_annotation(cfg)
+        tracked = work_dir / self._search_record(load_manifest(work_dir)).output_file
+        for path in work_dir.glob("speciesA.*.json"):
+            if path != tracked:
+                path.unlink()
+        fpipe.run_functional_annotation(cfg)
+        assert "Protein kinase domain" in (work_dir / "speciesA.mod.faa").read_text()
+
+    def test_lost_cache_reruns_search(self, tmp_path, monkeypatch):
+        searches = self._stub_searches(monkeypatch)
+        prot = tmp_path / "speciesA.faa"
+        prot.write_text(">s1\nMACE\n")
+        work_dir = tmp_path / "func-annot"
+        cfg = _config(prot, work_dir)
+        fpipe.run_functional_annotation(cfg)
+        (work_dir / "speciesA.phmmer.search.json").unlink()
+        fpipe.run_functional_annotation(cfg)
+        assert searches == ["phmmer", "hmmscan"] * 2
+        assert "Protein kinase domain" in (work_dir / "speciesA.mod.faa").read_text()
+
+    def test_record_from_the_two_file_layout_reruns_search(self, tmp_path, monkeypatch):
+        # A run dir from before the single cache: the search record points at the
+        # homology-only <stem>.phmmer.json under a fingerprint without the cache
+        # name. Trusting it would skip the search and then miss the cache.
+        searches = self._stub_searches(monkeypatch)
+        prot = tmp_path / "speciesA.faa"
+        prot.write_text(">s1\nMACE\n")
+        work_dir = tmp_path / "func-annot"
+        cfg = _config(prot, work_dir)
+        fpipe.run_functional_annotation(cfg)
+        cache = fpipe._search_cache_path(cfg)
+        cache.unlink()
+        old = tmp_path / "speciesA.phmmer.json"
+        old.write_text(json.dumps(_HOMOLOGY))
+        files, scalars = fpipe._func_step_fingerprints(cfg, cache)["search"]
+        manifest = load_manifest(work_dir)
+        record = self._search_record(manifest)
+        record.output_file, record.output_md5 = str(old), md5_file(old)
+        record.input_md5 = fingerprint_inputs(
+            files, [s for s in scalars if not s.startswith("cache_path=")],
+        )
+        save_manifest(work_dir, manifest)
+
+        fpipe.run_functional_annotation(cfg)
+
+        assert searches == ["phmmer", "hmmscan"] * 2
+        assert cache.exists()
+
+    def test_record_of_a_cache_beside_the_proteome_reruns_search(self, tmp_path, monkeypatch):
+        # A run dir from before the cache moved into the work dir: the search record
+        # points at <proteome dir>/<stem>.phmmer.search.json under a fingerprint that
+        # names the cache (cache=<name>). Trusting it would skip the search and then
+        # read a cache the work dir does not have.
+        searches = self._stub_searches(monkeypatch)
+        prot = tmp_path / "speciesA.faa"
+        prot.write_text(">s1\nMACE\n")
+        work_dir = tmp_path / "func-annot"
+        cfg = _config(prot, work_dir)
+        fpipe.run_functional_annotation(cfg)
+        cache = fpipe._search_cache_path(cfg)
+        old = tmp_path / cache.name
+        cache.rename(old)
+        files, scalars = fpipe._func_step_fingerprints(cfg, cache)["search"]
+        manifest = load_manifest(work_dir)
+        record = self._search_record(manifest)
+        record.output_file, record.output_md5 = str(old), md5_file(old)
+        record.input_md5 = fingerprint_inputs(
+            files,
+            [f"cache={old.name}" if s.startswith("cache_path=") else s for s in scalars],
+            work_dir,
+        )
+        save_manifest(work_dir, manifest)
+
+        fpipe.run_functional_annotation(cfg)
+
+        assert searches == ["phmmer", "hmmscan"] * 2
+        assert cache.exists()
+        assert "Protein kinase domain" in (work_dir / "speciesA.mod.faa").read_text()
+
+
+class TestOutputLocation:
+    """The search cache and the annotated FASTA go to the func-annot work dir;
+    nothing is written next to the input proteome."""
+
+    def test_nothing_is_written_beside_the_proteome(self, tmp_path, monkeypatch):
+        TestSearchCache._stub_searches(monkeypatch)
+        prot = tmp_path / "input" / "speciesA.faa"
+        prot.parent.mkdir()
+        prot.write_text(">s1\nMACE\n")
+        work_dir = tmp_path / "func-annot"
+
+        fpipe.run_functional_annotation(_config(prot, work_dir))
+
+        assert [p.name for p in prot.parent.iterdir()] == ["speciesA.faa"]
+        assert (work_dir / "speciesA.phmmer.search.json").exists()
+        assert "Protein kinase domain" in (work_dir / "speciesA.mod.faa").read_text()
+
+    def test_same_stem_from_another_dir_is_searched_again(self, tmp_path, monkeypatch):
+        """Two proteomes named speciesA.faa write the same names into the work dir;
+        going back to the first searches it again instead of reusing the second's
+        hits."""
+        searched: list[str] = []
+
+        def phmmer(proteins, *args):
+            searched.append(proteins.parent.name)
+            return {"s1": {proteins.parent.name: {"description": "hit", "evalue": 1e-30}}}
+
+        monkeypatch.setattr(fpipe, "_run_uniprot_phmmer", phmmer)
+        monkeypatch.setattr(fpipe, "_run_pfam_hmmscan", lambda *a: {})
+        work_dir = tmp_path / "func-annot"
+        a, b = tmp_path / "a" / "speciesA.faa", tmp_path / "b" / "speciesA.faa"
+        for prot in (a, b):
+            prot.parent.mkdir()
+            prot.write_text(">s1\nMACE\n")
+
+        for prot in (a, b, a):
+            fpipe.run_functional_annotation(_config(prot, work_dir))
+
+        assert searched == ["a", "b", "a"]
+        assert "a: hit" in (work_dir / "speciesA.mod.faa").read_text()
+
+
+class TestMovedRunDir:
+    def test_moved_run_dir_resumes(self, tmp_path, monkeypatch):
+        """A proteome inside a run dir moved elsewhere keeps its step keys, cache
+        and fingerprints: the resume is a no-op."""
+        counts = _install_counts(monkeypatch)
+
+        def config(run_dir):
+            return FunctionalConfig(
+                proteins=run_dir / "speciesA.faa", work_dir=run_dir / "func-annot",
+                manifest_dir=run_dir, num_cpu=1,
+            )
+
+        run_a, run_b = tmp_path / "runA", tmp_path / "runB"
+        run_a.mkdir()
+        (run_a / "speciesA.faa").write_text(">s1\nMACE\n")
+        fpipe.run_functional_annotation(config(run_a))
+        shutil.move(run_a, run_b)
+
+        fpipe.run_functional_annotation(config(run_b))
+
+        assert counts == {"search": 1, "annotate_fasta": 1, "annotate_gff3": 0}
+
+
+# --- manifest location --------------------------------------------------------
+
+
+class TestManifestLocation:
+    """The functional steps record into the run-dir manifest (``manifest_dir``),
+    shared with the other pipelines; their outputs stay under ``work_dir``."""
+
+    def test_records_into_shared_run_dir_manifest(self, tmp_path, monkeypatch):
+        counts = _install_counts(monkeypatch)
+        run_dir = tmp_path / "run"
+        work_dir = run_dir / "func-annot"
+        run_dir.mkdir()
+        # An earlier pipeline's record already in the run-dir manifest.
+        save_manifest(run_dir, RunManifest(steps={
+            "annotation/final": StepRecord(
+                name="annotation/final", status=StepStatus.completed,
+            ),
+        }))
+        prot = tmp_path / "speciesA.faa"
+        prot.write_text(">s1\nMACE\n")
+        gff3 = tmp_path / "genes.gff3"
+        gff3.write_text("##gff-version 3\nchr1\teukan\tgene\t1\t100\t.\t+\t.\tID=g1\n")
+        cfg = FunctionalConfig(
+            proteins=prot, work_dir=work_dir, manifest_dir=run_dir,
+            gff3_path=gff3, num_cpu=1,
+        )
+
+        fpipe.run_functional_annotation(cfg)
+
+        assert not (work_dir / MANIFEST_FILE).exists()
+        manifest = load_manifest(run_dir)
+        assert manifest is not None
+        assert "annotation/final" in manifest.steps  # added to, not replaced
+        assert {k.split(".")[0] for k in manifest.steps if k.startswith("functional/")} == {
+            "functional/search", "functional/annotate_fasta", "functional/annotate_gff3",
+        }
+        assert (work_dir / "genes.mod.gff3").exists()
+        # A resume reads the same manifest back: an identical re-run is a no-op.
+        fpipe.run_functional_annotation(cfg)
+        assert counts == {"search": 1, "annotate_fasta": 1, "annotate_gff3": 1}
+
+
+# pyhmmer's bundled RRE family HMMs (10 models), unpressed and pressed.
+RREFAM = Path(pyhmmer.__file__).parent / "tests" / "data" / "hmms" / "txt" / "RREFam.hmm"
+PRESSED_RREFAM = RREFAM.parents[1] / "db" / "RREFam.hmm"
+
+
+@pytest.mark.skipif(not PRESSED_RREFAM.exists(), reason="pyhmmer installed without its test HMMs")
+class TestPfamLogLine:
+    @pytest.mark.parametrize(("db", "target"), [
+        (PRESSED_RREFAM, "10 profiles"), (RREFAM, "the unpressed HMMs"),
+    ], ids=["pressed", "unpressed"])
+    def test_names_what_hmmscan_scans(self, tmp_path, caplog, db, target):
+        proteins = tmp_path / "p.faa"
+        proteins.write_text(">q1\nMKVLAAGIVGLLLAGCSSQ\n>q2\nMSTNPKPQRKTKRNTNRRPQDVKFPGG\n")
+        with caplog.at_level(logging.INFO, logger="eukan.functional.pipeline"):
+            fpipe._run_pfam_hmmscan(proteins, db, 1, 1e-3)
+        assert f"Loading Pfam HMMs from {db}" in caplog.text
+        assert f"Running hmmscan (2 queries vs {target}, 1 CPUs)..." in caplog.text

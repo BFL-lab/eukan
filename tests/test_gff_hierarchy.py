@@ -1,8 +1,11 @@
 """Tests for eukan.gff.hierarchy — feature hierarchy operations."""
 
+import os
+import subprocess
+import sys
+
 from eukan.gff.hierarchy import (
     add_missing_feats_to_gff3,
-    fix_CDS_phases,
     prettify_gff3,
 )
 
@@ -57,6 +60,49 @@ class TestAddMissingFeats:
         cds_feats = [f for f in new_feats if f.featuretype == "CDS"]
         assert len(cds_feats) == 2
 
+    def test_CDS_from_exons_is_phased_from_the_5_prime_exon(self, db_from_string):
+        """Exon-only models (SNAP's output) are phased from each mRNA's
+        5'-most exon, where the start codon is, not from genomic coordinates."""
+        gff = (
+            "chr1\ttest\tgene\t100\t600\t.\t+\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t100\t600\t.\t+\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\ttest\texon\t100\t201\t.\t+\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\texon\t400\t600\t.\t+\t.\tID=exon2;Parent=mrna1\n"
+            "chr1\ttest\tgene\t1000\t1601\t.\t-\t.\tID=gene2\n"
+            "chr1\ttest\tmRNA\t1000\t1601\t.\t-\t.\tID=mrna2;Parent=gene2\n"
+            "chr1\ttest\texon\t1000\t1200\t.\t-\t.\tID=exon3;Parent=mrna2\n"
+            "chr1\ttest\texon\t1400\t1601\t.\t-\t.\tID=exon4;Parent=mrna2\n"
+        )
+        phases = {
+            (f.start, f.end): str(f.frame)
+            for f in add_missing_feats_to_gff3(db_from_string(gff))
+            if f.featuretype == "CDS"
+        }
+        # Plus: 102 nt at phase 0 leaves 0 for the next exon. Minus: 1400-1601
+        # (202 nt) is the 5'-most exon, leaving (3 - 202 % 3) % 3 = 2.
+        assert phases == {
+            (100, 201): "0", (400, 600): "0", (1400, 1601): "0", (1000, 1200): "2",
+        }
+
+    def test_minus_strand_CDS_phases_walk_down_from_the_highest_exon(self, db_from_string):
+        """A minus-strand model is phased from its highest-coordinate exon down,
+        each exon's phase set by the bases its 5' neighbour leaves over."""
+        gff = (
+            "chr1\ttest\tgene\t1000\t1700\t.\t-\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t1000\t1700\t.\t-\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\ttest\texon\t1000\t1099\t.\t-\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\texon\t1300\t1351\t.\t-\t.\tID=exon2;Parent=mrna1\n"
+            "chr1\ttest\texon\t1601\t1700\t.\t-\t.\tID=exon3;Parent=mrna1\n"
+        )
+        phases = {
+            (f.start, f.end): str(f.frame)
+            for f in add_missing_feats_to_gff3(db_from_string(gff))
+            if f.featuretype == "CDS"
+        }
+        # 1601-1700: 100 nt at phase 0 leave 1 base, so 1300-1351 is in phase 2;
+        # its 52 nt less those 2 leave 2 bases, so 1000-1099 is in phase 1.
+        assert phases == {(1601, 1700): "0", (1300, 1351): "2", (1000, 1099): "1"}
+
     def test_no_changes_when_complete(self, db_from_string):
         """Complete hierarchy should not generate any new features."""
         gff = (
@@ -68,67 +114,6 @@ class TestAddMissingFeats:
         db = db_from_string(gff)
         new_feats = list(add_missing_feats_to_gff3(db))
         assert len(new_feats) == 0
-
-
-# ---------------------------------------------------------------------------
-# fix_CDS_phases
-# ---------------------------------------------------------------------------
-
-
-class TestFixCDSPhases:
-    def test_single_cds_phase_zero(self, db_from_string):
-        """Single-CDS gene should have phase 0."""
-        gff = (
-            "chr1\ttest\tgene\t100\t400\t.\t+\t.\tID=gene1\n"
-            "chr1\ttest\tmRNA\t100\t400\t.\t+\t.\tID=mrna1;Parent=gene1\n"
-            "chr1\ttest\texon\t100\t400\t.\t+\t.\tID=exon1;Parent=mrna1\n"
-            "chr1\ttest\tCDS\t100\t400\t.\t+\t.\tID=cds1;Parent=mrna1\n"
-        )
-        db = db_from_string(gff)
-        features = list(fix_CDS_phases(db))
-
-        cds_feats = [f for f in features if f.featuretype == "CDS"]
-        assert len(cds_feats) == 1
-        assert cds_feats[0].frame == "0"
-
-    def test_multi_cds_phase_propagation(self, db_from_string):
-        """Multi-CDS gene should have correct phase propagation."""
-        gff = (
-            "chr1\ttest\tgene\t100\t600\t.\t+\t.\tID=gene1\n"
-            "chr1\ttest\tmRNA\t100\t600\t.\t+\t.\tID=mrna1;Parent=gene1\n"
-            "chr1\ttest\texon\t100\t200\t.\t+\t.\tID=exon1;Parent=mrna1\n"
-            "chr1\ttest\texon\t400\t600\t.\t+\t.\tID=exon2;Parent=mrna1\n"
-            "chr1\ttest\tCDS\t100\t200\t.\t+\t.\tID=cds1;Parent=mrna1\n"
-            "chr1\ttest\tCDS\t400\t600\t.\t+\t.\tID=cds2;Parent=mrna1\n"
-        )
-        db = db_from_string(gff)
-        features = list(fix_CDS_phases(db))
-
-        cds_feats = [f for f in features if f.featuretype == "CDS"]
-        assert len(cds_feats) == 2
-        assert cds_feats[0].frame == "0"
-
-        # First CDS is 101 nt (100-200 inclusive), phase 0
-        # next_phase = (3 - ((101 - 0) % 3)) % 3 = (3 - 2) % 3 = 1
-        assert cds_feats[1].frame == "1"
-
-    def test_minus_strand_phase(self, db_from_string):
-        """Minus strand: phases should be computed from the last CDS first."""
-        gff = (
-            "chr1\ttest\tgene\t100\t600\t.\t-\t.\tID=gene1\n"
-            "chr1\ttest\tmRNA\t100\t600\t.\t-\t.\tID=mrna1;Parent=gene1\n"
-            "chr1\ttest\texon\t100\t200\t.\t-\t.\tID=exon1;Parent=mrna1\n"
-            "chr1\ttest\texon\t400\t600\t.\t-\t.\tID=exon2;Parent=mrna1\n"
-            "chr1\ttest\tCDS\t100\t200\t.\t-\t.\tID=cds1;Parent=mrna1\n"
-            "chr1\ttest\tCDS\t400\t600\t.\t-\t.\tID=cds2;Parent=mrna1\n"
-        )
-        db = db_from_string(gff)
-        features = list(fix_CDS_phases(db))
-
-        cds_feats = [f for f in features if f.featuretype == "CDS"]
-        assert len(cds_feats) == 2
-        # On minus strand, the last CDS (400-600, 201 nt) is processed first
-        assert cds_feats[0].frame == "0"
 
 
 # ---------------------------------------------------------------------------
@@ -157,4 +142,120 @@ class TestPrettifyGFF3:
         # gffutils stores attribute values as lists.
         assert genes[0].attributes["ID"] == ["TEST_00001"]
         assert genes[1].attributes["ID"] == ["TEST_00002"]
-        assert all(f.source == "eukannotpass" for f in features)
+        assert all(f.source == "eukan" for f in features)
+
+    def test_orf_patch_genes_keep_their_label_and_all_else_is_eukan(self, db_from_string):
+        """Column 2 is eukan on every row except those of a gene the transcript-ORF
+        patch added (eukan.annotation.consensus), which keep eukan-orf-patch."""
+        gff = (
+            "chr1\tcombinr\tgene\t100\t400\t.\t+\t.\tID=gene1\n"
+            "chr1\tcombinr\tmRNA\t100\t400\t.\t+\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\tcombinr\texon\t100\t400\t.\t+\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\tcombinr\tCDS\t100\t400\t.\t+\t0\tID=cds1;Parent=mrna1\n"
+            "chr1\teukan-orf-patch\tgene\t600\t900\t.\t+\t.\tID=gene2\n"
+            "chr1\teukan-orf-patch\tmRNA\t600\t900\t.\t+\t.\tID=mrna2;Parent=gene2\n"
+            "chr1\teukan-orf-patch\texon\t600\t900\t.\t+\t.\tID=exon2;Parent=mrna2\n"
+            "chr1\teukan-orf-patch\tCDS\t600\t900\t.\t+\t0\tID=cds2;Parent=mrna2\n"
+        )
+        features = prettify_gff3(db_from_string(gff), "TEST")
+        assert [(f.featuretype, f.source) for f in features] == [
+            ("gene", "eukan"), ("mRNA", "eukan"), ("exon", "eukan"), ("CDS", "eukan"),
+            ("gene", "eukan-orf-patch"), ("mRNA", "eukan-orf-patch"),
+            ("exon", "eukan-orf-patch"), ("CDS", "eukan-orf-patch"),
+        ]
+
+    def _cds_frames(self, db):
+        return {
+            (f.start, f.end): f.frame
+            for f in prettify_gff3(db, "TEST") if f.featuretype == "CDS"
+        }
+
+    def test_single_cds_phase_zero(self, db_from_string):
+        gff = (
+            "chr1\ttest\tgene\t100\t400\t.\t+\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t100\t400\t.\t+\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\ttest\texon\t100\t400\t.\t+\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t100\t400\t.\t+\t2\tID=cds1;Parent=mrna1\n"
+        )
+        assert self._cds_frames(db_from_string(gff)) == {(100, 400): "0"}
+
+    def test_multi_cds_phase_propagation(self, db_from_string):
+        gff = (
+            "chr1\ttest\tgene\t100\t600\t.\t+\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t100\t600\t.\t+\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\ttest\texon\t100\t200\t.\t+\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\texon\t400\t600\t.\t+\t.\tID=exon2;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t100\t200\t.\t+\t.\tID=cds1;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t400\t600\t.\t+\t.\tID=cds2;Parent=mrna1\n"
+        )
+        # 101 nt at phase 0 leaves (3 - 101 % 3) % 3 = 1 for the next CDS.
+        assert self._cds_frames(db_from_string(gff)) == {(100, 200): "0", (400, 600): "1"}
+
+    def test_minus_strand_phase_starts_at_the_last_cds(self, db_from_string):
+        gff = (
+            "chr1\ttest\tgene\t100\t601\t.\t-\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t100\t601\t.\t-\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\ttest\texon\t100\t200\t.\t-\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\texon\t400\t601\t.\t-\t.\tID=exon2;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t100\t200\t.\t-\t.\tID=cds1;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t400\t601\t.\t-\t.\tID=cds2;Parent=mrna1\n"
+        )
+        # The 5'-most CDS on the minus strand (400-601, 202 nt) is phase 0.
+        assert self._cds_frames(db_from_string(gff)) == {(400, 601): "0", (100, 200): "2"}
+
+    def test_five_prime_partial_keeps_its_first_cds_phase(self, db_from_string):
+        """A 5'-partial model (combinr's partial5) has no start codon to anchor
+        phase 0: its producer's phase stands, and the rest follow from it."""
+        gff = (
+            "chr1\ttest\tgene\t100\t600\t.\t+\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t100\t600\t.\t+\t.\tID=mrna1;Parent=gene1;partial5=true\n"
+            "chr1\ttest\texon\t100\t200\t.\t+\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\texon\t400\t600\t.\t+\t.\tID=exon2;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t100\t200\t.\t+\t2\tID=cds1;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t400\t600\t.\t+\t.\tID=cds2;Parent=mrna1\n"
+        )
+        # 101 nt at phase 2 leaves (3 - 99 % 3) % 3 = 0 for the next CDS.
+        assert self._cds_frames(db_from_string(gff)) == {(100, 200): "2", (400, 600): "0"}
+
+    def test_only_exon_and_cds_children_are_written(self, db_from_string):
+        """UTR features are left out; exons extending past the CDS carry them."""
+        gff = (
+            "chr1\ttest\tgene\t100\t600\t.\t+\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t100\t600\t.\t+\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\ttest\texon\t100\t600\t.\t+\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\tfive_prime_UTR\t100\t199\t.\t+\t.\tID=u5;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t200\t500\t.\t+\t0\tID=cds1;Parent=mrna1\n"
+            "chr1\ttest\tthree_prime_UTR\t501\t600\t.\t+\t.\tID=u3;Parent=mrna1\n"
+        )
+        types = sorted(f.featuretype for f in prettify_gff3(db_from_string(gff), "TEST"))
+        assert types == ["CDS", "exon", "gene", "mRNA"]
+
+    def test_block_order_does_not_depend_on_the_hash_seed(self):
+        """Each mRNA's exons come before its CDSs under any PYTHONHASHSEED, so
+        final.gff3 is byte-stable across runs."""
+        gff = (
+            "chr1\ttest\tgene\t100\t600\t.\t+\t.\tID=gene1\n"
+            "chr1\ttest\tmRNA\t100\t600\t.\t+\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\ttest\tCDS\t100\t200\t.\t+\t0\tID=cds1;Parent=mrna1\n"
+            "chr1\ttest\texon\t100\t200\t.\t+\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\ttest\tCDS\t400\t600\t.\t+\t1\tID=cds2;Parent=mrna1\n"
+            "chr1\ttest\texon\t400\t600\t.\t+\t.\tID=exon2;Parent=mrna1\n"
+        )
+        code = (
+            "import sys, gffutils\n"
+            "from eukan.gff.hierarchy import prettify_gff3\n"
+            "db = gffutils.create_db(sys.stdin.read(), ':memory:', from_string=True)\n"
+            "for f in prettify_gff3(db, 'TEST'):\n"
+            "    print(f)\n"
+        )
+        # Seeds 0 and 3 iterate {"exon", "CDS"} in opposite orders.
+        outs = [
+            subprocess.run(
+                [sys.executable, "-c", code], input=gff, capture_output=True, text=True,
+                check=True, env={**os.environ, "PYTHONHASHSEED": seed},
+            ).stdout
+            for seed in ("0", "3")
+        ]
+        assert outs[0] == outs[1]
+        types = [line.split("\t")[2] for line in outs[0].splitlines()]
+        assert types == ["gene", "mRNA", "exon", "exon", "CDS", "CDS"]

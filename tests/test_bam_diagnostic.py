@@ -11,6 +11,7 @@ Builds tiny in-memory BAMs + small FASTA fixtures to exercise:
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -18,22 +19,29 @@ import pysam
 import pytest
 
 from eukan.assembly.bam_diagnostic import (
+    DiagnosticParams,
     DiagnosticReport,
     IntronStats,
     LocusConsistencyStats,
+    NonCanonicalSpliceLevel,
     SoftClipStats,
+    TransSplicingLevel,
     _cluster_consensus,
     _cluster_key,
-    _dinucleotide,
-    _extract_clips,
     _hamming_distance,
     _is_low_complexity,
-    _reverse_complement,
-    _walk_introns,
+    _log_trans_splicing_verdict,
     compute_verdict,
     diagnose_bam,
+    load_verdict,
+    to_summary_dict,
 )
+from eukan.assembly.bam_reads import dinucleotide as _dinucleotide
+from eukan.assembly.bam_reads import extract_clips as _extract_clips
+from eukan.assembly.bam_reads import walk_introns as _walk_introns
+from eukan.infra.artifacts import Artifact
 from eukan.infra.genome import ContigIndex
+from eukan.infra.genome import reverse_complement as _reverse_complement
 
 
 def _write_fasta(path: Path, contigs: list[tuple[str, str]]) -> Path:
@@ -315,7 +323,7 @@ def test_diagnose_bam_trans_splicing_signature(
 ):
     report = diagnose_bam(
         trans_splice_like_bam, synthetic_genome,
-        min_clip_len=8, cluster_key_len=12, min_mapq=20,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12, min_mapq=20),
     )
     soft, intron = report.softclip, report.intron
     assert soft.n_reads_scanned == 3
@@ -348,7 +356,7 @@ def test_diagnose_bam_tallies_polya_without_perturbing_sl_verdict(tmp_path, synt
         for i in range(5)
     ]
     bam = _write_bam(tmp_path / "polya.bam", contigs, reads)
-    report = diagnose_bam(bam, synthetic_genome, min_clip_len=8, min_mapq=20)
+    report = diagnose_bam(bam, synthetic_genome, DiagnosticParams(min_clip_len=8, min_mapq=20))
 
     assert report.polya.n_polya == 5
     assert report.polya.n_polyt == 0
@@ -404,7 +412,7 @@ def test_diagnose_bam_filters_low_mapq_and_secondary(tmp_path, synthetic_genome)
         ),
     ]
     bam = _write_bam(tmp_path / "f.bam", contigs, reads)
-    soft = diagnose_bam(bam, synthetic_genome, min_mapq=20).softclip
+    soft = diagnose_bam(bam, synthetic_genome, DiagnosticParams(min_mapq=20)).softclip
     assert soft.n_reads_scanned == 1
 
 
@@ -443,7 +451,7 @@ def test_diagnose_bam_introns_and_dinuc(tmp_path):
         ),
     ]
     bam = _write_bam(tmp_path / "i.bam", contigs, reads)
-    report = diagnose_bam(bam, fa, min_clip_len=8)
+    report = diagnose_bam(bam, fa, DiagnosticParams(min_clip_len=8))
     soft, intron = report.softclip, report.intron
     assert soft.n_clips_total == 0  # no clips on these reads
     assert intron.n_introns_total == 2
@@ -456,7 +464,7 @@ def test_diagnose_bam_top_clusters_sorted_by_locus_count(
 ):
     soft = diagnose_bam(
         trans_splice_like_bam, synthetic_genome,
-        min_clip_len=8, cluster_key_len=12, top_n=10,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12, top_n=10),
     ).softclip
     keys_in_order = [k for k, _n_loci, _n_reads in soft.top_clusters]
     assert keys_in_order[0] == "GGGGGGGGGGGG"
@@ -496,7 +504,10 @@ def test_locus_consistent_with_varying_clip_lengths(tmp_path, synthetic_genome):
             _read_with_5p_clip("c", 100, "CCCCTTTTAAGGGGGGGG"),   # 18 bp (full key)
         ],
     )
-    report = diagnose_bam(bam, synthetic_genome, min_clip_len=8, cluster_key_len=12)
+    report = diagnose_bam(
+        bam, synthetic_genome,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12),
+    )
     lc = report.locus_consistency
     assert lc.n_loci_total == 1
     assert lc.n_loci_consistent == 1
@@ -518,7 +529,10 @@ def test_locus_inconsistent_when_long_keys_differ(tmp_path, synthetic_genome):
             _read_with_5p_clip("b", 100, "AAAATTTTCCCCCCCC"),  # last 12 = TTTTCCCCCCCC
         ],
     )
-    report = diagnose_bam(bam, synthetic_genome, min_clip_len=8, cluster_key_len=12)
+    report = diagnose_bam(
+        bam, synthetic_genome,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12),
+    )
     lc = report.locus_consistency
     assert lc.n_loci_total == 1
     assert lc.n_loci_inconsistent == 1
@@ -535,7 +549,10 @@ def test_locus_short_only_when_all_clips_below_K(tmp_path, synthetic_genome):
             _read_with_5p_clip("b", 100, "AAAAAAAA"),  # same clip
         ],
     )
-    report = diagnose_bam(bam, synthetic_genome, min_clip_len=8, cluster_key_len=12)
+    report = diagnose_bam(
+        bam, synthetic_genome,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12),
+    )
     lc = report.locus_consistency
     assert lc.n_loci_total == 1
     assert lc.n_loci_short_only == 1
@@ -563,7 +580,10 @@ def test_motif_share_histogram_buckets(tmp_path, synthetic_genome):
             _read_with_5p_clip("c2", 300, "GGGGCCCCGGGGGGGG"),
         ],
     )
-    report = diagnose_bam(bam, synthetic_genome, min_clip_len=8, cluster_key_len=12)
+    report = diagnose_bam(
+        bam, synthetic_genome,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12),
+    )
     lc = report.locus_consistency
     assert lc.n_loci_total == 3
     assert lc.n_loci_consistent == 3
@@ -580,7 +600,10 @@ def test_singleton_locus_counted_separately(tmp_path, synthetic_genome):
             _read_with_5p_clip("a", 100, "AAAATTTTGGGGGGGG"),
         ],
     )
-    report = diagnose_bam(bam, synthetic_genome, min_clip_len=8, cluster_key_len=12)
+    report = diagnose_bam(
+        bam, synthetic_genome,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12),
+    )
     lc = report.locus_consistency
     assert lc.n_loci_total == 1
     assert lc.n_loci_singleton == 1
@@ -693,7 +716,8 @@ def test_diagnose_bam_consensus_excludes_off_anchor_longest_clip(
 
     bam = _write_bam(tmp_path / "filter.bam", [("chr1", 2000)], reads)
     report = diagnose_bam(
-        bam, synthetic_genome, min_clip_len=8, cluster_key_len=12,
+        bam, synthetic_genome,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12),
     )
     soft = report.softclip
     assert soft.cluster_consensus.get("CTGTACTTTATT", "") == sl_clip
@@ -778,6 +802,40 @@ def test_compute_verdict_skips_low_complexity_top_cluster():
     assert verdict.trans_splicing.call == "MODERATE"
 
 
+def test_load_verdict_reads_back_the_summary(tmp_path):
+    """load_verdict returns the verdict to_summary_dict wrote, calls as members."""
+    report = _make_report(
+        top_clusters=[("ATCGATCGATCG", 500, 5_000)], canonical_pct=85.0,
+        by_dinucleotide={"GT-AG": 850, "CG-AG": 150},
+    )
+    verdict = compute_verdict(report)
+    (tmp_path / Artifact.SOFTCLIP_DIAGNOSTIC.value).write_text(
+        json.dumps(to_summary_dict(report, verdict), indent=2)
+    )
+
+    loaded = load_verdict(tmp_path)
+
+    assert loaded == verdict
+    assert loaded.trans_splicing.call is TransSplicingLevel.MODERATE
+    assert loaded.non_canonical_splice.call is NonCanonicalSpliceLevel.MODERATE
+
+
+@pytest.mark.parametrize("damage", ["absent", "truncated", "field_missing", "unknown_call"])
+def test_load_verdict_none_without_a_whole_verdict(tmp_path, damage):
+    report = _make_report(top_clusters=[], canonical_pct=99.0)
+    summary = to_summary_dict(report, compute_verdict(report))
+    if damage == "field_missing":
+        del summary["verdict"]["trans_splicing"]["sl_bucket_pct_of_consistent"]
+    elif damage == "unknown_call":
+        summary["verdict"]["non_canonical_splice"]["call"] = "SEVERE"
+    text = json.dumps(summary)
+    if damage != "absent":
+        path = tmp_path / Artifact.SOFTCLIP_DIAGNOSTIC.value
+        path.write_text(text[:20] if damage == "truncated" else text)
+
+    assert load_verdict(tmp_path) is None
+
+
 def test_hamming_distance_helper():
     assert _hamming_distance("ACGT", "ACGT") == 0
     assert _hamming_distance("ACGT", "ACGA") == 1
@@ -791,14 +849,17 @@ def test_locus_consistent_under_hamming_tolerance(tmp_path, synthetic_genome):
     # Dominant K-bp suffix = "TTTTGGGGGGGG" (3 reads → wins seed selection)
     # Variant 1: differs at position 11 — TTTTGGGGGGGT (1 read)
     # Variant 2: differs at position 9  — TTTTGGGGGAGG (1 read)
-    # All within H=1 of dominant. Default hamming_tolerance=1 → consistent.
+    # All within H=1 of dominant, inside the default hamming_tolerance (2) → consistent.
     reads = []
     for i in range(3):
         reads.append(_read_with_5p_clip(f"dom{i}", 100, "AAAATTTTGGGGGGGG"))
     reads.append(_read_with_5p_clip("v1", 100, "AAAATTTTGGGGGGGT"))
     reads.append(_read_with_5p_clip("v2", 100, "AAAATTTTGGGGGAGG"))
     bam = _write_bam(tmp_path / "tolerant.bam", [("chr1", 1000)], reads)
-    report = diagnose_bam(bam, synthetic_genome, min_clip_len=8, cluster_key_len=12)
+    report = diagnose_bam(
+        bam, synthetic_genome,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12),
+    )
     lc = report.locus_consistency
     assert lc.n_loci_total == 1
     assert lc.n_loci_consistent == 1
@@ -816,8 +877,8 @@ def test_locus_strict_inconsistent_under_tolerance_zero(tmp_path, synthetic_geno
     reads.append(_read_with_5p_clip("v2", 100, "AAAATTTTGGGGGAGG"))
     bam = _write_bam(tmp_path / "strict.bam", [("chr1", 1000)], reads)
     report = diagnose_bam(
-        bam, synthetic_genome, min_clip_len=8, cluster_key_len=12,
-        hamming_tolerance=0,
+        bam, synthetic_genome,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12, hamming_tolerance=0),
     )
     lc = report.locus_consistency
     assert lc.n_loci_inconsistent == 1
@@ -842,7 +903,10 @@ def test_canonical_merging_across_loci(tmp_path, synthetic_genome):
         reads.append(_read_with_5p_clip(f"c{i}", 300, "TTTTAAAACCCCGGCG"))
 
     bam = _write_bam(tmp_path / "canonical.bam", [("chr1", 1000)], reads)
-    report = diagnose_bam(bam, synthetic_genome, min_clip_len=8, cluster_key_len=12)
+    report = diagnose_bam(
+        bam, synthetic_genome,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12),
+    )
     lc = report.locus_consistency
     soft = report.softclip
     # All 3 loci collapse to a single canonical cluster → share = 3 each
@@ -870,8 +934,8 @@ def test_canonical_no_merging_when_tolerance_zero(tmp_path, synthetic_genome):
 
     bam = _write_bam(tmp_path / "no_merge.bam", [("chr1", 1000)], reads)
     report = diagnose_bam(
-        bam, synthetic_genome, min_clip_len=8, cluster_key_len=12,
-        hamming_tolerance=0, cluster_hamming_tolerance=0,
+        bam, synthetic_genome,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12, hamming_tolerance=0, cluster_hamming_tolerance=0),
     )
     soft = report.softclip
     assert soft.n_clusters == 3
@@ -891,7 +955,10 @@ def test_locus_consistent_when_outlier_fraction_below_threshold(
     reads.append(_read_with_5p_clip("o", 100, "AAAACCCCCCCCCCCC"))
 
     bam = _write_bam(tmp_path / "fraction_pass.bam", [("chr1", 1000)], reads)
-    report = diagnose_bam(bam, synthetic_genome, min_clip_len=8, cluster_key_len=12)
+    report = diagnose_bam(
+        bam, synthetic_genome,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12),
+    )
     lc = report.locus_consistency
     assert lc.n_loci_consistent == 1
     assert lc.n_loci_inconsistent == 0
@@ -908,7 +975,10 @@ def test_locus_inconsistent_when_outlier_fraction_above_threshold(
     reads.append(_read_with_5p_clip("o", 100, "AAAACCCCCCCCCCCC"))
 
     bam = _write_bam(tmp_path / "fraction_fail.bam", [("chr1", 1000)], reads)
-    report = diagnose_bam(bam, synthetic_genome, min_clip_len=8, cluster_key_len=12)
+    report = diagnose_bam(
+        bam, synthetic_genome,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12),
+    )
     lc = report.locus_consistency
     assert lc.n_loci_inconsistent == 1
     assert lc.n_loci_consistent == 0
@@ -924,8 +994,8 @@ def test_locus_strict_when_min_consistency_fraction_is_1(tmp_path, synthetic_gen
 
     bam = _write_bam(tmp_path / "strict_frac.bam", [("chr1", 1000)], reads)
     report = diagnose_bam(
-        bam, synthetic_genome, min_clip_len=8, cluster_key_len=12,
-        min_consistency_fraction=1.0,
+        bam, synthetic_genome,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12, min_consistency_fraction=1.0),
     )
     lc = report.locus_consistency
     assert lc.n_loci_inconsistent == 1
@@ -954,8 +1024,8 @@ def test_split_tolerance_per_locus_tolerant_cross_locus_strict(
 
     bam = _write_bam(tmp_path / "split.bam", [("chr1", 1000)], reads)
     report = diagnose_bam(
-        bam, synthetic_genome, min_clip_len=8, cluster_key_len=12,
-        hamming_tolerance=1, cluster_hamming_tolerance=0,
+        bam, synthetic_genome,
+        DiagnosticParams(min_clip_len=8, cluster_key_len=12, hamming_tolerance=1, cluster_hamming_tolerance=0),
     )
     lc = report.locus_consistency
     soft = report.softclip
@@ -975,7 +1045,6 @@ def test_split_tolerance_per_locus_tolerant_cross_locus_strict(
 def test_log_trans_splicing_verdict_flags_adapter(caplog):
     """A dominant soft-clip cluster that is Illumina adapter read-through is
     reported as adapter contamination, not as a spliced leader."""
-    from eukan.assembly.align_hints import _log_trans_splicing_verdict
     report = _make_report(
         top_clusters=[("AGATCGGAAGAG", 2000, 20_000)],
         canonical_pct=99.0,
@@ -995,7 +1064,6 @@ def test_log_trans_splicing_verdict_flags_adapter(caplog):
 def test_log_trans_splicing_verdict_flags_adapter_even_when_absent(caplog):
     """Adapter is surfaced even when its support is below the trans-splicing
     thresholds (call ABSENT)."""
-    from eukan.assembly.align_hints import _log_trans_splicing_verdict
     report = _make_report(
         top_clusters=[("AGATCGGAAGAG", 20, 500)],  # below MODERATE
         canonical_pct=99.0,
@@ -1011,7 +1079,6 @@ def test_log_trans_splicing_verdict_flags_adapter_even_when_absent(caplog):
 def test_log_trans_splicing_verdict_genuine_sl_not_flagged(caplog):
     """A genuine (non-adapter) spliced-leader signal logs the trans-splicing
     warning and says nothing about adapters."""
-    from eukan.assembly.align_hints import _log_trans_splicing_verdict
     report = _make_report(
         top_clusters=[("ATCGATCGATCG", 2000, 20_000)],
         canonical_pct=99.0,

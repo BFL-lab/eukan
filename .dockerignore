@@ -8,9 +8,8 @@
 !README.md
 !eukan/
 !tests/
-!tools.toml
-!configs/
 !docker/
+!scripts/install-extras.sh
 
 # GeneMark (optional, user-provided)
 !gmes_linux_64*.tar.gz

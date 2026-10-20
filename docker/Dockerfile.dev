@@ -1,7 +1,12 @@
 # Development image — extends the main eukan image with test tooling.
 #
 # Build:  docker build -t eukan-dev -f docker/Dockerfile.dev .
-# Usage:  docker run --rm ... --entrypoint python eukan-dev tests/run_pipeline.py setup-test-data
+# Usage:  docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/data" \
+#             --entrypoint python eukan-dev /opt/eukan/tests/run_pipeline.py setup-test-data
+#
+# The tests are copied to /opt/eukan/tests, not the WORKDIR (/data), so the
+# script is named by its absolute path; its relative defaults (tests/data,
+# tests/pipeline-run) then resolve under the mounted /data.
 
 FROM eukan
 

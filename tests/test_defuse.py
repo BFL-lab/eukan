@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from eukan.assembly import defuse
+from eukan.assembly import defuse, diamond
 from eukan.assembly.defuse import (
     _Hit,
     _overlap_frac,
@@ -11,7 +11,7 @@ from eukan.assembly.defuse import (
     run_defuse,
     split_fused,
 )
-from eukan.assembly.jaccard import _Tx
+from eukan.gff.transcripts import Transcript as _Tx
 from eukan.settings import AssemblyConfig
 
 
@@ -145,8 +145,8 @@ def test_run_defuse_diamond_command_and_copy_through(tmp_path, monkeypatch):
     (tmp_path / "trinity-denovo.genome.gff3").write_text(_exon_gff3("t1"))
     (tmp_path / "trinity-gg.genome.gff3").write_text(_exon_gff3("t2"))
     cmds: list[list[str]] = []
-    monkeypatch.setattr(defuse, "run_cmd", lambda cmd, **kw: cmds.append(cmd))
-    monkeypatch.setattr(defuse, "_resolve_diamond_db", lambda config: "db")
+    monkeypatch.setattr(diamond, "run_cmd", lambda cmd, **kw: cmds.append(cmd))
+    monkeypatch.setattr(diamond, "_resolve_db", lambda config: "db")
     monkeypatch.setattr(defuse, "parse_positional_hits", lambda path: {})  # no hits
     monkeypatch.setattr(defuse, "_open_indexed_bam", lambda path: None)
 
@@ -169,8 +169,8 @@ def test_run_defuse_diamond_command_and_copy_through(tmp_path, monkeypatch):
 def test_run_defuse_splits_a_fused_transcript(tmp_path, monkeypatch):
     # Homology-stranded models from strand_correct are preferred over the raw GFF3.
     (tmp_path / "trinity-denovo.genome.stranded.gff3").write_text(_exon_gff3("t1"))
-    monkeypatch.setattr(defuse, "run_cmd", lambda cmd, **kw: None)
-    monkeypatch.setattr(defuse, "_resolve_diamond_db", lambda config: "db")
+    monkeypatch.setattr(diamond, "run_cmd", lambda cmd, **kw: None)
+    monkeypatch.setattr(diamond, "_resolve_db", lambda config: "db")
     monkeypatch.setattr(defuse, "_open_indexed_bam", lambda path: None)
     monkeypatch.setattr(
         defuse, "parse_positional_hits",

@@ -12,8 +12,7 @@ from pathlib import Path
 
 import gffutils
 
-from eukan.gff import create_gff_db
-from eukan.gff._compat import empty_db
+from eukan.gff import create_gff_db, create_gff_db_from_features
 from eukan.gff.intervals import IntervalIndex
 from eukan.gff.io import count_gff3_features, featuredb2gff3_file
 from eukan.infra.logging import get_logger
@@ -36,16 +35,6 @@ _SOURCE_LABEL = {"prot": "spaln"}
 # ---------------------------------------------------------------------------
 # Overlap detection (pure gffutils)
 # ---------------------------------------------------------------------------
-
-
-def _features_overlap(a: gffutils.Feature, b: gffutils.Feature) -> bool:
-    """Check if two features overlap on the same strand."""
-    return (
-        a.chrom == b.chrom
-        and a.strand == b.strand
-        and a.start <= b.end
-        and b.start <= a.end
-    )
 
 
 def _find_overlapping_genes(
@@ -145,15 +134,32 @@ def _has_cds_descendants(db: gffutils.FeatureDB, gene: gffutils.Feature) -> bool
     )
 
 
+def _cds_span(db: gffutils.FeatureDB, gene: gffutils.Feature) -> gffutils.Feature:
+    """A stand-in feature from the first base of *gene*'s CDSs to the last."""
+    cds = list(db.children(gene, featuretype="CDS"))
+    return gffutils.Feature(
+        seqid=gene.chrom, strand=gene.strand,
+        start=min(c.start for c in cds), end=max(c.end for c in cds),
+    )
+
+
 def find_nonoverlapping_genes(
     db_source: gffutils.FeatureDB,
     db_target: gffutils.FeatureDB,
+    *,
+    ignore_strand: bool = False,
+    support: IntervalIndex | None = None,
 ) -> list[gffutils.Feature]:
     """Find ORF-containing genes in db_source that don't overlap any gene in db_target.
 
+    Only a target gene on the same strand counts as an overlap, unless
+    ``ignore_strand``, under which one on either strand does. With *support*, a
+    gene is kept only when the span of its CDSs overlaps an interval of
+    *support* (on the same strand, unless that index ignores strand).
+
     Returns all features (gene + children) for non-overlapping, ORF-containing genes.
     """
-    target_index = IntervalIndex(db_target.features_of_type("gene"))
+    target_index = IntervalIndex(db_target.features_of_type("gene"), ignore_strand=ignore_strand)
     result: list[gffutils.Feature] = []
 
     for gene in db_source.features_of_type("gene"):
@@ -162,6 +168,9 @@ def find_nonoverlapping_genes(
 
         # Keep only genes that contain an ORF (a CDS somewhere beneath them).
         if not _has_cds_descendants(db_source, gene):
+            continue
+
+        if support is not None and not support.has_overlap(_cds_span(db_source, gene)):
             continue
 
         result.append(gene)
@@ -234,20 +243,14 @@ def _mrna_spans_match(
     )
 
 
-def _concordant_features(
-    gff3_1: str | Path, gff3_2: str | Path
-) -> list[gffutils.Feature]:
-    """Worker-thread-safe core of :func:`find_concordant_models`.
+def _concordant_models(
+    db1: gffutils.FeatureDB, db2: gffutils.FeatureDB
+) -> gffutils.FeatureDB:
+    """Core of :func:`find_concordant_models` over already-parsed sources.
 
-    Returns the list of Feature objects for concordant genes (gene +
-    mRNA + exon + CDS) instead of a :class:`gffutils.FeatureDB`.  All
-    SQLite work happens within this function — the connections never
-    cross thread boundaries — so callers can fan this out across a
-    ``ThreadPoolExecutor`` and assemble the result on the main thread.
+    Returns a FeatureDB of *db1*'s concordant genes (gene + mRNA + exon +
+    CDS), so a caller comparing one source against several parses it once.
     """
-    db1 = create_gff_db(gff3_1)
-    db2 = create_gff_db(gff3_2)
-
     db2_index = IntervalIndex(db2.features_of_type("mRNA"))
     concordant_gene_ids: set[str] = set()
 
@@ -280,7 +283,7 @@ def _concordant_features(
         except gffutils.FeatureNotFoundError:
             continue
 
-    return features
+    return create_gff_db_from_features(features)
 
 
 def find_concordant_models(
@@ -295,8 +298,7 @@ def find_concordant_models(
 
     Returns a FeatureDB containing only the concordant models from gff3_1.
     """
-    features = _concordant_features(gff3_1, gff3_2)
-    return create_gff_db(features) if features else empty_db()
+    return _concordant_models(create_gff_db(gff3_1), create_gff_db(gff3_2))
 
 
 # ---------------------------------------------------------------------------
@@ -311,23 +313,35 @@ def combine_nonredundant_models(
 
     Collects all unique gene IDs across databases. For IDs that appear in
     multiple databases, the first database takes precedence.
+
+    A third database holds a different evidence source's genes: the 3-way
+    :func:`extract_supported_models` passes the (0,1), (0,2) and (2,1)
+    concordance pairs, so the first two hold source-0 genes and the third
+    source-2 genes, whose IDs differ for the same locus. Its genes are
+    added only where they overlap no gene already kept on the same chrom
+    and strand, so a locus concordant in all three sources is kept once.
     """
     if len(feature_dbs) not in (2, 3):
         raise ValueError(f"Expected 2 or 3 FeatureDBs, got {len(feature_dbs)}")
 
     seen_ids: set[str] = set()
     all_features: list[gffutils.Feature] = []
+    kept_genes: IntervalIndex[gffutils.Feature] | None = None
 
-    for db in feature_dbs:
+    for i, db in enumerate(feature_dbs):
+        if i == 2:
+            kept_genes = IntervalIndex(f for f in all_features if f.featuretype == "gene")
         for gene in db.features_of_type("gene"):
             if gene.id in seen_ids:
+                continue
+            if kept_genes is not None and kept_genes.has_overlap(gene):
                 continue
             seen_ids.add(gene.id)
             all_features.append(gene)
             all_features.extend(db.children(gene))
 
     log.debug("Combined %d non-redundant gene models from %d sources", len(seen_ids), len(feature_dbs))
-    return create_gff_db(all_features) if all_features else empty_db()
+    return create_gff_db_from_features(all_features)
 
 
 # ---------------------------------------------------------------------------
@@ -361,23 +375,13 @@ def extract_supported_models(
     if len(paths) == 2:
         training_set = find_concordant_models(paths[0], paths[1])
     elif len(paths) == 3:
-        # Three concordance passes are independent and each is O(N log N);
-        # run them concurrently.  Workers return Feature *lists* so the
-        # SQLite connections never escape their creating thread; the dbs
-        # passed to combine_nonredundant_models are built on this thread.
-        from eukan.infra.concurrency import parallel_map
-        pairs = [
-            (paths[0], paths[1]),
-            (paths[0], paths[2]),
-            (paths[2], paths[1]),
-        ]
-        feat1, feat2, feat3 = parallel_map(
-            lambda ab: _concordant_features(*ab), pairs,
+        # Parse each source once; the three pair scans share the DBs.
+        db0, db1, db2 = (create_gff_db(p) for p in paths)
+        training_set = combine_nonredundant_models(
+            _concordant_models(db0, db1),
+            _concordant_models(db0, db2),
+            _concordant_models(db2, db1),
         )
-        pair1 = create_gff_db(feat1) if feat1 else empty_db()
-        pair2 = create_gff_db(feat2) if feat2 else empty_db()
-        pair3 = create_gff_db(feat3) if feat3 else empty_db()
-        training_set = combine_nonredundant_models(pair1, pair2, pair3)
     else:
         raise ValueError(f"Expected 2 or 3 paths, got {len(paths)}")
 
@@ -397,4 +401,4 @@ def extract_supported_models(
 
     out_path = (output_dir / "training_set.gff3") if output_dir else Path("training_set.gff3")
     featuredb2gff3_file(training_set, out_path)
-    return create_gff_db(out_path)
+    return training_set

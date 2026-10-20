@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import click
 from click_option_group import optgroup
@@ -11,20 +12,20 @@ from eukan.cli._framework import (
     FULL_CODE_TABLE,
     PreformattedEpilogCommand,
     code_option,
-    drop_none,
     force_option,
     genome_option,
+    given,
     numcpu_option,
-    resolve_optional_path,
 )
+from eukan.infra.layout import step_work_dir
 
 
 @click.command(cls=PreformattedEpilogCommand, epilog=FULL_CODE_TABLE)
 @optgroup.group("Required input")
 @genome_option("Genome FASTA file.")
-@optgroup.option("--left", "-l", type=click.Path(exists=True, path_type=Path), help="Left paired-end reads.")
-@optgroup.option("--right", "-r", type=click.Path(exists=True, path_type=Path), help="Right paired-end reads.")
-@optgroup.option("--single", "-s", type=click.Path(exists=True, path_type=Path), help="Single-end reads.")
+@optgroup.option("--left", "-l", "left_reads", type=click.Path(exists=True, resolve_path=True, path_type=Path), help="Left paired-end reads.")
+@optgroup.option("--right", "-r", "right_reads", type=click.Path(exists=True, resolve_path=True, path_type=Path), help="Right paired-end reads.")
+@optgroup.option("--single", "-s", "single_reads", type=click.Path(exists=True, resolve_path=True, path_type=Path), help="Single-end reads.")
 @optgroup.group("Pipeline parameters")
 @numcpu_option
 @optgroup.option(
@@ -49,17 +50,15 @@ from eukan.cli._framework import (
     "the --non-canonical auto re-map.",
 )
 @code_option(default=1)
-@optgroup.option("--min-intron", "-m", type=int, default=20, show_default=True, help="Minimum intron length.")
+@optgroup.option("--min-intron", "-m", "min_intron_len", type=int, default=20, show_default=True, help="Minimum intron length.")
 @optgroup.option(
-    "--max-intron", "-M", type=int, default=5000, show_default=True,
-    help="Maximum intron length, hard-imposed: transcript models are split at any "
-    "longer intron (the max_intron_split step) and combinr enforces it, and Trinity "
-    "genome-guided uses it as --genome_guided_max_intron. Changing it on a resumed "
-    "run re-runs max_intron_split/combinr automatically; recovering longer introns "
-    "from the assembly or mapping also needs --run-trinity/--run-map-transcripts. "
-    "Set 0 to disable the model split.",
+    "--max-intron", "-M", "max_intron_len", type=int, default=5000, show_default=True,
+    help="Maximum intron length, hard-imposed: minimap2 maps with it (-G), Trinity "
+    "genome-guided uses it as --genome_guided_max_intron, transcript models are split "
+    "at any longer intron (the max_intron_split step) and combinr enforces it. "
+    "Changing it on a resumed run re-runs the read and transcript mapping, the Trinity "
+    "assembly, the split and combinr automatically. Set 0 to disable the model split.",
 )
-@optgroup.option("--phred", type=click.Choice(["33", "64"]), default="33", show_default=True, help="Phred quality score.")
 @optgroup.option(
     "--jaccard-clip/--no-jaccard-clip", "-j", default=None,
     help="In-house jaccard clipping of fused Trinity transcripts (both de novo and "
@@ -109,7 +108,7 @@ from eukan.cli._framework import (
     help="Genomic window (bp) for consolidating SL acceptor sites.",
 )
 @optgroup.option(
-    "--adapter-sequence", "adapter_sequence", multiple=True,
+    "--adapter-sequence", "adapter_sequences", multiple=True,
     help="Extra sequencing-adapter sequence to exclude from SL detection "
     "(repeatable). Added to the built-in Illumina/Nextera set; use for "
     "platform-specific adapters (e.g. MGI/BGI).",
@@ -122,12 +121,12 @@ from eukan.cli._framework import (
     "disables it.",
 )
 @optgroup.option(
-    "--combinr-path", type=click.Path(exists=True, path_type=Path), default=None,
+    "--combinr-path", type=click.Path(exists=True, resolve_path=True, path_type=Path), default=None,
     help="Path to the combinr binary (else resolved from PATH or "
     "$EUKAN_ASSEMBLE_COMBINR_PATH).",
 )
 @optgroup.option(
-    "--uniprot", type=click.Path(exists=True, path_type=Path), default=None,
+    "--uniprot", "uniprot_db", type=click.Path(exists=True, resolve_path=True, path_type=Path), default=None,
     help="SwissProt FASTA (uniprot_sprot.faa) or prebuilt diamond .dmnd. Enables "
     "homology-based splice-strand correction on unstranded libraries (skipped "
     "when -S/--strand-specific is given), and homology de-fusion with --defuse. "
@@ -147,7 +146,7 @@ from eukan.cli._framework import (
 )
 @optgroup.option(
     "--memory-gb", type=int, default=None,
-    help="Assembly memory cap in GiB (Trinity --max_memory / rnaSPAdes -m). "
+    help="Assembly memory cap in GiB (Trinity --max_memory). "
          "Defaults to 60 percent of currently-available memory (floored at 4 GiB).",
 )
 @optgroup.group("Re-run steps")
@@ -191,46 +190,7 @@ from eukan.cli._framework import (
     help="Force re-run combinr transcript consolidation.",
 )
 @force_option
-def assemble(
-    genome: Path,
-    left: Path | None,
-    right: Path | None,
-    single: Path | None,
-    min_intron: int,
-    max_intron: int,
-    phred: str,
-    numcpu: int,
-    strand_specific: str | None,
-    non_canonical: str,
-    run_minimap2: bool,
-    run_trinity: bool,
-    run_jaccard: bool,
-    run_map_transcripts: bool,
-    run_strand_correct: bool,
-    run_defuse: bool,
-    run_max_intron_split: bool,
-    run_sl_detect: bool,
-    run_sl_cut: bool,
-    run_combinr: bool,
-    jaccard_clip: bool | None,
-    jaccard_greediness: float | None,
-    jaccard_max_trough: float | None,
-    jaccard_min_delta: float | None,
-    jaccard_max_adaptive_trough: float | None,
-    combinr_stringent_overlap: float | None,
-    defuse: bool,
-    defuse_overlap_tolerance: float | None,
-    sl_sequence: str | None,
-    sl_cluster_window: int,
-    adapter_sequence: tuple[str, ...],
-    sl_adapter_filter: bool | None,
-    combinr_path: Path | None,
-    uniprot: Path | None,
-    diagnose_softclips: bool,
-    code: int,
-    memory_gb: int | None,
-    force: bool,
-) -> None:
+def assemble(**opts: Any) -> None:
     """Assemble transcriptome from RNA-seq reads.
 
     \b
@@ -238,72 +198,24 @@ def assemble(
     single-end reads (--single). If using paired-end reads, both --left
     and --right are required.
     """
-    from eukan.assembly import run_assembly
-    from eukan.assembly.pipeline import force_steps_from_run_flags
-    from eukan.infra.layout import step_work_dir
-    from eukan.settings import AssemblyConfig
+    from eukan.assembly import run_assembly  # lazy: startup cost
+    from eukan.assembly.pipeline import force_steps_from_run_flags  # lazy: startup cost
+    from eukan.settings import AssemblyConfig  # lazy: startup cost
 
-    if not left and not right and not single:
+    if not opts["left_reads"] and not opts["right_reads"] and not opts["single_reads"]:
         raise click.UsageError("Provide --left/--right (paired) or --single reads.")
-    if (left or right) and not (left and right):
-        raise click.UsageError("Paired-end mode requires both --left and --right.")
 
-    if strand_specific:
-        if single and strand_specific in ("RF", "FR"):
-            raise click.UsageError(
-                "Paired-end strand types (RF/FR) cannot be used with single-end reads."
-            )
-        if (left or right) and strand_specific in ("R", "F"):
-            raise click.UsageError(
-                "Single-end strand types (R/F) cannot be used with paired-end reads."
-            )
-
-    if memory_gb is not None and memory_gb < 1:
+    if opts["memory_gb"] is not None and opts["memory_gb"] < 1:
         raise click.UsageError("--memory-gb must be at least 1 GiB.")
 
-    if defuse and uniprot is None:
+    if opts["defuse"] and opts["uniprot_db"] is None:
         raise click.UsageError("--defuse needs a protein DB; supply --uniprot.")
 
-    config = AssemblyConfig(**drop_none(
-        genome=genome.resolve(),
-        work_dir=step_work_dir("assemble"),
-        manifest_dir=Path.cwd(),
-        min_intron_len=min_intron,
-        max_intron_len=max_intron,
-        phred_quality=int(phred),
-        num_cpu=numcpu,
-        non_canonical=non_canonical,
-        jaccard_clip=jaccard_clip,
-        jaccard_greediness=jaccard_greediness,
-        jaccard_max_trough=jaccard_max_trough,
-        jaccard_min_delta=jaccard_min_delta,
-        jaccard_max_adaptive_trough=jaccard_max_adaptive_trough,
-        combinr_stringent_overlap=combinr_stringent_overlap,
-        defuse=defuse,
-        defuse_overlap_tolerance=defuse_overlap_tolerance,
-        sl_sequence=sl_sequence,
-        sl_cluster_window=sl_cluster_window,
-        adapter_sequences=list(adapter_sequence),
-        sl_adapter_filter=sl_adapter_filter,
-        combinr_path=resolve_optional_path(combinr_path),
-        uniprot_db=resolve_optional_path(uniprot),
-        diagnose_softclips=diagnose_softclips,
-        genetic_code=str(code),
-        left_reads=resolve_optional_path(left),
-        right_reads=resolve_optional_path(right),
-        single_reads=resolve_optional_path(single),
-        strand_specific=strand_specific,
-        memory_gb=memory_gb,
-    ))
-
-    force_steps = force_steps_from_run_flags(
-        run_minimap2=run_minimap2,
-        run_trinity=run_trinity, run_jaccard=run_jaccard,
-        run_map_transcripts=run_map_transcripts,
-        run_strand_correct=run_strand_correct, run_defuse=run_defuse,
-        run_max_intron_split=run_max_intron_split,
-        run_sl_detect=run_sl_detect, run_sl_cut=run_sl_cut,
-        run_combinr=run_combinr, force=force,
+    run_flags = {k: opts.pop(k) for k in list(opts) if k.startswith("run_") or k == "force"}
+    config = AssemblyConfig(
+        **given(opts), work_dir=step_work_dir("assemble"), manifest_dir=Path.cwd(),
     )
+
+    force_steps = force_steps_from_run_flags(**run_flags)
     run_assembly(config, force_steps=force_steps or None)
     click.echo("Done.")

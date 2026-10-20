@@ -43,6 +43,7 @@ if _PROJECT_ROOT not in sys.path:
 import click
 
 from eukan.assembly.bam_diagnostic import (
+    DiagnosticParams,
     DiagnosticReport,
     IntronStats,
     LocusConsistencyStats,
@@ -232,13 +233,15 @@ def _run_one(label: str, bam: Path, genome: Path, *, min_clip_len: int,
     t0 = time.time()
     report = diagnose_bam(
         bam, genome,
-        min_clip_len=min_clip_len,
-        cluster_key_len=cluster_key_len,
-        min_mapq=min_mapq,
-        hamming_tolerance=hamming_tolerance,
-        cluster_hamming_tolerance=cluster_hamming_tolerance,
-        min_consistency_fraction=min_consistency_fraction,
-        consensus_min_majority_fraction=consensus_min_majority_fraction,
+        DiagnosticParams(
+            min_clip_len=min_clip_len,
+            cluster_key_len=cluster_key_len,
+            min_mapq=min_mapq,
+            hamming_tolerance=hamming_tolerance,
+            cluster_hamming_tolerance=cluster_hamming_tolerance,
+            min_consistency_fraction=min_consistency_fraction,
+            consensus_min_majority_fraction=consensus_min_majority_fraction,
+        ),
     )
     click.echo(f"  scan complete in {time.time() - t0:.1f}s")
 

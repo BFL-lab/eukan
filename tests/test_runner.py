@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
+import signal
 import subprocess
+import threading
+import time
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +22,17 @@ from eukan.infra.runner import (
     run_piped,
     terminate_all_children,
 )
+
+
+def _running(pid: int) -> bool:
+    """True while *pid* exists and is not a zombie (a killed grandchild stays a
+    zombie until its new parent reaps it, so ``os.kill(pid, 0)`` would still
+    succeed)."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except FileNotFoundError:
+        return False
+    return stat.rsplit(")", 1)[1].split()[0] not in ("Z", "X")
 
 
 class TestTerminateAllChildren:
@@ -58,6 +74,34 @@ class TestTerminateAllChildren:
                 proc.kill()
                 proc.wait()
 
+    @pytest.mark.skipif(not os.path.isdir("/proc/self"), reason="needs /proc")
+    def test_terminates_grandchildren(self, tmp_path):
+        """Ctrl-C reaches the workers a tool forks, not only the tool: the child
+        runs in its own session, so signalling its PID alone orphaned them."""
+        pidfile = tmp_path / "sleep.pid"
+
+        def tool():
+            with contextlib.suppress(ExternalToolError):  # bash dies of SIGTERM
+                run_cmd(["bash", "-c", "sleep 300 & echo $! > sleep.pid; wait"], cwd=tmp_path)
+
+        thread = threading.Thread(target=tool, daemon=True)
+        thread.start()
+        deadline = time.monotonic() + 5
+        while not (_RUNNING and pidfile.exists() and pidfile.read_text().strip()):
+            assert time.monotonic() < deadline, "bash never started its grandchild"
+            time.sleep(0.01)
+        grandchild = int(pidfile.read_text())
+        try:
+            terminate_all_children(grace_period=2.0)
+            deadline = time.monotonic() + 2
+            while _running(grandchild) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert not _running(grandchild)
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(grandchild, signal.SIGKILL)
+            thread.join(timeout=5)
+
 
 class TestRunCmd:
     def test_in_file_routes_stdin(self, tmp_path):
@@ -80,23 +124,10 @@ class TestRunCmd:
         )
         assert (tmp_path / "out.txt").read_bytes() == b"hello"
 
-    def test_err_file_streams_directly(self, tmp_path):
-        """err_file should capture stderr without it appearing in the exception."""
-        run_cmd(
-            ["sh", "-c", "echo oops 1>&2"],
-            cwd=tmp_path,
-            err_file="err.txt",
-        )
-        assert (tmp_path / "err.txt").read_bytes() == b"oops\n"
-
     def test_nonzero_exit_raises(self, tmp_path):
         with pytest.raises(ExternalToolError) as exc_info:
             run_cmd(["false"], cwd=tmp_path)
         assert exc_info.value.returncode != 0
-
-    def test_timeout_raises(self, tmp_path):
-        with pytest.raises(ExternalToolError):
-            run_cmd(["sleep", "10"], cwd=tmp_path, timeout=1)
 
     def test_process_is_untracked_after_completion(self, tmp_path):
         before = len(_RUNNING)
@@ -157,22 +188,26 @@ class TestRunCmdResourceCleanup:
         reason="needs /proc fd listing",
     )
     def test_setup_failure_does_not_leak_redirect_handles(self, tmp_path, monkeypatch):
-        """A raise between opening the out/err files and starting the child
+        """A raise between opening the in/out files and starting the child
         must still close them. Pre-ExitStack this leaked 2 fds per call."""
         def boom(_cmd):
             raise RuntimeError("tool-name boom")
 
         monkeypatch.setattr(runner, "_tool_name", boom)
+        (tmp_path / "i.txt").write_text("")
 
         baseline = self._fd_count()
         for _ in range(40):
             with pytest.raises(RuntimeError, match="tool-name boom"):
-                run_cmd(["true"], cwd=tmp_path, out_file="o.txt", err_file="e.txt")
+                run_cmd(["true"], cwd=tmp_path, in_file="i.txt", out_file="o.txt")
         # No monotonic growth: handles were closed each time.
         assert self._fd_count() <= baseline + 1
 
 
 class TestRunPiped:
+    # A chatty producer: 40 progress lines on stderr, well over the 500 chars kept.
+    _CHATTY = "for i in $(seq 40); do echo '[M::worker] mapped 500000' >&2; done"
+
     def test_missing_first_command_raises_missing_tool_error(self, tmp_path):
         with pytest.raises(MissingToolError) as exc_info:
             run_piped(["definitely-not-a-real-binary-xyz"], ["cat"], cwd=tmp_path)
@@ -201,6 +236,31 @@ class TestRunPiped:
                 cwd=tmp_path,
             )
         assert "exited 9" in exc_info.value.stderr_snippet
+
+    def test_consumer_error_not_buried_by_sigpipe_producer(self, tmp_path):
+        # The consumer stops reading and fails, so the producer dies of SIGPIPE.
+        # Its stderr says nothing about the failure and must not push the
+        # consumer's error out of the snippet.
+        with pytest.raises(ExternalToolError) as exc_info:
+            run_piped(
+                ["bash", "-c", f"{self._CHATTY}; yes ACGT"],
+                ["bash", "-c", "head -c 100000 >/dev/null; echo 'No space left on device' >&2; exit 1"],
+                cwd=tmp_path,
+            )
+        assert "No space left on device" in exc_info.value.stderr_snippet
+        assert "[M::worker]" not in exc_info.value.stderr_snippet
+
+    def test_failed_producer_exit_survives_its_chatty_stderr(self, tmp_path):
+        # A producer that really failed (not SIGPIPE) stays visible next to the
+        # consumer's error in the kept tail of the snippet.
+        with pytest.raises(ExternalToolError) as exc_info:
+            run_piped(
+                ["bash", "-c", f"{self._CHATTY}; exit 9"],
+                ["bash", "-c", "cat >/dev/null; echo 'truncated file' >&2; exit 1"],
+                cwd=tmp_path,
+            )
+        assert "exited 9" in exc_info.value.stderr_snippet
+        assert "truncated file" in exc_info.value.stderr_snippet
 
     def test_chatty_producer_stderr_does_not_deadlock(self, tmp_path):
         # >64 KB on the producer's stderr would deadlock an unread PIPE; the

@@ -9,26 +9,68 @@ from pathlib import Path
 
 import pytest
 
-from eukan.annotation import combinr_consensus as cc
 from eukan.annotation import consensus as cons
 from eukan.annotation.combinr_consensus import (
     _chains_to_match,
+    _first_source_token,
     _stage_combinr_inputs,
     run_combinr_consensus,
 )
+from eukan.exceptions import ConfigurationError
+from eukan.gff.rows import parse_attrs
+from eukan.infra import combinr as infra_combinr
 from eukan.settings import PipelineConfig
 
 
 def _resolve_combinr() -> Path | None:
-    """Locate a combinr binary: $COMBINR_BIN, else PATH. None → skip e2e test."""
+    """Locate a combinr binary: $COMBINR_BIN, else PATH; None if neither.
+
+    A set-but-missing $COMBINR_BIN raises instead of falling back to PATH, so a
+    mistyped path errors the e2e test rather than silently skipping it.
+    """
     env = os.environ.get("COMBINR_BIN")
-    if env and Path(env).exists():
+    if env:
+        if not Path(env).exists():
+            raise RuntimeError(f"COMBINR_BIN is set but does not exist: {env}")
         return Path(env)
     on_path = shutil.which("combinr")
     return Path(on_path) if on_path else None
 
 
-_COMBINR = _resolve_combinr()
+@pytest.fixture
+def combinr_bin() -> Path:
+    """The real combinr binary, resolved at test setup rather than import so a bad
+    $COMBINR_BIN errors only the tests that use it. Skips when none is found."""
+    path = _resolve_combinr()
+    if path is None:
+        pytest.skip("combinr binary not found (set COMBINR_BIN or add to PATH)")
+    return path
+
+
+def test_resolve_combinr_missing_env_path_raises(tmp_path, monkeypatch):
+    """A set-but-missing $COMBINR_BIN is an error, not a fall-back to PATH."""
+    missing = tmp_path / "no-such-combinr"
+    monkeypatch.setenv("COMBINR_BIN", str(missing))
+    monkeypatch.setattr(shutil, "which", lambda name: "/elsewhere/combinr")
+    with pytest.raises(RuntimeError, match="COMBINR_BIN is set but does not exist") as exc:
+        _resolve_combinr()
+    assert str(missing) in str(exc.value)
+
+
+def test_resolve_combinr_env_path_wins_over_path(tmp_path, monkeypatch):
+    binary = tmp_path / "combinr"
+    binary.write_text("")
+    monkeypatch.setenv("COMBINR_BIN", str(binary))
+    monkeypatch.setattr(shutil, "which", lambda name: "/elsewhere/combinr")
+    assert _resolve_combinr() == binary
+
+
+def test_resolve_combinr_unset_falls_back_to_path(monkeypatch):
+    monkeypatch.delenv("COMBINR_BIN", raising=False)
+    monkeypatch.setattr(shutil, "which", lambda name: f"/opt/bin/{name}")
+    assert _resolve_combinr() == Path("/opt/bin/combinr")
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    assert _resolve_combinr() is None
 
 
 def _config(tmp_path: Path, **kw) -> PipelineConfig:
@@ -177,12 +219,56 @@ def test_stage_combinr_inputs_without_transcripts(tmp_path):
     assert "TRANSCRIPT" not in (sdir / "weights.txt").read_text()
 
 
+# --- source token of the transcript evidence --------------------------------
+# The TRANSCRIPT weights line names the GFF3 source column (col 2) of the
+# evidence file's first data line, whatever token the file actually carries.
+
+
+def _make_gff(path: Path, source: str) -> Path:
+    path.write_text(
+        "##gff-version 3\n"
+        f"chr1\t{source}\tgene\t1\t300\t.\t+\t.\tID=g1\n"
+        f"chr1\t{source}\tmRNA\t1\t300\t.\t+\t.\tID=g1.t1;Parent=g1\n"
+        f"chr1\t{source}\tCDS\t1\t300\t.\t+\t0\tID=cds1;Parent=g1.t1\n"
+    )
+    return path
+
+
+class TestFirstSourceToken:
+    def test_returns_column_two(self, tmp_path):
+        gff = _make_gff(tmp_path / "x.gff3", "combinr-assembly")
+        assert _first_source_token(gff) == "combinr-assembly"
+
+    def test_skips_comments_and_blank_lines(self, tmp_path):
+        path = tmp_path / "x.gff3"
+        path.write_text(
+            "##gff-version 3\n"
+            "# some comment\n"
+            "\n"
+            "chr1\tgenemark\tgene\t1\t100\t.\t+\t.\tID=g1\n"
+        )
+        assert _first_source_token(path) == "genemark"
+
+    def test_returns_none_for_header_only(self, tmp_path):
+        path = tmp_path / "x.gff3"
+        path.write_text("##gff-version 3\n# no data\n")
+        assert _first_source_token(path) is None
+
+
 # --- run_combinr_consensus command construction ----------------------------
 
 
 def _capture_run_cmd(monkeypatch) -> list[tuple[list[str], dict]]:
+    """Record the combinr command lines; answer the version probe as 0.3.0."""
     calls: list[tuple[list[str], dict]] = []
-    monkeypatch.setattr(cc, "run_cmd", lambda cmd, **kw: calls.append((cmd, kw)))
+
+    def fake(cmd, *, cwd, out_file, **kw):
+        if cmd[1:] == ["--version"]:
+            (cwd / out_file).write_text("combinr 0.3.0\n")
+        else:
+            calls.append((cmd, {"cwd": cwd, "out_file": out_file, **kw}))
+
+    monkeypatch.setattr(infra_combinr, "run_cmd", fake)
     return calls
 
 
@@ -208,6 +294,7 @@ def test_run_combinr_consensus_command_with_transcripts(tmp_path, monkeypatch):
     assert "--alt-splice" in cmd
     # stringent-overlap accompanies the alt-splice isoform grouping; 0.0 = off default.
     assert cmd[cmd.index("--stringent-overlap") + 1] == "0.0"
+    assert cmd[cmd.index("--evidence-report") + 1] == "combinr.evidence_report.txt"
     assert kw["out_file"] == "consensus_models.gff3"
 
 
@@ -245,6 +332,8 @@ def test_run_combinr_consensus_command_without_transcripts(tmp_path, monkeypatch
     assert "--alt-splice" not in cmd
     assert "--stringent-overlap" not in cmd  # rides with the alt-splice grouping only
     assert "--protein-alignments" in cmd  # protein evidence still passed
+    # the evidence report is always on, not tied to transcript evidence
+    assert cmd[cmd.index("--evidence-report") + 1] == "combinr.evidence_report.txt"
 
 
 def test_combinr_path_override(tmp_path, monkeypatch):
@@ -261,6 +350,26 @@ def test_combinr_path_override(tmp_path, monkeypatch):
     calls = _capture_run_cmd(monkeypatch)
     run_combinr_consensus(cfg, sdir, [prot], transcripts=None)
     assert calls[0][0][0] == str(binpath)
+
+
+def test_old_combinr_is_refused_before_consensus_runs(tmp_path):
+    # combinr 0.1.x rejects --evidence-report with a bare usage error; the gate
+    # names the version it found instead, before the consensus command runs.
+    sdir = tmp_path / "consensus_models"
+    sdir.mkdir()
+    src = tmp_path / "src"
+    src.mkdir()
+    prot = _prot_gff(src / "prot.gff3")
+    exe = tmp_path / "combinr"
+    exe.write_text(
+        '#!/bin/sh\n[ "$1" = --version ] && { echo "combinr 0.1.1"; exit 0; }\n'
+        f'echo "$@" >> {tmp_path / "ran.log"}\n'
+    )
+    exe.chmod(0o755)
+    cfg = _config(tmp_path, combinr_path=exe)
+    with pytest.raises(ConfigurationError, match=r"combinr >= 0\.3\.0.*0\.1\.1"):
+        run_combinr_consensus(cfg, sdir, [prot], transcripts=None)
+    assert not (tmp_path / "ran.log").exists()
 
 
 # --- integration: combinr output through eukan's prettify tail --------------
@@ -332,8 +441,7 @@ def test_combinr_handoff_preserves_isoforms_and_implicit_utr(tmp_path, monkeypat
     assert "contains=" in final.read_text()
 
 
-@pytest.mark.skipif(_COMBINR is None, reason="combinr binary not found (set COMBINR_BIN or add to PATH)")
-def test_combinr_consensus_end_to_end(tmp_path):
+def test_combinr_consensus_end_to_end(tmp_path, combinr_bin):
     """Real combinr binary through build_consensus_models on minimal inputs.
 
     A transcript wider than the predicted CDS must yield an isoform with UTR;
@@ -367,7 +475,7 @@ def test_combinr_consensus_end_to_end(tmp_path):
 
     cfg = PipelineConfig(
         genome=tmp_path / "genome.fa", proteins=[tmp_path / "proteins.faa"],
-        work_dir=tmp_path, num_cpu=2, combinr_path=_COMBINR,
+        work_dir=tmp_path, num_cpu=2, combinr_path=combinr_bin,
         transcripts_fasta=tmp_path / "nr_transcripts.fasta", transcripts_gff=nr,
         rnaseq_hints=tmp_path / "hints.gff",
     )
@@ -390,3 +498,17 @@ def test_combinr_consensus_end_to_end(tmp_path):
         )
         for m in cds
     ), "expected a UTR-bearing isoform from the wider transcript"
+
+    # QC side-output: per gene a "# <gene ID> <locus> orient(...) score(...) ..."
+    # header, then the evidence behind each exon/intron. Header IDs are combinr's
+    # own, i.e. those in consensus_models.gff3 (final.gff3 renames genes).
+    sdir = tmp_path / "consensus_models"
+    report = sdir / "combinr.evidence_report.txt"
+    assert report.exists() and report.stat().st_size > 0
+    gene_ids = {
+        parse_attrs(row[8])["ID"]
+        for row in _read_rows(sdir / "consensus_models.gff3")
+        if row[2] == "gene"
+    }
+    headers = [ln[2:].split()[0] for ln in report.read_text().splitlines() if ln.startswith("# ")]
+    assert any(h in gene_ids for h in headers), (headers, gene_ids)

@@ -24,6 +24,7 @@ from pathlib import Path
 import gffutils
 
 from eukan.gff import create_gff_db
+from eukan.gff.io import featuredb2gff3_file
 
 INFERENCE_CAP = 3
 """Maximum number of /inference qualifiers per feature.
@@ -160,35 +161,24 @@ def _clean_feature(f: gffutils.Feature, report: CleanupReport) -> None:
 def clean_gff3_for_submission(in_gff: Path, out_gff: Path) -> CleanupReport:
     """Apply submission cleanup transforms and write a cleaned GFF3.
 
-    Identifies the drop set, then walks the gene → mRNA → exon/CDS
-    hierarchy and writes only the surviving features with cleaned
-    attributes. Returns a :class:`CleanupReport` for the caller to log.
+    Identifies the drop set, then writes the gene → mRNA → exon/CDS
+    hierarchy without the dropped features, each with cleaned attributes.
+    Returns a :class:`CleanupReport` for the caller to log.
     """
     db = create_gff_db(in_gff)
     mrnas_drop, genes_drop = _identify_drop_set(db)
+    dropped = mrnas_drop | genes_drop  # feature IDs are unique within a FeatureDB
 
     report = CleanupReport(
         mrnas_dropped=len(mrnas_drop),
         genes_dropped=len(genes_drop),
     )
 
-    with open(out_gff, "w") as fout:
-        fout.write("##gff-version 3\n")
-        for gene in db.features_of_type("gene", order_by=("seqid", "start")):
-            if gene.id in genes_drop:
-                continue
-            _clean_feature(gene, report)
-            fout.write(f"{gene}\n")
-            for mrna in db.children(gene, featuretype="mRNA", order_by="start"):
-                if mrna.id in mrnas_drop:
-                    continue
-                _clean_feature(mrna, report)
-                fout.write(f"{mrna}\n")
-                for child_type in ("exon", "CDS"):
-                    for child in db.children(
-                        mrna, featuretype=child_type, order_by="start",
-                    ):
-                        _clean_feature(child, report)
-                        fout.write(f"{child}\n")
+    def clean(f: gffutils.Feature) -> bool:
+        if f.id in dropped:
+            return False
+        _clean_feature(f, report)
+        return True
 
+    featuredb2gff3_file(db, out_gff, header="##gff-version 3\n", visit=clean)
     return report

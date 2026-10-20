@@ -2,14 +2,13 @@
 
 Settings are resolved in this order (last wins):
   1. Defaults defined here
-  2. [tool.eukan] section in pyproject.toml
-  3. Environment variables prefixed with EUKAN_
-  4. CLI flags (applied by cli.py when constructing models)
+  2. Environment variables prefixed with EUKAN_ (EUKAN_ASSEMBLE_, EUKAN_REPEATS_,
+     EUKAN_FUNC_, EUKAN_SUBMIT_ for the other configs)
+  3. Options given on the eukan command line
 """
 
 from __future__ import annotations
 
-import os
 import random
 import string
 from enum import Enum
@@ -17,58 +16,18 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, computed_field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from eukan.exceptions import ConfigurationError
+from eukan.infra.databases import DATABASES, DEFAULT_DB_DIR, HomologyDb
+from eukan.infra.layout import sibling_step_dir
 from eukan.infra.logging import get_logger
+from eukan.infra.utils import available_cpus
 
 
 def _rand_string(length: int = 5) -> str:
     return "".join(random.choice(string.ascii_uppercase) for _ in range(length))
-
-
-def _pyproject_toml_settings(settings: BaseSettings) -> dict[str, Any]:
-    """Load [tool.eukan] from pyproject.toml if it exists."""
-    import tomllib
-    pyproject = Path("pyproject.toml")
-    if not pyproject.exists():
-        return {}
-    try:
-        with open(pyproject, "rb") as f:
-            data = tomllib.load(f)
-        return data.get("tool", {}).get("eukan", {})
-    except (OSError, ValueError, KeyError):
-        return {}
-
-
-def _pyproject_settings_sources(toml_key: str | None = None):
-    """Create a settings_customise_sources classmethod for pyproject.toml.
-
-    Args:
-        toml_key: Sub-key under [tool.eukan] (e.g., "assemble").
-            If None, reads directly from [tool.eukan].
-    """
-    def settings_customise_sources(cls, settings_cls, **kwargs):
-        from pydantic_settings import PydanticBaseSettingsSource
-
-        class PyprojectSource(PydanticBaseSettingsSource):
-            def get_field_value(self, field, field_name):
-                data = _pyproject_toml_settings(self.settings_cls)
-                section = data.get(toml_key, {}) if toml_key else data
-                val = section.get(field_name)
-                return val, field_name, val is not None
-
-            def __call__(self):
-                data = _pyproject_toml_settings(self.settings_cls)
-                return data.get(toml_key, {}) if toml_key else data
-
-        return (
-            kwargs.get("init_settings"),
-            kwargs.get("env_settings"),
-            PyprojectSource(settings_cls),
-        )
-
-    return classmethod(settings_customise_sources)
 
 
 class Kingdom(str, Enum):
@@ -87,7 +46,7 @@ class _StepRunSettings(BaseSettings):
     """Common fields, validators, and accessors shared by step-driven configs.
 
     Subclasses (PipelineConfig, AssemblyConfig) provide their own
-    ``model_config`` (env_prefix, settings sources) and may override
+    ``model_config`` (env_prefix) and may override
     field defaults (e.g. ``genetic_code``).
     """
 
@@ -95,8 +54,19 @@ class _StepRunSettings(BaseSettings):
     # Filled in from work_dir by _default_manifest_dir if not provided;
     # always a Path after construction.
     manifest_dir: Path = Field(default_factory=Path.cwd)
-    num_cpu: int = Field(default_factory=lambda: os.cpu_count() or 1)
+    num_cpu: int = Field(default_factory=available_cpus)
     genetic_code: str = "1"
+
+    @field_validator("genetic_code", mode="before")
+    @classmethod
+    def _known_genetic_code(cls, value: int | str) -> str:
+        # Fail at construction, not at the first step that translates (after
+        # minimap2 and Trinity in assembly). Stored as the canonical string.
+        from eukan.infra.genetic_code import GeneticCode  # lazy: startup cost (Bio.Data.CodonTable)
+        try:
+            return str(GeneticCode(value))
+        except ConfigurationError as exc:
+            raise ValueError(f"{exc}. {exc.hint}") from exc
 
     @model_validator(mode="before")
     @classmethod
@@ -107,18 +77,20 @@ class _StepRunSettings(BaseSettings):
             data["manifest_dir"] = data.get("work_dir") or Path.cwd()
         return data
 
-    @model_validator(mode="after")
-    def _ensure_dirs_exist(self) -> _StepRunSettings:
-        # Each step's CLI now points work_dir at a subdir under cwd
-        # (e.g. ./annotate/, ./repeats/) which may not exist yet.
+    def ensure_dirs(self) -> None:
+        """Create work_dir and manifest_dir.
+
+        Building a config creates nothing; each pipeline driver calls this
+        first. The CLI points work_dir at a subdir under cwd (e.g. ./annotate/,
+        ./repeats/) which may not exist yet.
+        """
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self.manifest_dir.mkdir(parents=True, exist_ok=True)
-        return self
 
     @cached_property
     def genetic_code_obj(self):
         """Return a :class:`~eukan.infra.genetic_code.GeneticCode` for this config's code."""
-        from eukan.infra.genetic_code import GeneticCode
+        from eukan.infra.genetic_code import GeneticCode  # lazy: startup cost (Bio.Data.CodonTable)
         return GeneticCode(self.genetic_code)
 
 
@@ -131,7 +103,6 @@ class PipelineConfig(_StepRunSettings):
     """Configuration for the annotation pipeline.
 
     Fields can be set via:
-      - [tool.eukan] in pyproject.toml
       - EUKAN_ prefixed env vars (e.g., EUKAN_NUM_CPU=8)
       - CLI flags (override at construction time)
 
@@ -146,8 +117,7 @@ class PipelineConfig(_StepRunSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="EUKAN_",
-        env_nested_delimiter="__",
-        extra="ignore",
+        extra="forbid",
     )
 
     # --- Required (must come from CLI) ---
@@ -171,56 +141,46 @@ class PipelineConfig(_StepRunSettings):
     Raise it (e.g. 30) to stop short or tip-overlapping transcripts from welding
     collinear neighbours into one multi-isoform gene in dense / trans-spliced genomes.
     Does not affect the consensus region partitioner."""
+    orf_patch: Literal["supported", "all"] | None = None
+    """Patch transcript ORFs (``orf_finder``) that overlap no consensus gene, on either
+    strand, into the final models: under ``all`` every such ORF gene, under
+    ``supported`` only those whose CDS overlaps a CDS of the protein alignment on the
+    same strand. Each row added says ``eukan-orf-patch`` in column 2 and each mRNA
+    added carries ``support=transcript_orf``. Off (``None``) by default: the additions
+    have no ab initio support, and under ``all`` no homology support either."""
 
     # --- Optional transcript evidence (auto-discovered from work_dir if not set) ---
     transcripts_fasta: Path | None = None
     transcripts_gff: Path | None = None
     rnaseq_hints: Path | None = None
-    strand_specific: bool = False
-
-    # Well-known assembly output filenames — sourced from the cross-pipeline
-    # artifact registry so renaming an artifact only edits one file.
-    @staticmethod
-    def _assembly_files() -> dict[str, str]:
-        from eukan.infra.artifacts import Artifact
-        return {
-            "transcripts_fasta": Artifact.NR_TRANSCRIPTS_FASTA.value,
-            "transcripts_gff": Artifact.NR_TRANSCRIPTS_GFF.value,
-            "rnaseq_hints": Artifact.RNASEQ_HINTS.value,
-        }
 
     # --- Validators ------------------------------------------------------
 
     @model_validator(mode="after")
     def _derive_name(self) -> PipelineConfig:
         if not self.name:
-            object.__setattr__(self, "name", self.genome.stem)
+            self.name = self.genome.stem
         return self
 
-    @model_validator(mode="after")
-    def _discover_assembly_outputs(self) -> PipelineConfig:
-        """Auto-discover assembly outputs (own work_dir or sibling assemble/)."""
+    # --- Discovery -----------------------------------------------------
+
+    def discover(self) -> None:
+        """Auto-discover assembly outputs (own work_dir or sibling assemble/).
+
+        Building the config reads no files; the CLI calls this once it is built.
+        """
         log = get_logger(__name__)
-        from eukan.infra import artifacts
-        from eukan.infra.artifacts import Artifact
+        from eukan.infra import artifacts  # lazy: startup cost (manifest, health)
+        from eukan.infra.artifacts import Artifact  # lazy: startup cost (manifest, health)
 
-        # If the user already set all three explicitly, nothing to do
-        if all([self.transcripts_fasta, self.transcripts_gff, self.rnaseq_hints]):
-            return self
-
-        # If the user set some but not all explicitly, don't override their intent
+        # If the user set any of the three explicitly, don't override their intent
         field_to_artifact = {
             "transcripts_fasta": Artifact.NR_TRANSCRIPTS_FASTA,
             "transcripts_gff":   Artifact.NR_TRANSCRIPTS_GFF,
             "rnaseq_hints":      Artifact.RNASEQ_HINTS,
         }
-        explicitly_set = {
-            field: getattr(self, field)
-            for field in field_to_artifact
-            if getattr(self, field) is not None
-        }
-        if explicitly_set:
-            return self
+        if any(getattr(self, field) is not None for field in field_to_artifact):
+            return
 
         # Search work_dir and (when in step layout) sibling assemble/
         found: dict[str, Path] = {}
@@ -245,28 +205,21 @@ class PipelineConfig(_StepRunSettings):
                 ", ".join(str(p) for p in found.values()),
             )
             for field, path in found.items():
-                object.__setattr__(self, field, path)
-
-        return self
+                setattr(self, field, path)
 
     # --- Computed properties --------------------------------------------
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def is_fungus(self) -> bool:
         return self.kingdom == Kingdom.fungus
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def is_protist(self) -> bool:
         return self.kingdom == Kingdom.protist
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def has_transcripts(self) -> bool:
         return all([self.transcripts_fasta, self.transcripts_gff, self.rnaseq_hints])
-
-    settings_customise_sources = _pyproject_settings_sources()
 
 
 # ---------------------------------------------------------------------------
@@ -275,9 +228,9 @@ class PipelineConfig(_StepRunSettings):
 
 
 def _default_assembly_memory_gb(meminfo_path: str = "/proc/meminfo") -> int:
-    """Safe default for the de novo assembler's memory cap, in GiB.
+    """Safe default for the assembler's memory cap, in GiB.
 
-    rnaSPAdes sizes its ``-m`` budget from this. We derive it from
+    Trinity sizes its ``--max_memory`` from this. We derive it from
     ``MemAvailable`` (the kernel's estimate of memory free for new processes)
     rather than ``MemTotal``, so the cap reflects what the machine can actually
     spare. Falls back to half of ``MemTotal``, then to a 4 GiB floor.
@@ -304,7 +257,7 @@ class AssemblyConfig(_StepRunSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="EUKAN_ASSEMBLE_",
-        extra="ignore",
+        extra="forbid",
     )
 
     genome: Path
@@ -313,7 +266,6 @@ class AssemblyConfig(_StepRunSettings):
     single_reads: Path | None = None
     min_intron_len: int = 20
     max_intron_len: int = 5000
-    phred_quality: int = 33
     strand_specific: str | None = None
     non_canonical: Literal["auto", "force", "off"] = "auto"
     """Non-canonical splice mapping control. ``auto`` (default) layers the
@@ -325,7 +277,7 @@ class AssemblyConfig(_StepRunSettings):
     (both de novo and genome-guided), splitting two adjacent loci fused into one
     contig. On by default; a no-op on single-end reads (read-pair bridging is the
     clip signal). This replaces Trinity's own ``--jaccard_clip`` (the standalone
-    step is faster — STAR, not bowtie2 — and tunable via the ``jaccard_*`` knobs)."""
+    step is faster — minimap2, not bowtie2 — and tunable via the ``jaccard_*`` knobs)."""
     jaccard_greediness: float = 1.5
     """Coverage-adaptive slack for jaccard fusion-trough detection. At low read-pair
     depth the pseudocount keeps a real fusion junction's jaccard above the fixed
@@ -351,30 +303,7 @@ class AssemblyConfig(_StepRunSettings):
     clipping stringent; raise it to allow splitting on fainter low-coverage troughs."""
     diagnose_softclips: bool = True
 
-    # --- Genome-guided assembly (StringTie) stringency ---
-    # DORMANT: StringTie is no longer in the active pipeline (Trinity covers both
-    # de novo and genome-guided). These fields configure the kept-but-unwired
-    # stringtie module and have no effect unless it is re-wired into _steps_for.
-    stringtie_min_coverage: float = 1.5
-    """StringTie ``-c``: minimum per-bp read coverage for a transcript to be
-    assembled. Raised above StringTie's default of 1 to suppress low-coverage
-    spurious models."""
-    stringtie_min_isoform_fraction: float = 0.1
-    """StringTie ``-f``: minimum isoform abundance as a fraction of a locus's
-    dominant isoform. Raised above StringTie's default of 0.01 to drop minor
-    noise isoforms that inflate the genome-guided set."""
-    stringtie_min_junction_coverage: float = 1.0
-    """StringTie ``-j``: minimum number of spliced reads spanning a junction for it
-    to be kept. Left at StringTie's default of 1, but exposed so it can be raised:
-    a single spurious junction read (e.g. from noisy mapping in dense or
-    trans-spliced genomes) otherwise becomes a splice-graph edge and inflates
-    isoforms / fuses neighbouring loci."""
-
     # --- de novo + combinr consolidation routine ---
-    rnaspades: bool = True
-    """DORMANT: rnaSPAdes is no longer in the active pipeline (Trinity covers de
-    novo + genome-guided). Configures the kept-but-unwired rnaspades module; no
-    effect unless it is re-wired into _steps_for."""
     min_sl_fragment: int = 25
     """Minimum length (nt) of a fragment kept after in-silico SL trans-splicing."""
     sl_sequence: str | None = None
@@ -427,12 +356,10 @@ class AssemblyConfig(_StepRunSettings):
     defuse_blastx_evalue: float = 1e-5
     """diamond blastx e-value cutoff for a protein hit to count toward de-fusion."""
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def name(self) -> str:
         return self.genome.stem
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def aligner_bam(self) -> str:
         """The read BAM downstream genome-guided steps (Trinity gg, SL read-side) use.
@@ -442,7 +369,6 @@ class AssemblyConfig(_StepRunSettings):
         """
         return "minimap2_Aligned.sortedByCoord.out.bam"
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def reads_args_minimap2(self) -> list[str]:
         if self.left_reads and self.right_reads:
@@ -451,7 +377,6 @@ class AssemblyConfig(_StepRunSettings):
             return [str(self.single_reads)]
         raise ValueError("No read files provided")
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def reads_args_trinity(self) -> list[str]:
         if self.left_reads and self.right_reads:
@@ -462,10 +387,25 @@ class AssemblyConfig(_StepRunSettings):
 
     memory_gb: int = Field(
         default_factory=lambda: _default_assembly_memory_gb(),
-        description="Assembly memory cap in GiB (Trinity --max_memory / rnaSPAdes -m).",
+        description="Assembly memory cap in GiB (Trinity --max_memory).",
     )
 
-    settings_customise_sources = _pyproject_settings_sources("assemble")
+    @model_validator(mode="after")
+    def _check_read_pairing(self) -> AssemblyConfig:
+        # Whether any reads were given at all is the CLI's check: steps and
+        # tests build reads-less configs.
+        paired = self.left_reads is not None or self.right_reads is not None
+        if paired and (self.left_reads is None or self.right_reads is None):
+            raise ValueError("Paired-end mode requires both --left and --right.")
+        if self.single_reads is not None and self.strand_specific in ("RF", "FR"):
+            raise ValueError(
+                "Paired-end strand types (RF/FR) cannot be used with single-end reads."
+            )
+        if paired and self.strand_specific in ("R", "F"):
+            raise ValueError(
+                "Single-end strand types (R/F) cannot be used with paired-end reads."
+            )
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -478,19 +418,16 @@ class RepeatsConfig(_StepRunSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="EUKAN_REPEATS_",
-        extra="ignore",
+        extra="forbid",
     )
 
     genome: Path
     lib: Path | None = None  # pre-built families library; skips RepeatModeler when set
     engine: str = "rmblast"
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def name(self) -> str:
         return self.genome.stem
-
-    settings_customise_sources = _pyproject_settings_sources("mask-repeats")
 
 
 # ---------------------------------------------------------------------------
@@ -503,27 +440,17 @@ class FunctionalConfig(_StepRunSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="EUKAN_FUNC_",
-        extra="ignore",
+        extra="forbid",
     )
 
     proteins: Path
-    homology_db: str = "uniprot"  # "uniprot" → phmmer vs SwissProt; "kofam" → hmmscan vs KOfam
-    uniprot_db: Path = Path("databases/uniprot_sprot.faa")
-    kofam_db: Path = Path("databases/kofam_eukaryote.hmm")
-    ko_list_path: Path = Path("databases/ko_list.tsv")
-    pfam_db: Path = Path("databases/Pfam-A.hmm")
+    homology_db: HomologyDb = "uniprot"
+    uniprot_db: Path = DEFAULT_DB_DIR / DATABASES["uniprot"].file
+    kofam_db: Path = DEFAULT_DB_DIR / DATABASES["kofam"].file
+    ko_list_path: Path = DEFAULT_DB_DIR / DATABASES["ko_list"].file
+    pfam_db: Path = DEFAULT_DB_DIR / DATABASES["pfam"].file
     gff3_path: Path | None = None
-    evalue: str = "1e-1"
-
-    @model_validator(mode="after")
-    def _validate_homology_db(self) -> FunctionalConfig:
-        if self.homology_db not in ("uniprot", "kofam"):
-            raise ValueError(
-                f"homology_db must be 'uniprot' or 'kofam', got {self.homology_db!r}"
-            )
-        return self
-
-    settings_customise_sources = _pyproject_settings_sources("func-annot")
+    evalue: float = 1e-1
 
 
 # ---------------------------------------------------------------------------
@@ -534,14 +461,15 @@ class FunctionalConfig(_StepRunSettings):
 class SubmissionConfig(_StepRunSettings):
     """Configuration for NCBI submission preparation (eukan prep-submission).
 
-    Wraps NCBI's table2asn validator. Auto-discovers ``genome`` from
-    ``eukan-run.json`` and ``gff3`` from ``work_dir`` (preferring
+    Wraps NCBI's table2asn validator. :meth:`discover` fills in ``genome``
+    from ``eukan-run.json`` (the genome annotate ran on, else mask-repeats',
+    else assemble's) and ``gff3`` from ``work_dir`` (preferring
     ``final.mod.gff3`` over ``final.gff3``) when not given explicitly.
     """
 
     model_config = SettingsConfigDict(
         env_prefix="EUKAN_SUBMIT_",
-        extra="ignore",
+        extra="forbid",
     )
 
     # --- Inputs (auto-discoverable) ---
@@ -568,37 +496,60 @@ class SubmissionConfig(_StepRunSettings):
     # --- GFF3 preprocessing ---
     cleanup_gff3: bool = True  # strip UniProt cruft, drop CDS-less mRNAs, etc.
 
+    def _derive_output_file(self) -> None:
+        if self.output_file is None and self.genome is not None:
+            self.output_file = self.output_dir / f"{self.genome.stem}.sqn"
+
     @model_validator(mode="after")
-    def _discover_inputs(self) -> SubmissionConfig:
+    def _default_output_file(self) -> SubmissionConfig:
+        self._derive_output_file()
+        return self
+
+    def discover(self) -> None:
+        """Fill in ``genome`` and ``gff3`` from earlier runs when not given; both
+        must then be set.
+
+        Building the config reads no files; the CLI calls this once it is built.
+        """
         log = get_logger(__name__)
-        from eukan.infra import artifacts
-        from eukan.infra.artifacts import Artifact
-        from eukan.infra.layout import sibling_step_dir
-        from eukan.infra.manifest import load_manifest
+        from eukan.infra import artifacts  # lazy: startup cost (manifest, health)
+        from eukan.infra.artifacts import Artifact  # lazy: startup cost (manifest, health)
+        from eukan.infra.manifest import (  # lazy: startup cost (pydantic models, health)
+            ANNOTATION,
+            ASSEMBLY,
+            REPEATS,
+            load_manifest,
+        )
 
         if self.genome is None:
             # Manifest lives at the run-dir root (manifest_dir); fall back
-            # to legacy per-step locations for older runs.
+            # to legacy per-step locations for older runs. A version 1 manifest
+            # holds one genome, that of whichever pipeline created it.
             for candidate_dir in (
                 self.manifest_dir,
                 sibling_step_dir(self.work_dir, "annotate"),
                 self.work_dir,
             ):
                 manifest = load_manifest(candidate_dir)
-                if manifest and manifest.genome:
-                    discovered = Path(manifest.genome)
-                    object.__setattr__(self, "genome", discovered)
-                    log.info("Auto-discovered genome from eukan-run.json: %s", discovered)
+                if manifest is None:
+                    continue
+                records = [manifest.pipelines.get(p) for p in (ANNOTATION, REPEATS, ASSEMBLY)]
+                genomes = [r.genome for r in records if r and r.genome]
+                if manifest.genome:
+                    genomes.append(Path(manifest.genome))
+                if genomes:
+                    self.genome = genomes[0]
+                    log.info("Auto-discovered genome from eukan-run.json: %s", self.genome)
                     break
 
         if self.gff3 is None:
             preferred = artifacts.find(self.work_dir, Artifact.FINAL_FUNC_GFF3)
             fallback = artifacts.find(self.work_dir, Artifact.FINAL_GFF3)
             if preferred is not None:
-                object.__setattr__(self, "gff3", preferred)
+                self.gff3 = preferred
                 log.info("Auto-discovered annotated GFF3: %s", preferred)
             elif fallback is not None:
-                object.__setattr__(self, "gff3", fallback)
+                self.gff3 = fallback
                 log.warning(
                     "Using %s (no functional annotations). "
                     "Run `eukan func-annot` first for product names.",
@@ -606,19 +557,20 @@ class SubmissionConfig(_StepRunSettings):
                 )
 
         if self.genome is None:
-            raise ValueError(
-                "genome not set and not discoverable. "
-                "Pass --genome or run from a directory containing eukan-run.json."
+            raise ConfigurationError(
+                "genome not set and not discoverable.",
+                hint="Pass --genome or run from a directory containing eukan-run.json.",
             )
         if self.gff3 is None:
-            raise ValueError(
-                "gff3 not set and not discoverable. "
-                "Pass --gff3 or run `eukan annotate` (and optionally `eukan func-annot`) first."
+            raise ConfigurationError(
+                "gff3 not set and not discoverable.",
+                hint="Pass --gff3 or run `eukan annotate` (and optionally `eukan func-annot`) first.",
             )
 
-        if self.output_file is None:
-            object.__setattr__(self, "output_file", self.output_dir / f"{self.genome.stem}.sqn")
+        self._derive_output_file()
 
-        return self
-
-    settings_customise_sources = _pyproject_settings_sources("prep-submission")
+    def required_paths(self) -> tuple[Path, Path, Path]:
+        """``(genome, gff3, output_file)``, which discover() leaves set."""
+        if self.genome is None or self.gff3 is None or self.output_file is None:
+            raise ValueError("genome, gff3 or output_file not set; call discover() first.")
+        return self.genome, self.gff3, self.output_file

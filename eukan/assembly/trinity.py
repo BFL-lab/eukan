@@ -30,7 +30,7 @@ def _run_trinity_mode(
 
     Jaccard clipping is *not* delegated to Trinity (``--jaccard_clip``): the
     standalone :mod:`eukan.assembly.jaccard` step clips every assembly uniformly
-    (with STAR rather than Trinity's slower bowtie2 pass, and with the tunable
+    (with minimap2 rather than Trinity's slower bowtie2 pass, and with the tunable
     ``--jaccard-*`` knobs), so passing it here too would double-clip Trinity's
     contigs.
 

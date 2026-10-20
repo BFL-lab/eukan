@@ -20,7 +20,6 @@ exercising the same code paths as real user workflows.
 
 from __future__ import annotations
 
-import multiprocessing
 import os
 import shutil
 import subprocess
@@ -32,6 +31,9 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 import click
+
+from eukan.infra.databases import DATABASES, HOMOLOGY_DBS
+from eukan.infra.utils import available_cpus
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -131,7 +133,7 @@ def setup_test_data_cmd(output_dir: Path) -> None:
     help="Kingdom for test organism (S. pombe = fungus).",
 )
 @click.option(
-    "--numcpu", "-n", type=int, default=multiprocessing.cpu_count(),
+    "--numcpu", "-n", type=int, default=available_cpus(),
     show_default=True, help="Number of CPU threads.",
 )
 @click.option(
@@ -139,7 +141,7 @@ def setup_test_data_cmd(output_dir: Path) -> None:
     help="Skip assembly, annotate using only protein + genome evidence.",
 )
 @click.option(
-    "--homology-db", type=click.Choice(["uniprot", "kofam"], case_sensitive=False),
+    "--homology-db", type=click.Choice(HOMOLOGY_DBS, case_sensitive=False),
     default="uniprot", show_default=True,
     help="Homology DB for db-fetch + func-annot. 'uniprot' uses SwissProt "
          "phmmer; 'kofam' uses KEGG Orthology HMMs with per-KO thresholds.",
@@ -208,10 +210,10 @@ def test_pipeline_cmd(
     click.echo(f"STEP 1: Database fetch ({homology_db} + Pfam)")
     click.echo(f"{'=' * 60}")
 
-    pfam_db = db_dir / "Pfam-A.hmm"
-    uniprot_db = db_dir / "uniprot_sprot.faa"
-    kofam_db = db_dir / "kofam_eukaryote.hmm"
-    ko_list_path = db_dir / "ko_list.tsv"
+    pfam_db = db_dir / DATABASES["pfam"].file
+    uniprot_db = db_dir / DATABASES["uniprot"].file
+    kofam_db = db_dir / DATABASES["kofam"].file
+    ko_list_path = db_dir / DATABASES["ko_list"].file
 
     if homology_db == "kofam":
         homology_files = [kofam_db, ko_list_path, pfam_db]
@@ -342,7 +344,6 @@ def test_pipeline_cmd(
                 "-tf", str(nr_fasta),
                 "-tg", str(nr_gff3),
                 "-r", str(hints),
-                "--strand-specific",
             ]
         else:
             click.echo("  Assembly outputs not found, running without transcript evidence")
@@ -450,7 +451,7 @@ def test_pipeline_cmd(
             click.echo("  Submission prep complete.")
         except Exception as e:
             click.echo(f"\n  Submission prep failed: {e}")
-            click.echo("  See submission/genome.val and .dr for validator details.")
+            click.echo("  See the .val and .dr reports under submission/ for validator details.")
 
     # ================================================================
     # Summary
@@ -478,8 +479,9 @@ def test_pipeline_cmd(
     func_faa = work_dir / "func-annot" / "predicted_proteins.mod.faa"
     if func_faa.exists():
         click.echo(f"  Annotated proteins: {func_faa}")
-    sqn = work_dir / "submission" / f"{genome.stem}.sqn"
-    if sqn.exists():
+    # Named after the genome prep-submission discovers (annotate's sanitized
+    # copy), not the one this routine passed to annotate.
+    for sqn in sorted((work_dir / "submission").glob("*.sqn")):
         click.echo(f"  NCBI .sqn:          {sqn}")
     click.echo("\n  View run details: eukan status -d <step-dir>")
 
@@ -507,7 +509,7 @@ def compare_annotations_cmd(reference: Path, predicted: Path) -> None:
 
     Defaults compare tests/data/reference.gff3 vs the pipeline output.
     """
-    from tests.annot_quality import compare_annotations, format_results
+    from eukan.compare import compare_annotations, format_results
 
     click.echo(f"Loading reference: {reference}")
     click.echo(f"Loading predicted: {predicted}")

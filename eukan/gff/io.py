@@ -6,7 +6,7 @@ and extract_sequences.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import gffutils
@@ -15,6 +15,7 @@ from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
 from eukan.gff import create_gff_db
+from eukan.gff.rows import iter_gff3_rows
 from eukan.infra.genome import ContigIndex
 
 
@@ -23,29 +24,39 @@ def count_gff3_features(gff3_path: str | Path, feature_type: str = "gene") -> in
 
     Fast line-based parsing — does not load the file into a database.
     """
-    count = 0
-    with open(gff3_path) as f:
-        for line in f:
-            if line.startswith("#") or not line.strip():
-                continue
-            cols = line.split("\t")
-            if len(cols) >= 3 and cols[2] == feature_type:
-                count += 1
-    return count
+    return sum(1 for cols in iter_gff3_rows(gff3_path) if cols[2] == feature_type)
 
 
-def featuredb2gff3_file(featuredb: gffutils.FeatureDB, out: str | Path) -> None:
-    """Write a FeatureDB to a GFF3 file with proper gene>mRNA>exon/CDS hierarchy."""
+def featuredb2gff3_file(
+    featuredb: gffutils.FeatureDB,
+    out: str | Path,
+    *,
+    header: str = "",
+    visit: Callable[[gffutils.Feature], bool] | None = None,
+) -> None:
+    """Write a FeatureDB to a GFF3 file with proper gene>mRNA>exon/CDS hierarchy.
+
+    *header* is written first. *visit* is called on each feature before it is
+    written and may modify it; when it returns False the feature and
+    everything under it are left out.
+    """
+    keep = visit or (lambda feature: True)
     with open(out, "w") as fout:
+        fout.write(header)
         for gene in featuredb.features_of_type("gene", order_by=("seqid", "start")):
+            if not keep(gene):
+                continue
             fout.write(f"{gene}\n")
             for mRNA in featuredb.children(gene, featuretype="mRNA", order_by="start"):
+                if not keep(mRNA):
+                    continue
                 fout.write(f"{mRNA}\n")
                 for child_type in ("exon", "CDS"):
                     for f in featuredb.children(
                         mRNA, featuretype=child_type, order_by="start"
                     ):
-                        fout.write(f"{f}\n")
+                        if keep(f):
+                            fout.write(f"{f}\n")
 
 
 def iter_assembled_sequences(
@@ -93,7 +104,14 @@ def extract_sequences(
     codon_table = CodonTable.unambiguous_dna_by_id[genetic_code]
 
     for mrna, dna in iter_assembled_sequences(gff3db, genome, child_featuretype="CDS"):
-        seq = Seq(dna)
         if extract_to == "protein":
-            seq = seq.translate(table=codon_table)
+            # Read from the 5'-most CDS's phase, complete codons only: a
+            # 5'-partial model need not start (or a 3'-partial end) in frame.
+            first_cds = next(gff3db.children(
+                mrna, featuretype="CDS", order_by="start", reverse=mrna.strand == "-",
+            ))
+            dna = dna[int(first_cds.frame) if first_cds.frame in ("1", "2") else 0:]
+            seq = Seq(dna[: len(dna) - len(dna) % 3]).translate(table=codon_table)
+        else:
+            seq = Seq(dna)
         yield SeqRecord(seq, id=mrna.id, description="")

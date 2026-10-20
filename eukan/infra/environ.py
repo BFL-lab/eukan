@@ -78,13 +78,14 @@ def _apply_path_dirs(tool: Tool, prefix: str, env: dict[str, str]) -> None:
 def _raise_open_file_limit() -> None:
     """Raise the soft open-file limit toward the hard cap.
 
-    STAR's BAM sorter opens roughly ``runThreadN * outBAMsortingBinsN`` temp
-    files at once (e.g. 40 threads * 50 bins ~= 2000); samtools and segemehl are
-    similarly fd-hungry. When a login shell leaves the soft ``RLIMIT_NOFILE`` at
-    the common 1024 default, those tools abort mid-run with "could not create
-    output file ..." (STAR exits 109). Bump the soft limit to the hard limit
-    (capped) so the child tools we spawn inherit the headroom. Best-effort: any
-    failure leaves the inherited shell limit untouched.
+    Written for STAR, whose BAM sorter opened roughly
+    ``runThreadN * outBAMsortingBinsN`` temp files at once (e.g. 40 threads * 50
+    bins ~= 2000) and aborted with "could not create output file ..." (exit 109)
+    when a login shell left the soft ``RLIMIT_NOFILE`` at the common 1024 default.
+    minimap2 has replaced STAR; the bump stays for the remaining fd-hungry child
+    tools such as samtools. Bump the soft limit to the hard limit (capped) so the
+    child tools we spawn inherit the headroom. Best-effort: any failure leaves the
+    inherited shell limit untouched.
     """
     if resource is None:
         return

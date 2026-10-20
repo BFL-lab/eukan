@@ -188,7 +188,7 @@ def _format_summary_table(result: ComparisonResult, w: int) -> list[str]:
         f"{_pct(gs.mean_sp):>7} "
         f"{_pct(gs.mean_f1):>7}"
     )
-    for ss in [result.mrna_stats, result.cds_stats, result.intron_stats]:
+    for ss in result.subfeature_stats:
         lines.append(
             f"  {ss.level_name:<8} "
             f"{_pct(ss.sensitivity):>7} "
@@ -208,7 +208,7 @@ def format_results(result: ComparisonResult) -> str:
     lines: list[str] = []
     lines.extend(_title_block(result.ref_path, result.pred_path, _W))
     lines.extend(_format_gene_block(result.gene_stats, _W))
-    for ss in [result.mrna_stats, result.cds_stats, result.intron_stats]:
+    for ss in result.subfeature_stats:
         lines.extend(_format_subfeat_block(ss, _W))
     lines.extend(_format_summary_table(result, _W))
     return "\n".join(lines)
@@ -217,11 +217,6 @@ def format_results(result: ComparisonResult) -> str:
 # ---------------------------------------------------------------------------
 # Multi-prediction terminal report
 # ---------------------------------------------------------------------------
-
-
-_LEVEL_DISPLAY: dict[str, str] = {
-    "gene": "Gene", "mrna": "mRNA", "cds": "CDS", "intron": "Intron",
-}
 
 
 def _multi_title_block(result: MultiComparisonResult, w: int) -> list[str]:
@@ -242,22 +237,10 @@ def _per_prediction_section(result: ComparisonResult, w: int) -> list[str]:
     """Per-prediction breakdown for one prediction inside a multi-pred report."""
     lines: list[str] = ["", "", f"### PREDICTION: {result.label} ###"]
     lines.extend(_format_gene_block(result.gene_stats, w))
-    for ss in [result.mrna_stats, result.cds_stats, result.intron_stats]:
+    for ss in result.subfeature_stats:
         lines.extend(_format_subfeat_block(ss, w))
     lines.extend(_format_summary_table(result, w))
     return lines
-
-
-def _stats_for_level(result: ComparisonResult, level: str) -> GeneStats | SubfeatureStats:
-    if level == "gene":
-        return result.gene_stats
-    if level == "mrna":
-        return result.mrna_stats
-    if level == "cds":
-        return result.cds_stats
-    if level == "intron":
-        return result.intron_stats
-    raise ValueError(f"unknown level: {level!r}")
 
 
 def _comparative_f1_table(result: MultiComparisonResult) -> list[str]:
@@ -270,10 +253,10 @@ def _comparative_f1_table(result: MultiComparisonResult) -> list[str]:
     header = "  " + " " * 8 + "".join(f"{la:>{cell_w}}" for la in labels)
     lines.append(header)
     lines.append("  " + "-" * (len(header) - 2))
-    for level in ("gene", "mrna", "cds", "intron"):
-        row = f"  {_LEVEL_DISPLAY[level]:<8}"
+    for i, level in enumerate(("Gene", "mRNA", "CDS", "Intron")):
+        row = f"  {level:<8}"
         for pred in result.per_prediction:
-            stats = _stats_for_level(pred, level)
+            stats = (pred.gene_stats, *pred.subfeature_stats)[i]
             row += f"{_pct(stats.f1):>{cell_w}}"
         lines.append(row)
     return lines

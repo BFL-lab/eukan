@@ -10,9 +10,8 @@ from pathlib import Path
 import gffutils
 
 from eukan.annotation.spaln_params import build_ssp
-from eukan.gff import create_gff_db
-from eukan.gff import transforms as gff_transforms
 from eukan.gff.normalize import normalize_to_gff3
+from eukan.gff.rows import iter_gff3_rows, parse_attrs
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_dir
@@ -41,40 +40,62 @@ def align_proteins(
     symlink(config.genome, sdir / "genome")
     symlink(config.genome, sdir / "genome.gf")
 
-    models = create_gff_db(gff3)
-
     # Decide between spaln (intron-rich) and gth (intron-poor). We count
     # `CDS` rows rather than `exon` because genemark.gtf — the most common
     # input here — emits CDS/intron/gene/mRNA but no `exon` rows; using
     # `exon` would always evaluate to 0 and force gth.
-    gene_count = 0
-    intron_count = 0
-    for gene in models.features_of_type("gene"):
-        gene_count += 1
-        intron_count += max(0, len(list(models.children(gene, featuretype="CDS"))) - 1)
-
-    if gene_count > 0 and intron_count / gene_count > 0.25:
-        _run_spaln(config, sdir, models, intron_hints or gff3)
+    lengths, intron_count = _gene_lengths_and_introns(gff3)
+    if lengths and intron_count / len(lengths) > 0.25:
+        _run_spaln(config, sdir, lengths, intron_hints or gff3)
     else:
         _run_gth(sdir)
 
-    # Create protein hints for AUGUSTUS
-    prot_db = create_gff_db(sdir / output, transform=gff_transforms.prot2augustus_hints)
-    with open(sdir / "hints_protein.gff", "w") as fout:
-        for feat in prot_db.all_features():
-            fout.write(f"{feat}\n")
-
+    _write_protein_hints(sdir / output, sdir / "hints_protein.gff")
     return sdir / output
+
+
+def _write_protein_hints(prot_gff3: Path, out: Path) -> None:
+    """AUGUSTUS protein hints: each CDS as a CDSpart grouped by its (still
+    URL-escaped) Parent."""
+    with open(out, "w") as fout:
+        for cols in iter_gff3_rows(prot_gff3):
+            if cols[2] == "CDS":
+                end = ";" if cols[8].endswith(";") else ""
+                group = parse_attrs(cols[8]).get("Parent", "")
+                cols[2] = "CDSpart"
+                cols[8] = f"pri=1;src=P;group={group}{end}"
+                fout.write("\t".join(cols) + "\n")
+
+
+def _gene_lengths_and_introns(gff3: Path) -> tuple[list[int], int]:
+    """Gene lengths and intron count of *gff3*, by a line scan.
+
+    A gene's introns are its CDS (under the gene or its mRNAs) minus one.
+    """
+    lengths: list[int] = []
+    gene_of: dict[str, str] = {}
+    cds_per_parent: Counter[str] = Counter()
+    for cols in iter_gff3_rows(gff3):
+        if cols[2] == "gene":
+            lengths.append(abs(int(cols[4]) - int(cols[3])))
+        elif cols[2] == "mRNA":
+            attrs = parse_attrs(cols[8])
+            gene_of[attrs.get("ID", "")] = attrs.get("Parent", "")
+        elif cols[2] == "CDS":
+            cds_per_parent[parse_attrs(cols[8]).get("Parent", "")] += 1
+    cds_per_gene: Counter[str] = Counter()
+    for parent, n in cds_per_parent.items():
+        cds_per_gene[gene_of.get(parent, parent)] += n
+    return lengths, sum(n - 1 for n in cds_per_gene.values())
 
 
 def _run_spaln(
     config: PipelineConfig,
     sdir: Path,
-    models: gffutils.FeatureDB,
+    lengths: list[int],
     intron_hints_path: Path,
 ) -> None:
     """Run spaln protein alignment (for intron-rich genomes)."""
-    lengths = [abs(f.end - f.start) for f in models.features_of_type("gene")]
     mean_len = int(sum(lengths) / len(lengths))
     sd_len = int(statistics.stdev(lengths)) if len(lengths) >= 2 else 0
     maxlen = mean_len + 2 * sd_len
@@ -131,16 +152,12 @@ def _run_spaln(
 def _run_fitild(intron_hints_path: Path, sdir: Path) -> str:
     """Compute intron length distribution via fitild. Returns the -yI parameter string."""
     counts: Counter[int] = Counter()
-    with open(intron_hints_path) as fin:
-        for line in fin:
-            cols = line.split("\t")
-            if len(cols) < 5:
-                continue
-            try:
-                length = int(cols[4]) - int(cols[3])
-            except ValueError:
-                continue
-            counts[length] += 1
+    for cols in iter_gff3_rows(intron_hints_path):
+        try:
+            length = int(cols[4]) - int(cols[3])
+        except ValueError:
+            continue
+        counts[length] += 1
     with open(sdir / "introns.ild", "w") as fout:
         for length in sorted(counts):
             fout.write(f"{length} {counts[length]}\n")

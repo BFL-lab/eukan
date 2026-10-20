@@ -6,34 +6,16 @@ The over-long-intron split moved to :mod:`eukan.assembly.max_intron`
 
 from __future__ import annotations
 
-import pysam
 import pytest
 
-from eukan.assembly.jaccard import _parse_transcript_models
 from eukan.assembly.sl_acceptors import AcceptorSite
 from eukan.assembly.sl_cut import (
     _project_genomic_to_spliced,
-    bam_to_transcript_gff3,
     cut_models_at_sl,
     run_sl_cut,
 )
+from eukan.gff.transcripts import read_transcripts as _parse_transcript_models
 from eukan.settings import AssemblyConfig
-
-
-def _make_bam(path, reads, ref="chr1", ref_len=100_000):
-    """reads = [(name, flag, start, cigar, seq), ...]."""
-    header = {"HD": {"VN": "1.6"}, "SQ": [{"SN": ref, "LN": ref_len}]}
-    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
-        for name, flag, start, cigar, seq in reads:
-            s = pysam.AlignedSegment(out.header)
-            s.query_name = name
-            s.flag = flag
-            s.reference_id = 0
-            s.reference_start = start
-            s.mapping_quality = 60
-            s.cigartuples = cigar
-            s.query_sequence = seq
-            out.write(s)
 
 
 def _transcript_gff(tid, strand, exons):
@@ -62,40 +44,6 @@ def test_project_minus_strand():
     exons_5to3 = [(51, 90), (1, 40)]  # descending genomic for '-'
     assert _project_genomic_to_spliced(exons_5to3, "-", 90) == 1  # 5'-most base
     assert _project_genomic_to_spliced(exons_5to3, "-", 60) == 31
-
-
-# --- bam_to_transcript_gff3 ------------------------------------------------
-
-
-def test_bam_to_gff3_splits_at_intron(tmp_path):
-    bam = tmp_path / "tx.bam"
-    _make_bam(bam, [("q1", 0, 100, [(0, 10), (3, 50), (0, 10)], "A" * 20)])
-    out = tmp_path / "tx.gff3"
-    assert bam_to_transcript_gff3(bam, out, "trinity-denovo.genome") == 1
-    (m,) = _parse_transcript_models(out)
-    assert m.exons == [(101, 110), (161, 170)]
-    assert m.strand == "+"
-
-
-def test_bam_to_gff3_minus_strand(tmp_path):
-    bam = tmp_path / "tx.bam"
-    _make_bam(bam, [("q1", 16, 100, [(0, 10), (3, 50), (0, 10)], "A" * 20)])
-    out = tmp_path / "tx.gff3"
-    bam_to_transcript_gff3(bam, out, "trinity-denovo.genome")
-    (m,) = _parse_transcript_models(out)
-    assert m.strand == "-" and m.exons == [(101, 110), (161, 170)]
-
-
-def test_bam_to_gff3_unique_ids_for_multimaps(tmp_path):
-    bam = tmp_path / "tx.bam"
-    _make_bam(bam, [
-        ("q1", 0, 100, [(0, 20)], "A" * 20),
-        ("q1", 256, 500, [(0, 20)], "A" * 20),  # secondary: a second locus
-    ])
-    out = tmp_path / "tx.gff3"
-    assert bam_to_transcript_gff3(bam, out, "trinity-gg.genome") == 2
-    ids = {m.tid for m in _parse_transcript_models(out)}
-    assert ids == {"q1.m1", "q1.m2"}  # no Parent collision → loci stay distinct
 
 
 # --- cut_models_at_sl ------------------------------------------------------

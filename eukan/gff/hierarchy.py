@@ -1,4 +1,4 @@
-"""Feature hierarchy completion, CDS phase correction, and final prettification."""
+"""Feature hierarchy completion and final prettification (with CDS phases)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,11 @@ from collections.abc import Iterator
 
 import gffutils
 
-from eukan.gff.transforms import _swap_id_kind, derived_feature
+from eukan.gff.transforms import derived_feature, swap_id_kind
+
+# Column 2 of the rows of a gene the transcript-ORF patch added
+# (eukan.annotation.consensus); every other final.gff3 row says "eukan".
+ORF_PATCH_SOURCE = "eukan-orf-patch"
 
 # ---------------------------------------------------------------------------
 # Feature hierarchy completion
@@ -33,60 +37,26 @@ def add_missing_feats_to_gff3(
             )
             gene.attributes["ID"] = [f"{gene_id}_gene"]
 
-    # exon but no CDS → derive CDS from exons
+    # exon but no CDS → derive CDS from exons, phased from each mRNA's 5'-most
+    # exon (SNAP's exon-only models start with their start codon)
     if "CDS" not in feats and "exon" in feats:
-        for exon in gff3.features_of_type("exon"):
-            phase = (exon.start - 1) % 3 if exon.strand == "-" else (exon.end + 1) % 3
-            attrs = dict(exon.attributes)
-            attrs["ID"] = [_swap_id_kind(exon.id, "exon", "CDS")]
-            yield derived_feature(exon, "CDS", attrs, frame=phase)
+        for mRNA in gff3.features_of_type("mRNA"):
+            phase = 0
+            for exon in gff3.children(
+                mRNA, featuretype="exon", order_by="start", reverse=mRNA.strand == "-",
+            ):
+                attrs = dict(exon.attributes)
+                attrs["ID"] = [swap_id_kind(exon.id, "exon", "CDS")]
+                yield derived_feature(exon, "CDS", attrs, frame=str(phase))
+                phase = (3 - ((exon.end - exon.start + 1 - phase) % 3)) % 3
 
     # CDS but no exon → derive exons from CDS
     if "exon" not in feats and "CDS" in feats:
         for cds in gff3.features_of_type("CDS"):
             cds_id = cds.attributes["ID"][0]
             attrs = dict(cds.attributes)
-            attrs["ID"] = [_swap_id_kind(cds_id, r"CDS|cds", "exon")]
+            attrs["ID"] = [swap_id_kind(cds_id, r"CDS|cds", "exon")]
             yield derived_feature(cds, "exon", attrs)
-
-
-# ---------------------------------------------------------------------------
-# CDS phase correction
-# ---------------------------------------------------------------------------
-
-
-def fix_CDS_phases(
-    gff3: gffutils.FeatureDB,
-) -> Iterator[gffutils.Feature]:
-    """Recalculate CDS phases for all gene models.
-
-    Yields all features (gene, mRNA, exon, CDS) with corrected CDS frame values.
-    """
-    for gene in gff3.features_of_type("gene"):
-        yield gene
-        for mRNA in gff3.children(gene, featuretype="mRNA"):
-            yield mRNA
-            yield from gff3.children(mRNA, featuretype="exon")
-
-            reverse = mRNA.strand == "-"
-            all_cds = list(
-                gff3.children(
-                    mRNA,
-                    featuretype="CDS",
-                    order_by="start",
-                    reverse=reverse,
-                )
-            )
-            if not all_cds:
-                continue
-
-            next_phase = 0
-            for cds in all_cds:
-                phase = 0 if cds is all_cds[0] else next_phase
-                cds_len = cds.end - cds.start + 1
-                next_phase = (3 - ((cds_len - phase) % 3)) % 3
-                cds.frame = str(phase)
-                yield cds
 
 
 # ---------------------------------------------------------------------------
@@ -94,23 +64,47 @@ def fix_CDS_phases(
 # ---------------------------------------------------------------------------
 
 
+def _cds_phases(gff3: gffutils.FeatureDB, mRNA: gffutils.Feature) -> dict[str, str]:
+    """Phase of each CDS of *mRNA*, walking from the 5'-most CDS.
+
+    That CDS is phase 0, where the start codon is, unless the model is
+    5'-partial (combinr's ``partial5=true``): with no start codon to anchor
+    it, the phase its producer gave stands.
+    """
+    partial5 = mRNA.attributes.get("partial5") == ["true"]
+    phases: dict[str, str] = {}
+    phase = 0
+    for i, cds in enumerate(gff3.children(
+        mRNA, featuretype="CDS", order_by="start", reverse=mRNA.strand == "-",
+    )):
+        if i == 0 and partial5 and cds.frame in ("0", "1", "2"):
+            phase = int(cds.frame)
+        phases[cds.id] = str(phase)
+        phase = (3 - ((cds.end - cds.start + 1 - phase) % 3)) % 3
+    return phases
+
+
 def prettify_gff3(
     gff3: gffutils.FeatureDB, shortname: str
 ) -> Iterator[gffutils.Feature]:
-    """Assign clean sequential locus tags to all features."""
+    """Assign clean sequential locus tags to all features.
+
+    Yields each gene, then each of its mRNAs followed by that mRNA's exons and
+    then its CDSs (other child types, such as UTRs, are left out), with every
+    CDS phase recomputed from the mRNA's 5'-most CDS (see :func:`_cds_phases`).
+    Column 2 is ``eukan`` on every row, except on the rows of a gene that came
+    in labelled :data:`ORF_PATCH_SOURCE`, which keep that label.
+    """
     for gene_num, gene in enumerate(
         gff3.features_of_type("gene", order_by=("seqid", "start")), start=1
     ):
+        source = ORF_PATCH_SOURCE if gene.source == ORF_PATCH_SOURCE else "eukan"
         gene_name = f"{shortname}_{gene_num:05d}"
         gene.attributes["ID"] = gene_name
         gene.attributes["locus_tag"] = gene_name
         gene.attributes["Name"] = gene_name
-        gene.source = "eukannotpass"
+        gene.source = source
         yield gene
-
-        child_types = {
-            f.featuretype for f in gff3.children(gene, level=2)
-        }
 
         for mRNA_num, mRNA in enumerate(
             gff3.children(gene, featuretype="mRNA", order_by=("seqid", "start")),
@@ -120,16 +114,19 @@ def prettify_gff3(
             mRNA.attributes.update(
                 ID=mRNA_name, Name=mRNA_name, Parent=gene_name, locus_tag=mRNA_name
             )
-            mRNA.source = "eukannotpass"
+            mRNA.source = source
             yield mRNA
 
-            for child_type in child_types:
+            phases = _cds_phases(gff3, mRNA)
+            for child_type in ("exon", "CDS"):
                 for f_num, f in enumerate(
                     gff3.children(mRNA, featuretype=child_type), start=1
                 ):
+                    if child_type == "CDS":
+                        f.frame = phases[f.id]
                     f_name = f"{mRNA_name}:{f.featuretype}:{f_num}"
                     f.attributes.update(
                         ID=f_name, Parent=mRNA_name, locus_tag=f_name
                     )
-                    f.source = "eukannotpass"
+                    f.source = source
                     yield f

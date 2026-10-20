@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TypedDict
 
@@ -11,17 +12,11 @@ import gffutils
 import pyhmmer
 from Bio import SeqIO
 
+from eukan.gff import create_gff_db
 from eukan.gff.io import count_gff3_features, featuredb2gff3_file
 from eukan.infra.logging import get_logger
 
 log = get_logger(__name__)
-
-
-def _decode(value: str | bytes | None) -> str:
-    """Decode bytes to str, pass through if already str (pyhmmer compat)."""
-    if value is None:
-        return ""
-    return value.decode() if isinstance(value, bytes) else value
 
 
 class HitInfo(TypedDict, total=False):
@@ -37,9 +32,14 @@ class HitInfo(TypedDict, total=False):
 
 
 # E-value at or below which an hmmscan/phmmer hit is treated as a confident
-# ("good") functional assignment; above it the hit is marginal (e.g. product
-# falls back to "hypothetical protein").
+# ("good") functional assignment in the annotated GFF3; above it the hit is
+# marginal (e.g. product falls back to "hypothetical protein").
 _EVALUE_GOOD_HIT = 1e-2
+
+# The annotated FASTA headers are stricter: from this E-value up a UniProt hit
+# reads "hypothetical protein [<description>]" and a Pfam hit
+# "<description> [marginal domain hit]".
+_EVALUE_MARGINAL_IN_FASTA = 1e-3
 
 _PFAM_VERSION_RE = re.compile(r"\.\d+$")
 
@@ -60,6 +60,11 @@ def _pfam_accession(info: HitInfo, hit_name: str) -> str:
 # query_id -> {hit_id -> HitInfo}
 HitResults = dict[str, dict[str, HitInfo]]
 
+# How the hits of one homology DB are written out: one hit as a FASTA header
+# field, and a query's hits onto its mRNA/CDS feature's GFF3 attributes.
+HitFormatter = Callable[[str, HitInfo], str]
+HitApplier = Callable[[gffutils.Feature, dict[str, HitInfo]], None]
+
 
 # ---------------------------------------------------------------------------
 # Sequence loading
@@ -74,11 +79,23 @@ def _load_digital_sequences(fasta_path: Path) -> list[pyhmmer.easel.DigitalSeque
     return seqs
 
 
-def _load_hmm_db(hmm_path: Path) -> list[pyhmmer.plan7.HMM]:
-    """Load HMM profiles from a pressed Pfam database."""
+@contextmanager
+def _open_hmm_db(
+    hmm_path: Path,
+) -> Iterator[Iterable[pyhmmer.plan7.HMM | pyhmmer.plan7.OptimizedProfile]]:
+    """Open an HMM database as the profiles to hand to hmmscan.
+
+    A pressed database (``eukan db-fetch`` presses the ones it fetches) gives
+    its optimized profiles, read straight into one block; an unpressed one
+    gives the open file, which hmmscan configures into a block itself.
+    """
     with pyhmmer.plan7.HMMFile(str(hmm_path)) as hf:
-        hmms: list[pyhmmer.plan7.HMM] = list(hf)
-    return hmms
+        if hf.is_pressed():
+            yield pyhmmer.plan7.OptimizedProfileBlock(
+                pyhmmer.easel.Alphabet.amino(), hf.optimized_profiles(),
+            )
+        else:
+            yield hf
 
 
 # ---------------------------------------------------------------------------
@@ -96,13 +113,15 @@ def run_phmmer_search(
     results: HitResults = {}
 
     for top_hits in pyhmmer.hmmer.phmmer(queries, targets, cpus=num_cpu, E=evalue_threshold):
-        query_name = _decode(top_hits.query.name)
-        if not top_hits:
+        query_name = top_hits.query.name
+        # Keep only the best hit (lowest e-value). E= gates hits in-scan
+        # against the targets seen so far; only the *reported* ones pass it
+        # against the whole database.
+        best = next(top_hits.reported, None)
+        if best is None:
             continue
-        # Keep only the best hit (lowest e-value)
-        best = top_hits[0]
-        hit_name = _decode(best.name)
-        hit_desc = _decode(best.description) if best.description else ""
+        hit_name = best.name
+        hit_desc = best.description or ""
         results[query_name] = {
             hit_name: {"description": hit_desc, "evalue": best.evalue}
         }
@@ -113,42 +132,43 @@ def run_phmmer_search(
 
 def run_hmmscan_search(
     queries: list[pyhmmer.easel.DigitalSequence],
-    hmms: list[pyhmmer.plan7.HMM],
+    profiles: Iterable[pyhmmer.plan7.HMM | pyhmmer.plan7.OptimizedProfile],
     num_cpu: int,
     evalue_threshold: float,
 ) -> HitResults:
     """Run hmmscan (sequence vs HMM profiles) and return non-overlapping domain hits.
 
-    For each query, keeps hits whose domains don't overlap on the query sequence.
+    For each query, hits are taken best E-value first; each is placed by its
+    best-scoring domain and kept unless that domain overlaps, on the query
+    sequence, the domain of a hit already kept.
     """
     results: HitResults = {}
 
-    for top_hits in pyhmmer.hmmer.hmmscan(queries, hmms, cpus=num_cpu, E=evalue_threshold):
-        query_name = _decode(top_hits.query.name)
+    for top_hits in pyhmmer.hmmer.hmmscan(queries, profiles, cpus=num_cpu, E=evalue_threshold):
+        query_name = top_hits.query.name
         if not top_hits:
             continue
 
         query_hits: dict[str, HitInfo] = {}
-        prev_end = -1
+        kept_spans: list[tuple[int, int]] = []
 
-        for hit in top_hits:
+        # Only *reported* hits pass E= against the whole database (see
+        # run_phmmer_search).
+        for hit in top_hits.reported:
             if not hit.domains:
                 continue
-            # Use the best domain for range checking
-            best_domain = hit.domains[0]
-            dom_start = best_domain.alignment.target_from
-            dom_end = best_domain.alignment.target_to
-
-            # Only keep non-overlapping domains
-            if dom_start > prev_end:
-                hit_name = _decode(hit.name)
-                hit_desc = _decode(hit.description) if hit.description else ""
-                query_hits[hit_name] = {
-                    "description": hit_desc,
-                    "evalue": hit.evalue,
-                    "accession": _decode(hit.accession),
-                }
-                prev_end = dom_end
+            aln = hit.best_domain.alignment
+            start, end = aln.target_from, aln.target_to
+            if any(start <= k_end and k_start <= end for k_start, k_end in kept_spans):
+                continue
+            kept_spans.append((start, end))
+            hit_name = hit.name
+            hit_desc = hit.description or ""
+            query_hits[hit_name] = {
+                "description": hit_desc,
+                "evalue": hit.evalue,
+                "accession": hit.accession or "",
+            }
 
         if query_hits:
             results[query_name] = query_hits
@@ -166,23 +186,20 @@ def annotate_fasta(
     proteins: Path,
     homology_res: HitResults,
     hmmscan_res: HitResults,
-    homology_db: str = "uniprot",
+    format_hit: HitFormatter,
+    output_dir: Path,
 ) -> Path:
     """Annotate protein FASTA headers with functional information.
 
-    ``homology_db`` selects the source of the homology hits cached in
-    ``homology_res`` and only affects the wording of the marginal-hit
-    fallback label. Returns the path to the annotated output file.
+    ``format_hit`` writes one hit of ``homology_res``: :func:`format_uniprot_hit`
+    or :func:`format_kofam_hit`, after the homology DB searched. The output,
+    ``<stem>.mod<suffix>``, lands in *output_dir* (the func-annot work dir).
+    Returns its path.
     """
-    if homology_db == "kofam":
-        homology_fmt = _format_kofam_results(homology_res)
-    else:
-        homology_fmt = _format_results(
-            homology_res, marginal_label="hypothetical protein [{desc}]",
-        )
-    hmmscan_fmt = _format_results(hmmscan_res, marginal_label="{desc} [marginal domain hit]")
+    homology_fmt = _format_hits(homology_res, format_hit)
+    hmmscan_fmt = _format_hits(hmmscan_res, _format_pfam_hit)
 
-    output_path = proteins.parent / f"{proteins.stem}.mod{proteins.suffix}"
+    output_path = output_dir / f"{proteins.stem}.mod{proteins.suffix}"
 
     count = 0
     with open(output_path, "w") as f:
@@ -198,38 +215,40 @@ def annotate_fasta(
     return output_path
 
 
-def _format_results(results: HitResults, marginal_label: str = "{desc} [marginal hit]") -> dict[str, str]:
-    """Format UniProt/Pfam-style search results with marginal hit annotations."""
-    formatted = {}
-    for query_id, hits in results.items():
-        parts = []
-        for hit_id, info in hits.items():
-            desc = info["description"]
-            ev = info["evalue"]
-            if ev >= 1e-3:
-                desc = marginal_label.format(desc=desc)
-            parts.append(f"{hit_id}: {desc} ({ev:.2e})")
-        formatted[query_id] = " ;; ".join(parts)
-    return formatted
+def _format_hits(results: HitResults, format_hit: HitFormatter) -> dict[str, str]:
+    """Each query's hits as one FASTA header field, one ``format_hit`` per hit."""
+    return {
+        query_id: " ;; ".join(format_hit(hit_id, info) for hit_id, info in hits.items())
+        for query_id, hits in results.items()
+    }
 
 
-def _format_kofam_results(results: HitResults) -> dict[str, str]:
-    """Format KOfam hits for FASTA headers.
+def _format_evalue_hit(hit_id: str, info: HitInfo, marginal_label: str) -> str:
+    """A UniProt or Pfam hit; a marginal one's description becomes ``marginal_label``."""
+    desc, ev = info["description"], info["evalue"]
+    if ev >= _EVALUE_MARGINAL_IN_FASTA:
+        desc = marginal_label.format(desc=desc)
+    return f"{hit_id}: {desc} ({ev:.2e})"
+
+
+def format_uniprot_hit(hit_id: str, info: HitInfo) -> str:
+    """A UniProt hit for a FASTA header; a marginal one reads as a hypothetical protein."""
+    return _format_evalue_hit(hit_id, info, "hypothetical protein [{desc}]")
+
+
+def _format_pfam_hit(hit_id: str, info: HitInfo) -> str:
+    return _format_evalue_hit(hit_id, info, "{desc} [marginal domain hit]")
+
+
+def format_kofam_hit(k_number: str, info: HitInfo) -> str:
+    """A KOfam hit for a FASTA header.
 
     Above-threshold hits are emitted verbatim; below-threshold hits are
     tagged ``[marginal KO hit]`` so the user can tell at a glance whether
     a record's KO assignment passed the per-KO cutoff.
     """
-    formatted = {}
-    for query_id, hits in results.items():
-        parts = []
-        for k_number, info in hits.items():
-            desc = info["description"]
-            ev = info["evalue"]
-            tag = "" if info.get("above_threshold") else " [marginal KO hit]"
-            parts.append(f"{k_number}: {desc}{tag} ({ev:.2e})")
-        formatted[query_id] = " ;; ".join(parts)
-    return formatted
+    tag = "" if info.get("above_threshold") else " [marginal KO hit]"
+    return f"{k_number}: {info['description']}{tag} ({info['evalue']:.2e})"
 
 
 # ---------------------------------------------------------------------------
@@ -241,10 +260,14 @@ def annotate_gff3(
     gff3_path: Path,
     homology_res: HitResults,
     hmmscan_res: HitResults,
+    apply_hits: HitApplier,
     output_dir: Path | None = None,
-    homology_db: str = "uniprot",
 ) -> Path:
     """Annotate GFF3 features with functional information.
+
+    ``apply_hits`` sets a feature's attributes from its ``homology_res`` hits:
+    :func:`apply_uniprot_hits` or :func:`apply_kofam_hits`, after the homology
+    DB searched.
 
     Output filename is ``<stem>.mod<suffix>``. When *output_dir* is given,
     the file lands there; otherwise it lands next to *gff3_path*. The
@@ -260,10 +283,9 @@ def annotate_gff3(
         if any(info["evalue"] <= _EVALUE_GOOD_HIT for info in hits.values())
     }
 
-    from eukan.gff import create_gff_db
     gff3 = create_gff_db(gff3_path)
     gff3.update(
-        _add_func_info(gff3, homology_res, hmmscan_strict, homology_db),
+        _add_func_info(gff3, homology_res, hmmscan_strict, apply_hits),
         merge_strategy="replace",
     )
 
@@ -278,7 +300,7 @@ def annotate_gff3(
     return output_path
 
 
-def _apply_uniprot_hits(f: gffutils.Feature, hits: dict[str, HitInfo]) -> None:
+def apply_uniprot_hits(f: gffutils.Feature, hits: dict[str, HitInfo]) -> None:
     """Set product/inference from UniProt phmmer hits (E-value gated)."""
     f.attributes["product"] = [
         v["description"] if v["evalue"] <= _EVALUE_GOOD_HIT else "hypothetical protein"
@@ -291,7 +313,7 @@ def _apply_uniprot_hits(f: gffutils.Feature, hits: dict[str, HitInfo]) -> None:
     ]
 
 
-def _apply_kofam_hits(f: gffutils.Feature, hits: dict[str, HitInfo]) -> None:
+def apply_kofam_hits(f: gffutils.Feature, hits: dict[str, HitInfo]) -> None:
     """Set product/ec_number/Dbxref/inference from KOfam hits (per-KO threshold gated).
 
     Only above-threshold KOs contribute to ``product``/``Dbxref``/
@@ -327,7 +349,7 @@ def _add_func_info(
     gff3: gffutils.FeatureDB,
     homology_res: HitResults,
     hmmscan_res: HitResults,
-    homology_db: str = "uniprot",
+    apply_hits: HitApplier,
 ) -> Iterator[gffutils.Feature]:
     """Yield mRNA/CDS features annotated with functional information."""
     for f in gff3.features_of_type(["mRNA", "CDS"]):
@@ -338,11 +360,7 @@ def _add_func_info(
         lookup_id = feature_id if f.featuretype == "mRNA" else parent_id
 
         if lookup_id and lookup_id in homology_res:
-            hits = homology_res[lookup_id]
-            if homology_db == "kofam":
-                _apply_kofam_hits(f, hits)
-            else:
-                _apply_uniprot_hits(f, hits)
+            apply_hits(f, homology_res[lookup_id])
         else:
             f.attributes["product"] = ["hypothetical protein"]
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from eukan.gff.rows import iter_gff3_rows
 from eukan.infra.artifacts import Artifact, masked_genome
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
@@ -20,16 +21,8 @@ def gff_to_hints(repeat_gff: Path, hints_out: Path) -> None:
     sourced from RepeatMasker (``src=RM``), keyed for the ``RM`` extrinsic
     source already declared in ``data/configs/augustus.config``.
     """
-    with open(repeat_gff) as fin, open(hints_out, "w") as fout:
-        for raw in fin:
-            line = raw.rstrip("\n")
-            if not line.strip() or line.startswith("#"):
-                continue
-            cols = line.split("\t")
-            if len(cols) < 9:
-                # RepeatMasker GFF rows always have 9 tab-delimited columns;
-                # anything shorter is malformed and should be skipped.
-                continue
+    with open(hints_out, "w") as fout:
+        for cols in iter_gff3_rows(repeat_gff):
             cols[2] = "nonexonpart"
             cols[8] = "src=RM"
             fout.write("\t".join(cols) + "\n")

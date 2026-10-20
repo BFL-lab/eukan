@@ -8,13 +8,16 @@ import only the helpers they need from here.
 from __future__ import annotations
 
 import errno
-import multiprocessing
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import NoReturn
 
 import click
-from click_option_group import optgroup
+from click_option_group import OptionGroup, optgroup
+
+from eukan.exceptions import EukanError
+from eukan.infra.utils import available_cpus
 
 try:
     EUKAN_VERSION = version("eukan")
@@ -43,7 +46,7 @@ def _resolve_epilog(value: str) -> str:
 
 
 def _full_code_table_text() -> str:
-    from Bio.Data import CodonTable
+    from Bio.Data import CodonTable  # lazy: startup cost
 
     lines = ["Genetic codes (NCBI translation tables):", ""]
     for cid, table in sorted(CodonTable.unambiguous_dna_by_id.items()):
@@ -75,23 +78,16 @@ class PreformattedEpilogCommand(click.Command):
     """
 
     def format_epilog(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        # ctx.obj.show_full_help is set by EukanGroup.parse_args based on
-        # whether --help (verbose) or -h (brief) was used. Walk up the
-        # context chain to find it (subcommand contexts inherit obj).
-        ctx_walk: click.Context | None = ctx
-        while ctx_walk is not None:
-            obj = getattr(ctx_walk, "obj", None)
-            if isinstance(obj, CLIState) and obj.show_full_help:
-                text = _resolve_epilog(self.epilog or "")
-                formatter.write("\n")
-                for line in text.split("\n"):
-                    formatter.write(f"  {line}\n")
-                return
-            ctx_walk = ctx_walk.parent
+        # show_full_help is set by EukanGroup.parse_args based on whether
+        # --help (verbose) or -h (brief) was used.
+        state = ctx.find_object(CLIState)
+        if self.epilog and state is not None and state.show_full_help:
+            text = _resolve_epilog(self.epilog)
+            formatter.write("\n")
+            for line in text.split("\n"):
+                formatter.write(f"  {line}\n")
 
     def format_options(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        from click_option_group import OptionGroup
-
         # Group help records into sections separated by option-group headers.
         sections: list[list[tuple[str, str]]] = [[]]
         for param in self.get_params(ctx):
@@ -137,53 +133,44 @@ class EukanGroup(click.Group):
             raise
         except click.exceptions.Abort:
             raise
-        except SystemExit:
-            raise
         except Exception as exc:
-            from pydantic import ValidationError as PydanticValidationError
+            from pydantic import ValidationError as PydanticValidationError  # lazy: startup cost
 
             disk_full = _format_disk_full(exc)
             if disk_full is not None:
-                title, details = disk_full
-                click.secho(title, fg="red", err=True)
-                for line in details:
-                    click.echo(f"  {line}", err=True)
-                raise SystemExit(1) from exc
+                _fail(*disk_full, exc)
 
             if isinstance(exc, PydanticValidationError):
-                click.secho("Error: invalid configuration", fg="red", err=True)
+                details = []
                 for err in exc.errors():
+                    # Model-level checks (cross-field) have no location.
                     loc = " → ".join(str(part) for part in err["loc"])
-                    click.echo(f"  {loc}: {err['msg']}", err=True)
-                raise SystemExit(1) from exc
+                    details.append(f"{loc}: {err['msg']}" if loc else err["msg"])
+                _fail("Error: invalid configuration", details, exc)
 
-            from eukan.exceptions import EukanError
             if not isinstance(exc, EukanError):
                 raise
 
             title, details = exc.format_for_cli()
-            click.secho(title, fg="red", err=True)
-            for line in details:
-                click.echo(f"  {line}", err=True)
             if exc.hint:
-                click.echo(f"  Hint: {exc.hint}", err=True)
+                details.append(f"Hint: {exc.hint}")
+            _fail(title, details, exc)
 
-            raise SystemExit(1) from exc
 
-
-_DISK_FULL_PATTERNS = (
-    "no space left on device",
-    "disk quota exceeded",
-)
+def _fail(title: str, details: list[str], exc: Exception) -> NoReturn:
+    """Print *title* in red and each detail line indented to stderr; exit 1."""
+    click.secho(title, fg="red", err=True)
+    for line in details:
+        click.echo(f"  {line}", err=True)
+    raise SystemExit(1) from exc
 
 
 def _format_disk_full(exc: BaseException) -> tuple[str, list[str]] | None:
-    """Detect ENOSPC conditions and return a CLI-formatted (title, details).
+    """Format a disk-full ``OSError`` from Python's own file operations.
 
-    Triggers on a direct ``OSError(errno=ENOSPC)`` from Python file ops,
-    and on an ``ExternalToolError`` whose captured stderr indicates the
-    underlying tool ran out of disk space. Returns ``None`` when the
-    exception is unrelated to disk-full.
+    Returns the CLI (title, details), or ``None`` for any other exception. An
+    external tool that ran out of space is an ``ExternalToolError``, whose own
+    ``format_for_cli`` recognises it.
     """
     if isinstance(exc, OSError) and exc.errno in (errno.ENOSPC, errno.EDQUOT):
         title = "Error: no space left on device"
@@ -192,17 +179,6 @@ def _format_disk_full(exc: BaseException) -> tuple[str, list[str]] | None:
             details.append(f"Path: {exc.filename}")
         details.append("Free up disk space on the device hosting the work directory and re-run.")
         return title, details
-
-    from eukan.exceptions import ExternalToolError
-    if isinstance(exc, ExternalToolError):
-        haystack = (exc.stderr_snippet or "").lower()
-        if any(p in haystack for p in _DISK_FULL_PATTERNS):
-            details = [f"Tool: {exc.tool} (exit {exc.returncode})"]
-            if exc.step:
-                details.append(f"Step: {exc.step}")
-            details.append("Free up disk space on the device hosting the work directory and re-run.")
-            return "Error: no space left on device", details
-
     return None
 
 
@@ -211,29 +187,24 @@ def _format_disk_full(exc: BaseException) -> tuple[str, list[str]] | None:
 # ---------------------------------------------------------------------------
 
 
-def drop_none(**kwargs) -> dict:
-    """Build a kwargs dict, dropping keys whose value is ``None``.
+def given(opts: dict) -> dict:
+    """The options given on the command line, without those click filled in
+    from their defaults.
 
-    Keeps the CLI → config plumbing terse without losing the ability for
-    pydantic-settings to discover unset fields from pyproject.toml or
-    environment variables: an explicit ``None`` from a missing CLI flag
-    must not overwrite a value those sources would have provided.
+    A field whose option was left out then comes from its EUKAN_* environment
+    variable, else from the config's default -- the value --help shows, which
+    tests/test_cli_env.py keeps equal to the click default.
     """
-    return {k: v for k, v in kwargs.items() if v is not None}
-
-
-def resolve_optional_path(path: Path | None) -> Path | None:
-    """Resolve an optional CLI path to an absolute path, preserving ``None``.
-
-    Centralizes the ``x.resolve() if x else None`` idiom repeated when
-    plumbing optional path arguments into configs.
-    """
-    return path.resolve() if path else None
+    ctx = click.get_current_context()
+    return {
+        k: v for k, v in opts.items()
+        if ctx.get_parameter_source(k) is not click.core.ParameterSource.DEFAULT
+    }
 
 
 def numcpu_option(func):
     return optgroup.option(
-        "--numcpu", "-n", type=int, default=multiprocessing.cpu_count(),
+        "--numcpu", "-n", "num_cpu", type=int, default=available_cpus(),
         show_default=True, help="Number of CPU threads.",
     )(func)
 
@@ -264,7 +235,7 @@ def genome_option(help_text: str = "Genome sequence in FASTA format."):
     def decorator(func):
         return optgroup.option(
             "--genome", "-g", required=True,
-            type=click.Path(exists=True, path_type=Path),
+            type=click.Path(exists=True, resolve_path=True, path_type=Path),
             help=help_text,
         )(func)
     return decorator
@@ -274,7 +245,7 @@ def code_option(default: int = 1):
     """Build a --code/-c NCBI genetic-code option with a command-specific default."""
     def decorator(func):
         return optgroup.option(
-            "--code", "-c", type=int, default=default, show_default=True,
+            "--code", "-c", "genetic_code", type=int, default=default, show_default=True,
             help="NCBI genetic code table number.",
         )(func)
     return decorator

@@ -23,19 +23,33 @@ escalation is gated by ``--non-canonical`` (``auto`` = on the EXTENSIVE verdict,
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from eukan.assembly.align_hints import generate_rnaseq_hints, sj_table_from_bam
-from eukan.assembly.bam_utils import (
-    _GENOME_BAM_SUFFIX,
-    _TRANSCRIPT_SETS,
-    _bam_is_complete,
-    _coordinate_sort_and_filter,
-    _resolve_query,
-    _write_unmapped_fasta,
+import pysam
+
+from eukan.assembly.align_hints import (
+    analyze_splice_sites,
+    sj_table_from_bam,
+    write_coverage_hints,
+    write_intron_hints,
 )
-from eukan.infra.artifacts import Artifact
+from eukan.assembly.bam_diagnostic import (
+    NonCanonicalSpliceLevel,
+    load_verdict,
+    run_softclip_diagnostic,
+)
+from eukan.assembly.bam_utils import (
+    _bam_is_complete,
+    _write_unmapped_fasta,
+    count_fasta_records,
+)
+from eukan.assembly.polya import (
+    characterize_polya_bam,
+    scan_fasta_polya,
+    stats_to_dict,
+    write_polya_section,
+)
+from eukan.assembly.tracks import GENOME_BAM_SUFFIX, TRANSCRIPT_SETS, resolve_query
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd, run_piped
 from eukan.settings import AssemblyConfig
@@ -48,7 +62,7 @@ _SJ = "minimap2_SJ.out.tab"
 # Non-canonical-splice verdict (softclip_diagnostic_summary.json →
 # verdict.non_canonical_splice.call) at which mapping escalates to the
 # non-canonical minimap2 flags.
-_NON_CANONICAL_CALL = "EXTENSIVE"
+_NON_CANONICAL_CALL = NonCanonicalSpliceLevel.EXTENSIVE
 
 # Layered onto the splice preset when non-canonical splicing is extensive:
 # -J 0 selects minimap2's original splice model (required for -C to take effect),
@@ -58,20 +72,14 @@ _NON_CANONICAL_CALL = "EXTENSIVE"
 _NON_CANONICAL_FLAGS = ["-J", "0", "-C", "3", "--splice-flank=no"]
 
 
-def _non_canonical_call(work_dir: Path) -> str | None:
+def _non_canonical_call(work_dir: Path) -> NonCanonicalSpliceLevel | None:
     """The ``non_canonical_splice`` verdict from the soft-clip diagnostic, if any.
 
     Reads ``softclip_diagnostic_summary.json`` (written after read mapping when
-    ``--diagnose-softclips`` is on). Returns the call string
-    (``EXTENSIVE`` / ``MODERATE`` / ``ABSENT``) or ``None`` when the file is
-    absent or unreadable.
+    ``--diagnose-softclips`` is on); ``None`` when the file is absent or unreadable.
     """
-    path = work_dir / Artifact.SOFTCLIP_DIAGNOSTIC.value
-    try:
-        data = json.loads(path.read_text())
-        return data["verdict"]["non_canonical_splice"]["call"]
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
+    verdict = load_verdict(work_dir)
+    return verdict.non_canonical_splice.call if verdict else None
 
 
 def _use_non_canonical(config: AssemblyConfig) -> bool:
@@ -88,15 +96,13 @@ def _use_non_canonical(config: AssemblyConfig) -> bool:
     return _non_canonical_call(config.work_dir) == _NON_CANONICAL_CALL
 
 
-def _log_mapping_rate(bam: Path, wd: Path) -> None:
+def _log_mapping_rate(bam: Path) -> None:
     """Log the read mapping rate from the coordinate-sorted, indexed BAM.
 
     Replaces STAR's ``Log.final.out`` parse: minimap2 emits no such log, so the
     rate is read from the BAM index statistics (``--secondary=no`` means one
     record per read, so mapped / (mapped + unmapped) is the read mapping rate).
     """
-    import pysam
-
     try:
         with pysam.AlignmentFile(str(bam), "rb") as af:
             mapped = af.mapped
@@ -119,12 +125,12 @@ def _log_mapping_rate(bam: Path, wd: Path) -> None:
 
 
 def _emit_sj_and_hints(config: AssemblyConfig) -> None:
-    """Derive a STAR-format SJ.out.tab from the read BAM and generate hints.
+    """Derive a STAR-format SJ.out.tab from the read BAM, then the splice summary,
+    the soft-clip diagnostic (``--diagnose-softclips``) and the hints.
 
     minimap2 has no native junction table, so the SJ table is synthesized from
-    the BAM's N-CIGAR junctions and the shared post-processing (splice summary,
-    intron/coverage hints, soft-clip diagnostic) is reused — identical to the
-    contract STAR/segemehl produced.
+    the BAM's N-CIGAR junctions and the shared post-processing is reused —
+    identical to the contract STAR/segemehl produced.
     """
     wd = config.work_dir
     sj = sj_table_from_bam(
@@ -133,28 +139,45 @@ def _emit_sj_and_hints(config: AssemblyConfig) -> None:
         max_intron=config.max_intron_len,
         out_name=_SJ,
     )
-    generate_rnaseq_hints(
-        sj, wd / _BAM, config.genome, wd,
-        diagnose=config.diagnose_softclips, source_label="minimap2",
-    )
+    analyze_splice_sites(sj, config.genome, wd)
+    if config.diagnose_softclips:
+        run_softclip_diagnostic(wd / _BAM, config.genome, wd)
+    write_intron_hints(sj, wd, "minimap2")
+    write_coverage_hints(wd / _BAM, wd, config.num_cpu)
 
 
-def _map_reads_once(config: AssemblyConfig, *, non_canonical: bool) -> None:
-    """Map reads to the genome (splice:sr) into the sorted, indexed read BAM."""
-    wd = config.work_dir
-    cmd = ["minimap2", "-a", "-x", "splice:sr", "-t", str(config.num_cpu)]
-    if config.max_intron_len:
+def _minimap2_cmd(
+    config: AssemblyConfig, preset: str, ref: Path, queries: list[str], *,
+    non_canonical: bool = False,
+) -> list[str]:
+    """``minimap2 -a -x <preset>`` of *queries* against *ref*, primary alignments only.
+
+    A spliced preset gets the ``-G`` intron bound (``-M``, when set) and, with
+    *non_canonical*, the non-canonical splice flags.
+    """
+    cmd = ["minimap2", "-a", "-x", preset, "-t", str(config.num_cpu)]
+    if preset.startswith("splice:") and config.max_intron_len:
         cmd += ["-G", str(config.max_intron_len)]
     cmd.append("--secondary=no")
     if non_canonical:
         cmd += _NON_CANONICAL_FLAGS
-    cmd += [str(config.genome), *config.reads_args_minimap2]
-    run_piped(
-        cmd,
-        ["samtools", "sort", "-@", str(config.num_cpu), "-o", _BAM, "-"],
-        cwd=wd,
+    return [*cmd, str(ref), *queries]
+
+
+def _minimap2_to_sorted_bam(config: AssemblyConfig, cmd: list[str], out_bam: str) -> None:
+    """Pipe the minimap2 *cmd* into the coordinate-sorted, indexed *out_bam* (run dir)."""
+    wd = config.work_dir
+    run_piped(cmd, ["samtools", "sort", "-@", str(config.num_cpu), "-o", out_bam, "-"], cwd=wd)
+    run_cmd(["samtools", "index", out_bam], cwd=wd)
+
+
+def _map_reads_once(config: AssemblyConfig, *, non_canonical: bool) -> None:
+    """Map reads to the genome (splice:sr) into the sorted, indexed read BAM."""
+    cmd = _minimap2_cmd(
+        config, "splice:sr", config.genome, config.reads_args_minimap2,
+        non_canonical=non_canonical,
     )
-    run_cmd(["samtools", "index", _BAM], cwd=wd)
+    _minimap2_to_sorted_bam(config, cmd, _BAM)
 
 
 def map_reads_minimap2(config: AssemblyConfig) -> None:
@@ -171,7 +194,7 @@ def map_reads_minimap2(config: AssemblyConfig) -> None:
     wd = config.work_dir
     log.info("Running minimap2 read mapping (splice:sr)...")
     _map_reads_once(config, non_canonical=config.non_canonical == "force")
-    _log_mapping_rate(wd / _BAM, wd)
+    _log_mapping_rate(wd / _BAM)
     _emit_sj_and_hints(config)
 
     if config.non_canonical == "auto" and _non_canonical_call(wd) == _NON_CANONICAL_CALL:
@@ -182,7 +205,7 @@ def map_reads_minimap2(config: AssemblyConfig) -> None:
             "Pass --non-canonical off to skip this."
         )
         _map_reads_once(config, non_canonical=True)
-        _log_mapping_rate(wd / _BAM, wd)
+        _log_mapping_rate(wd / _BAM)
         _emit_sj_and_hints(config)
 
 
@@ -194,19 +217,10 @@ def map_reads_to_transcripts(config: AssemblyConfig, fasta: Path, tag: str) -> P
     introns, so ``-x sr`` (non-spliced short-read) is the right preset. minimap2
     indexes the transcript FASTA on the fly, so no index build/teardown is needed.
     """
-    wd = config.work_dir
-    prefix = f"jaccard_{tag}_"
-    bam = wd / f"{prefix}Aligned.sortedByCoord.out.bam"
-    cmd = [
-        "minimap2", "-a", "-x", "sr", "-t", str(config.num_cpu), "--secondary=no",
-        str(fasta), *config.reads_args_minimap2,
-    ]
-    run_piped(
-        cmd,
-        ["samtools", "sort", "-@", str(config.num_cpu), "-o", bam.name, "-"],
-        cwd=wd,
+    bam = config.work_dir / f"jaccard_{tag}_Aligned.sortedByCoord.out.bam"
+    _minimap2_to_sorted_bam(
+        config, _minimap2_cmd(config, "sr", fasta, config.reads_args_minimap2), bam.name,
     )
-    run_cmd(["samtools", "index", bam.name], cwd=wd)
     return bam
 
 
@@ -229,18 +243,18 @@ def _map_one_transcript_set(
         return
 
     unsorted = wd / f"{out_bam}.unsorted.bam"
-    cmd = ["minimap2", "-a", "-x", "splice:hq", "-t", str(config.num_cpu)]
-    if config.max_intron_len:
-        cmd += ["-G", str(config.max_intron_len)]
-    cmd.append("--secondary=no")
-    if non_canonical:
-        cmd += _NON_CANONICAL_FLAGS
-    cmd += [str(config.genome), str(query)]
+    cmd = _minimap2_cmd(
+        config, "splice:hq", config.genome, [str(query)], non_canonical=non_canonical,
+    )
     run_piped(cmd, ["samtools", "view", "-b", "-o", unsorted.name, "-"], cwd=wd)
 
-    stem = out_bam[: -len(_GENOME_BAM_SUFFIX)]
+    stem = out_bam[: -len(GENOME_BAM_SUFFIX)]
     _write_unmapped_fasta(unsorted, wd / f"{stem}.unmapped_transcripts.fasta")
-    _coordinate_sort_and_filter(unsorted, out_bam, wd, config.num_cpu)
+    run_piped(
+        ["samtools", "view", "-bh", "-F", "4", str(unsorted)],
+        ["samtools", "sort", "-@", str(config.num_cpu), "-o", out_bam, "-"],
+        cwd=wd,
+    )
     run_cmd(["samtools", "index", out_bam], cwd=wd)
     unsorted.unlink(missing_ok=True)
 
@@ -257,8 +271,8 @@ def map_transcripts_minimap2(config: AssemblyConfig) -> None:
     wd = config.work_dir
     sets = [
         (query, out_bam)
-        for query_name, out_bam in _TRANSCRIPT_SETS
-        if (query := _resolve_query(wd, query_name)).exists() and query.stat().st_size > 0
+        for query_name, out_bam in TRANSCRIPT_SETS
+        if (query := resolve_query(wd, query_name)).exists() and query.stat().st_size > 0
     ]
     if not sets:
         log.warning("No assembled transcripts found to map; skipping.")
@@ -280,24 +294,21 @@ def _finalize_transcript_diagnostics(config: AssemblyConfig) -> None:
 
     Path-agnostic: runs after mapping over the files already on disk, so it is
     safe on a resumed/reused run. The unmapped FASTA is reported unconditionally
-    (completeness); the poly-A characterization of the de novo transcript→genome
-    BAM and the unmapped set is gated by ``diagnose_softclips`` and written to
-    ``polyA_diagnostic.json``, separate from the SL verdict.
+    (completeness); the poly-A characterization of each Trinity track's
+    transcript→genome BAM and unmapped set is gated by ``diagnose_softclips`` and
+    written to ``polyA_diagnostic.json`` (sections ``transcripts`` and
+    ``unmapped_transcripts``, keyed by track), separate from the SL verdict.
     """
-    from eukan.assembly.jaccard import _genome_stats
-    from eukan.assembly.polya import (
-        characterize_polya_bam,
-        scan_fasta_polya,
-        stats_to_dict,
-        write_polya_section,
-    )
-
     wd = config.work_dir
-    for query_name, out_bam in _TRANSCRIPT_SETS:
+    # One entry per track, written after the loop: one write per track under the
+    # bare section name let the genome-guided track replace the de novo one.
+    transcripts: dict[str, dict] = {}
+    unmapped_transcripts: dict[str, dict] = {}
+    for query_name, out_bam in TRANSCRIPT_SETS:
         genome_bam = wd / out_bam
         if not genome_bam.exists():
             continue
-        stem = out_bam[: -len(_GENOME_BAM_SUFFIX)]
+        stem = out_bam[: -len(GENOME_BAM_SUFFIX)]
         unmapped = wd / f"{stem}.unmapped_transcripts.fasta"
 
         # The unmapped FASTA is written only when the mapping actually runs; on a
@@ -306,8 +317,8 @@ def _finalize_transcript_diagnostics(config: AssemblyConfig) -> None:
         # claims "everything mapped" when the count is simply unavailable.
         if unmapped.exists():
             n_unmapped, n_unmapped_polya = scan_fasta_polya(unmapped)
-            query = _resolve_query(wd, query_name)
-            n_input = _genome_stats(query)[1] if query.exists() else 0
+            query = resolve_query(wd, query_name)
+            n_input = count_fasta_records(query) if query.exists() else 0
             pct = 100.0 * n_unmapped / n_input if n_input else 0.0
             log.info(
                 "Unmapped de novo transcripts (%s): %d of %d (%.2f%%)%s",
@@ -323,14 +334,17 @@ def _finalize_transcript_diagnostics(config: AssemblyConfig) -> None:
         if not config.diagnose_softclips:
             continue
         tx_stats = characterize_polya_bam(genome_bam, "transcripts")
-        write_polya_section(wd, "transcripts", stats_to_dict(tx_stats))
+        transcripts[stem] = stats_to_dict(tx_stats)
         if unmapped.exists():
-            write_polya_section(
-                wd, "unmapped_transcripts",
-                {"n_seqs": n_unmapped, "n_with_polyA_tail": n_unmapped_polya},
-            )
+            unmapped_transcripts[stem] = {
+                "n_seqs": n_unmapped, "n_with_polyA_tail": n_unmapped_polya,
+            }
         log.info(
             "Poly-A in de novo transcript mapping (%s): %d poly-A 3' soft-clips of %d "
             "(%.3f%%).",
             stem, tx_stats.n_polya, tx_stats.n_clips_examined, tx_stats.polya_pct_of_clips,
         )
+    if transcripts:
+        write_polya_section(wd, "transcripts", transcripts)
+    if unmapped_transcripts:
+        write_polya_section(wd, "unmapped_transcripts", unmapped_transcripts)

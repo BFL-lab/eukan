@@ -22,46 +22,35 @@ unaffected.
 
 from __future__ import annotations
 
-import json
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
 import pysam
 
-from eukan.assembly.bam_diagnostic import (
-    _CIGAR_M,
-    _CIGAR_REF_CONSUMING,
-    _CIGAR_SOFT_CLIP,
-    _iter_primary_alignments,
-)
+from eukan.assembly.bam_diagnostic import TransSplicingLevel, load_verdict
+from eukan.assembly.bam_reads import QUERY_CONSUMING, REF_CONSUMING, iter_primary_alignments
 from eukan.assembly.sl_depletion import (
     _BUILTIN_ADAPTERS,
     _MAX_MISMATCHES,
     _MIN_MOTIF_LEN,
     _find_sites,
-    _revcomp,
     _variants,
     is_adapter,
 )
+from eukan.assembly.tracks import GENOME_BAM_SUFFIX, TRANSCRIPT_SETS
+from eukan.gff.rows import iter_gff3_rows, parse_attrs
 from eukan.infra.artifacts import Artifact
+from eukan.infra.genome import reverse_complement
 from eukan.infra.logging import get_logger
 from eukan.settings import AssemblyConfig
 
 log = get_logger(__name__)
 
-# Insertion CIGAR op (bam_diagnostic only tracks soft-clips, so define it here).
-_CIGAR_INSERTION = 1
-_CIGAR_QUERY_CONSUMING = frozenset([_CIGAR_M, _CIGAR_INSERTION, _CIGAR_SOFT_CLIP, 7, 8])
-
 # Length of the anchored window used to derive an SL consensus from de novo
 # insertions (only when neither an override nor the read verdict supplies one).
 _CONSENSUS_LEN = 16
 _MIN_DENOVO_SUPPORT = 3
-
-# Trinity transcript→genome BAMs scanned for Source B (clips + insertions).
-_DENOVO_BAMS = ("trinity-denovo.genome.bam", "trinity-gg.genome.bam")
-_GENOME_BAM_SUFFIX = ".genome.bam"
 
 
 @dataclass(frozen=True)
@@ -113,10 +102,10 @@ def _iter_sl_ops(
     # orientation contradicts its end. (reference_end is 0-based exclusive, i.e. the
     # 1-based position of the last aligned base.)
     op0, len0 = cigar[0]
-    if op0 == _CIGAR_SOFT_CLIP and len0 >= min_clip_len:
+    if op0 == pysam.CSOFT_CLIP and len0 >= min_clip_len:
         yield ref_start + 1, "+", seq[:len0]
     op_last, len_last = cigar[-1]
-    if op_last == _CIGAR_SOFT_CLIP and len_last >= min_clip_len:
+    if op_last == pysam.CSOFT_CLIP and len_last >= min_clip_len:
         yield ref_end, "-", seq[-len_last:]
 
     if not scan_insertions:
@@ -125,7 +114,7 @@ def _iter_sl_ops(
     rpos = ref_start  # 0-based reference cursor
     last = len(cigar) - 1
     for idx, (op, length) in enumerate(cigar):
-        if op == _CIGAR_INSERTION:
+        if op == pysam.CINS:
             if 0 < idx < last and length >= min_ins_len:
                 ins = seq[qpos : qpos + length]
                 # The mature mRNA continues just past the leader: downstream is
@@ -136,9 +125,9 @@ def _iter_sl_ops(
                     yield rpos, "-", ins
             qpos += length
             continue
-        if op in _CIGAR_QUERY_CONSUMING:
+        if op in QUERY_CONSUMING:
             qpos += length
-        if op in _CIGAR_REF_CONSUMING:
+        if op in REF_CONSUMING:
             rpos += length
 
 
@@ -156,17 +145,13 @@ def _read_verdict_consensus(wd: Path, adapters: list[str]) -> str | None:
     Rejected when the recovered motif is just sequencing adapter, so residual
     adapter read-through can never be promoted to the SL consensus.
     """
-    summary = wd / Artifact.SOFTCLIP_DIAGNOSTIC.value
-    if not summary.exists():
+    verdict = load_verdict(wd)
+    if verdict is None:
         return None
-    ts = json.loads(summary.read_text()).get("verdict", {}).get("trans_splicing", {})
-    if ts.get("call") not in ("STRONG", "MODERATE"):
+    ts = verdict.trans_splicing
+    if ts.call not in (TransSplicingLevel.STRONG, TransSplicingLevel.MODERATE):
         return None
-    motif = (
-        ts.get("top_non_trivial_cluster_consensus")
-        or ts.get("top_non_trivial_cluster_key")
-        or ""
-    ).upper()
+    motif = (ts.top_non_trivial_cluster_consensus or ts.top_non_trivial_cluster_key).upper()
     if len(motif) < _MIN_MOTIF_LEN or is_adapter(motif, adapters):
         return None
     return motif
@@ -190,7 +175,7 @@ def _dominant_denovo_motif(
     counts: Counter[str] = Counter()
     for bam_path in bams:
         with pysam.AlignmentFile(str(bam_path), "rb") as bam:
-            for read in _iter_primary_alignments(bam, min_mapq=0):
+            for read in iter_primary_alignments(bam, min_mapq=0):
                 for _pos, _strand, bases in _iter_sl_ops(
                     read,
                     min_clip_len=_CONSENSUS_LEN,
@@ -290,18 +275,14 @@ def _write_acceptors(sites: list[AcceptorSite], out: Path) -> None:
 def load_sl_acceptors(path: str | Path) -> list[AcceptorSite]:
     """Parse an ``sl_acceptors.gff3`` back into :class:`AcceptorSite` records."""
     sites: list[AcceptorSite] = []
-    with open(path) as fh:
-        for line in fh:
-            if line.startswith("#") or not line.strip():
-                continue
-            cols = line.rstrip("\n").split("\t")
-            if len(cols) < 9 or cols[2] != "SL_acceptor":
-                continue
-            attrs = dict(p.split("=", 1) for p in cols[8].split(";") if "=" in p)
-            support = int(cols[5]) if cols[5].lstrip("-").isdigit() else 0
-            raw_src = attrs.get("sources", "")
-            sources = tuple(raw_src.split(",")) if raw_src else ()
-            sites.append(AcceptorSite(cols[0], int(cols[3]), cols[6], support, sources))
+    for cols in iter_gff3_rows(path):
+        if cols[2] != "SL_acceptor":
+            continue
+        attrs = parse_attrs(cols[8])
+        support = int(cols[5]) if cols[5].lstrip("-").isdigit() else 0
+        raw_src = attrs.get("sources", "")
+        sources = tuple(raw_src.split(",")) if raw_src else ()
+        sites.append(AcceptorSite(cols[0], int(cols[3]), cols[6], support, sources))
     return sites
 
 
@@ -309,7 +290,8 @@ def detect_sl_acceptors(config: AssemblyConfig) -> None:
     """Detect, consolidate, and persist SL trans-splice acceptor sites."""
     wd = config.work_dir
     read_bam = wd / config.aligner_bam
-    denovo_bams = [wd / b for b in _DENOVO_BAMS if (wd / b).exists()]
+    # Source B: the Trinity transcript→genome BAMs (clips + insertions).
+    denovo_bams = [wd / b for _, b in TRANSCRIPT_SETS if (wd / b).exists()]
     out = wd / Artifact.SL_ACCEPTORS.value
     adapters = _effective_adapters(config)
 
@@ -333,7 +315,7 @@ def detect_sl_acceptors(config: AssemblyConfig) -> None:
     # geometry; requiring the matching orientation per strand keeps a candidate whose
     # motif orientation contradicts its geometry from being recorded mis-stranded.
     fwd_patterns = _variants(core, _MAX_MISMATCHES)
-    rev_patterns = _variants(_revcomp(core), _MAX_MISMATCHES)
+    rev_patterns = _variants(reverse_complement(core), _MAX_MISMATCHES)
 
     raw: dict[tuple[str, str, int], tuple[int, set[str]]] = {}
 
@@ -341,7 +323,7 @@ def detect_sl_acceptors(config: AssemblyConfig) -> None:
         if not bam_path.exists():
             return
         with pysam.AlignmentFile(str(bam_path), "rb") as bam:
-            for read in _iter_primary_alignments(bam, min_mapq=0):
+            for read in iter_primary_alignments(bam, min_mapq=0):
                 chrom = read.reference_name
                 if chrom is None:
                     continue
@@ -365,7 +347,7 @@ def detect_sl_acceptors(config: AssemblyConfig) -> None:
 
     _scan(read_bam, "reads", scan_insertions=False)
     for bam_path in denovo_bams:
-        _scan(bam_path, bam_path.name[: -len(_GENOME_BAM_SUFFIX)], scan_insertions=True)
+        _scan(bam_path, bam_path.name[: -len(GENOME_BAM_SUFFIX)], scan_insertions=True)
 
     sites = _consolidate(raw, window=config.sl_cluster_window)
     _write_acceptors(sites, out)

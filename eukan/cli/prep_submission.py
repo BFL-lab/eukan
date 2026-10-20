@@ -4,18 +4,20 @@ from __future__ import annotations
 
 import shlex
 from pathlib import Path
+from typing import Any
 
 import click
 from click_option_group import optgroup
 
-from eukan.cli._framework import PreformattedEpilogCommand
+from eukan.cli._framework import PreformattedEpilogCommand, given
+from eukan.infra.layout import step_work_dir
 
 
 @click.command("prep-submission", cls=PreformattedEpilogCommand)
 @optgroup.group("Required input")
 @optgroup.option(
     "--template", "-t", required=True,
-    type=click.Path(exists=True, path_type=Path),
+    type=click.Path(exists=True, resolve_path=True, path_type=Path),
     help="NCBI submission template (.sbt). Generate one at "
          "https://submit.ncbi.nlm.nih.gov/genbank/template/submission/",
 )
@@ -40,11 +42,11 @@ from eukan.cli._framework import PreformattedEpilogCommand
 )
 @optgroup.group("Override options")
 @optgroup.option(
-    "--genome", "-g", type=click.Path(exists=True, path_type=Path), default=None,
+    "--genome", "-g", type=click.Path(exists=True, resolve_path=True, path_type=Path), default=None,
     help="Genome FASTA. Auto-discovered from eukan-run.json when omitted.",
 )
 @optgroup.option(
-    "--gff3", "-i", type=click.Path(exists=True, path_type=Path), default=None,
+    "--gff3", "-i", type=click.Path(exists=True, resolve_path=True, path_type=Path), default=None,
     help="Annotated GFF3. Defaults to final.mod.gff3 (or final.gff3) "
          "in the working directory.",
 )
@@ -73,11 +75,11 @@ from eukan.cli._framework import PreformattedEpilogCommand
 )
 @optgroup.group("Output options")
 @optgroup.option(
-    "--output-file", "-o", type=click.Path(path_type=Path), default=None,
+    "--output-file", "-o", type=click.Path(resolve_path=True, path_type=Path), default=None,
     help="Output .sqn path. Defaults to <output-dir>/<genome-stem>.sqn.",
 )
 @optgroup.option(
-    "--output-dir", "-d", type=click.Path(path_type=Path), default=None,
+    "--output-dir", "-d", type=click.Path(resolve_path=True, path_type=Path), default=None,
     help="Output directory for .sqn and validator reports. Defaults to ./submission.",
 )
 @optgroup.option(
@@ -88,24 +90,7 @@ from eukan.cli._framework import PreformattedEpilogCommand
     "--dry-run", is_flag=True,
     help="Print the command and create the output directory, but don't run table2asn.",
 )
-def prep_submission(
-    template: Path,
-    organism: str | None,
-    isolate: str | None,
-    source_info: str | None,
-    locus_tag_prefix: str | None,
-    genome: Path | None,
-    gff3: Path | None,
-    cleanup: str,
-    mode: str,
-    assembly_type: str,
-    extra_args: str,
-    cleanup_gff3: bool,
-    output_file: Path | None,
-    output_dir: Path | None,
-    print_command: bool,
-    dry_run: bool,
-) -> None:
+def prep_submission(**opts: Any) -> None:
     """Validate + package an annotated genome for NCBI submission via table2asn.
 
     \b
@@ -127,34 +112,24 @@ def prep_submission(
     Use --print-command to inspect the exact table2asn invocation, or
     --extra-args to append flags not exposed here.
     """
-    from eukan.cli._framework import drop_none, resolve_optional_path
-    from eukan.infra.layout import step_work_dir
-    from eukan.settings import SubmissionConfig
-    from eukan.submission import run_prep_submission
+    from eukan.settings import SubmissionConfig  # lazy: startup cost
+    from eukan.submission import (  # lazy: startup cost
+        build_command,
+        run_prep_submission,
+        shell_repr,
+    )
 
-    config = SubmissionConfig(**drop_none(
-        work_dir=step_work_dir("prep-submission"),
-        manifest_dir=Path.cwd(),
-        template=template.resolve(),
-        organism=organism,
-        isolate=isolate,
-        source_info=source_info,
-        locus_tag_prefix=locus_tag_prefix,
-        genome=resolve_optional_path(genome),
-        gff3=resolve_optional_path(gff3),
-        cleanup=cleanup,
-        mode=mode,
-        assembly_type=assembly_type,
-        extra_args=shlex.split(extra_args) if extra_args else None,
-        cleanup_gff3=cleanup_gff3,
-        output_file=resolve_optional_path(output_file),
-        output_dir=resolve_optional_path(output_dir),
-    ))
+    print_command = opts.pop("print_command")
+    dry_run = opts.pop("dry_run")
+    opts["extra_args"] = shlex.split(opts["extra_args"])
+    config = SubmissionConfig(
+        **given(opts), work_dir=step_work_dir("prep-submission"), manifest_dir=Path.cwd(),
+    )
+    config.discover()
 
     sqn = run_prep_submission(config, print_only=print_command, dry_run=dry_run)
 
     if print_command:
-        from eukan.submission import build_command, shell_repr
         click.echo(shell_repr(build_command(config)))
         return
 

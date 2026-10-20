@@ -1,10 +1,8 @@
-"""Shared concurrency helper for the four ThreadPool sites in eukan.
+"""Shared concurrency helper: fan out, collect in input order, raise on the
+first worker failure.
 
-The ``ThreadPoolExecutor`` pattern was reproduced ad-hoc in the
-annotation pipeline, AUGUSTUS split-prediction, consensus partition
-execution, and the concordance pass triad. Each site has a slightly
-different shape but the same intent: fan out, collect, raise on first
-worker failure.
+Used by the annotation pipeline to run independent steps side by side (e.g.
+ORF finding with GeneMark) and by AUGUSTUS split prediction.
 """
 
 from __future__ import annotations
@@ -28,8 +26,7 @@ def parallel_map(
     Equivalent to ``list(map(fn, items))`` but executed across a
     ``ThreadPoolExecutor``. Raises the first worker exception encountered.
 
-    *max_workers* defaults to the number of items, capped by Python's
-    default sensible limit when ``None`` is passed.
+    *max_workers* defaults to the number of items: one thread per item.
     """
     items_list = list(items)
     if not items_list:

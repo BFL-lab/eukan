@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from eukan.annotation.alignment import align_proteins
@@ -13,19 +12,18 @@ from eukan.annotation.genemark import run_genemark
 from eukan.annotation.orf import create_transcriptome_orf_db
 from eukan.annotation.snap import run_codingquarry, run_snap
 from eukan.gff.io import count_gff3_features, featuredb2gff3_file
-from eukan.infra.artifacts import masked_genome
+from eukan.infra.artifacts import Artifact, find, masked_genome
+from eukan.infra.concurrency import parallel_map
 from eukan.infra.logging import get_logger
 from eukan.infra.manifest import (
     ANNOTATION,
     RunManifest,
-    get_or_create_manifest,
-    save_manifest,
     step_key,
 )
-from eukan.infra.pipeline import run_orchestrated_step
-from eukan.infra.steps import is_step_complete, step_dir
+from eukan.infra.pipeline import pipeline_run, run_orchestrated_step
+from eukan.infra.steps import step_dir
 from eukan.settings import PipelineConfig
-from eukan.validation import sanitize_genome_fasta, validate_fasta
+from eukan.validation import sanitize_genome_fasta, validate_fasta, validate_gff
 
 log = get_logger(__name__)
 
@@ -37,8 +35,6 @@ log = get_logger(__name__)
 
 def find_orfs(config: PipelineConfig, trans_gff3: Path) -> Path:
     """Find ORFs in transcript assemblies."""
-    from eukan.validation import validate_gff
-
     output = "transcript_orfs.gff3"
     sdir = step_dir(config.work_dir, "orf_finder")
     log.info("Finding ORFs in transcript assemblies...")
@@ -60,17 +56,21 @@ def _run_step(
     name: str,
     fn: Callable,
     *args,
+    forced: frozenset[str] = frozenset(),
     **kwargs,
 ) -> Path:
     """Run an annotation step via the shared pipeline helper.
 
-    All annotation steps produce a GFF3 output, so the result is always
-    a Path (never None).
+    The step re-runs from scratch when its manifest key is in *forced*. All
+    annotation steps produce a GFF3 output, so the result is always a Path
+    (never None).
     """
+    key = step_key(ANNOTATION, name)
     result = run_orchestrated_step(
-        config.manifest_dir, manifest, step_key(ANNOTATION, name),
+        config.manifest_dir, manifest, key,
         fn, config, *args,
         step_dir=config.work_dir / name,
+        force=key in forced,
         **kwargs,
     )
     assert result is not None, f"annotation step {name!r} returned no output"
@@ -86,17 +86,16 @@ def _run_concurrent_steps(
     config: PipelineConfig,
     manifest: RunManifest,
     tasks: list[tuple[str, Callable, tuple, dict]],
+    forced: frozenset[str],
 ) -> dict[str, Path]:
     """Run multiple independent steps concurrently."""
-    results: dict[str, Path] = {}
-    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
-        future_to_name = {
-            pool.submit(_run_step, config, manifest, name, fn, *args, **kwargs): name
-            for name, fn, args, kwargs in tasks
-        }
-        for future in as_completed(future_to_name):
-            results[future_to_name[future]] = future.result()
-    return results
+
+    def run(task: tuple[str, Callable, tuple, dict]) -> Path:
+        name, fn, args, kwargs = task
+        return _run_step(config, manifest, name, fn, *args, forced=forced, **kwargs)
+
+    paths = parallel_map(run, tasks)
+    return {name: path for (name, *_), path in zip(tasks, paths, strict=True)}
 
 
 # ---------------------------------------------------------------------------
@@ -118,13 +117,14 @@ def run_annotation_pipeline(
 
     Args:
         config: Pipeline configuration.
-        force_steps: Optional list of step names to force re-run, even if
-            previously completed.  When provided, step records are removed
-            from the manifest so they will be re-executed.
+        force_steps: Optional manifest keys of steps to re-run from scratch,
+            even if previously completed (see ``run_orchestrated_step``'s
+            ``force``).
 
     Returns:
         Path to the final GFF3 output.
     """
+    config.ensure_dirs()
     validate_fasta(config.genome)
 
     # If the user ran `eukan mask-repeats` previously and is now passing the
@@ -156,41 +156,10 @@ def run_annotation_pipeline(
     else:
         log.info("No transcript evidence found. Running protein-only annotation.")
 
-    # Load or create shared manifest (used by all pipelines in this work_dir)
-    manifest = get_or_create_manifest(config.manifest_dir, config)
-
-    if force_steps:
-        # Explicit re-run: remove only the requested steps
-        for step in force_steps:
-            manifest.steps.pop(step, None)
-        save_manifest(config.manifest_dir, manifest)
-    else:
-        # Nothing to do only if every step is already recorded AND the final
-        # consensus output is still intact (existence + non-empty + valid GFF).
-        # A missing/corrupt output makes is_step_complete return None, so we
-        # fall through to _execute_steps, which rebuilds it via the same
-        # per-step check. Any step not yet in the manifest is also pending.
-        expected = _expected_steps(config)
-        pending = [s for s in expected if s not in manifest.steps]
-        if not pending:
-            final = is_step_complete(manifest, step_key(ANNOTATION, "consensus_models"))
-            if final is not None:
-                log.info("All steps complete. Use --run-* flags to re-run specific steps.")
-                return final
-        save_manifest(config.manifest_dir, manifest)
-
-    try:
-        result = _execute_steps(config, manifest)
-        manifest.status = "completed"
-        manifest.finished_at = manifest.steps[
-            max(manifest.steps, key=lambda k: manifest.steps[k].finished_at or "")
-        ].finished_at
-        save_manifest(config.manifest_dir, manifest)
-        return result
-    except Exception:
-        manifest.status = "failed"
-        save_manifest(config.manifest_dir, manifest)
-        raise
+    # Each step decides on its own record whether it still has to run, so a
+    # resume with nothing left to do skips every step.
+    with pipeline_run(ANNOTATION, config) as manifest:
+        return _execute_steps(config, manifest, frozenset(force_steps or ()))
 
 
 # Single source of truth: step name (no prefix) -> --run-* CLI flag that
@@ -243,24 +212,19 @@ def force_steps_from_run_flags(
     return forced
 
 
-def _expected_steps(config: PipelineConfig) -> list[str]:
-    """Return the list of manifest step keys expected for this config."""
-    prot_align_step = "prot_align_ssp" if config.spaln_ssp else "prot_align"
-    steps = ["genemark", prot_align_step, "augustus"]
-    if config.has_transcripts:
-        steps.insert(0, "orf_finder")
-    if config.is_fungus or config.is_protist:
-        steps.extend(["snap", "codingquarry"])
-    else:
-        steps.append("snap")
-    steps.append("consensus_models")
-    return [step_key(ANNOTATION, s) for s in steps]
-
-
-def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
+def _execute_steps(
+    config: PipelineConfig,
+    manifest: RunManifest,
+    forced: frozenset[str] = frozenset(),
+) -> Path:
     """Execute annotation steps in dependency phases.
 
-    Each phase reads inputs from ``ev`` and returns the keys it produced.
+    Each phase reads inputs from ``ev`` and returns the keys it produced. A
+    step whose manifest key is in *forced* re-runs from scratch. Every step
+    declares the files it reads as its ``input_files``, so a step re-runs when
+    one changed since it completed — an upstream step's rewritten output, an
+    edited protein set, new RNA-seq hints — and that re-run cascades on through
+    the steps that read its output.
     Behavior matrix preserved verbatim from the previous nested form:
 
       - has_transcripts + is_fungus
@@ -273,45 +237,69 @@ def _execute_steps(config: PipelineConfig, manifest: RunManifest) -> Path:
             GeneMark, spaln, AUGUSTUS, SNAP || CodingQuarry,
             consensus(spaln, augustus, snap, cq)
       - no transcripts + neither
-            GeneMark, spaln, AUGUSTUS, SNAP, consensus(spaln, augustus, snap, genemark)
+            GeneMark, spaln, AUGUSTUS, SNAP, consensus(spaln, augustus, snap)
     """
     ev: dict[str, Path] = {}
-    ev = _phase_orf_and_genemark(config, manifest, ev)
-    ev = _phase_protein_alignment(config, manifest, ev)
-    ev = _phase_augustus(config, manifest, ev)
-    ev = _phase_snap_codingquarry(config, manifest, ev)
-    return _phase_consensus(config, manifest, ev)
+    ev = _phase_orf_and_genemark(config, manifest, ev, forced)
+    ev = _phase_protein_alignment(config, manifest, ev, forced)
+    ev = _phase_augustus(config, manifest, ev, forced)
+    ev = _phase_snap_codingquarry(config, manifest, ev, forced)
+    return _phase_consensus(config, manifest, ev, forced)
 
 
 def _phase_orf_and_genemark(
     config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
+    forced: frozenset[str],
 ) -> dict[str, Path]:
     """Phase 1: ORF finding (transcripts only) + GeneMark, run concurrently."""
+    genome = config.genome
+    # GeneMark takes --fungus from the kingdom and its --gcode from the genetic code.
+    genemark_scalars = [f"is_fungus={config.is_fungus}", f"genetic_code={config.genetic_code}"]
     if config.has_transcripts:
         assert config.transcripts_gff is not None and config.rnaseq_hints is not None
+        trans, hints = config.transcripts_gff, config.rnaseq_hints
         results = _run_concurrent_steps(config, manifest, [
-            ("orf_finder", find_orfs, (config.transcripts_gff,), {}),
-            ("genemark", run_genemark, (config.rnaseq_hints,), {}),
-        ])
+            ("orf_finder", find_orfs, (trans,), {
+                "input_files": [genome, trans],
+                "input_scalars": [f"genetic_code={config.genetic_code}"],
+            }),
+            ("genemark", run_genemark, (hints,), {
+                "input_files": [genome, hints], "input_scalars": genemark_scalars,
+            }),
+        ], forced)
         ev = {**ev, "transcriptORFs": results["orf_finder"], "genemark": results["genemark"]}
     else:
-        ev = {**ev, "genemark": _run_step(config, manifest, "genemark", run_genemark)}
+        ev = {
+            **ev,
+            "genemark": _run_step(
+                config, manifest, "genemark", run_genemark,
+                input_files=[genome], input_scalars=genemark_scalars, forced=forced,
+            ),
+        }
     _log_prediction_count("GeneMark", ev["genemark"])
     return ev
 
 
 def _phase_protein_alignment(
     config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
+    forced: frozenset[str],
 ) -> dict[str, Path]:
     """Phase 2: spliced protein alignment via spaln (intron-hinted) or gth."""
     prot_step = "prot_align_ssp" if config.spaln_ssp else "prot_align"
+    # The GeneMark models pick spaln or gth and, without intron hints, stand in for them.
+    inputs = [config.genome, *config.proteins, ev["genemark"]]
     spaln_extra: tuple = ()
     if config.has_transcripts:
         intron_hints = config.work_dir / "genemark" / "introns.gff"
         spaln_extra = (intron_hints if intron_hints.exists() else None,)
+        inputs.append(intron_hints)
+    if config.spaln_ssp and config.transcripts_fasta:
+        inputs.append(config.transcripts_fasta)  # --spsp trains spaln on the transcripts
     spaln_path = _run_step(
         config, manifest, prot_step, align_proteins,
         ev["genemark"], config.proteins, *spaln_extra,
+        input_files=inputs, input_scalars=[f"genetic_code={config.genetic_code}"],
+        forced=forced,
     )
     _log_prediction_count("spaln", spaln_path)
     return {**ev, "spaln": spaln_path}
@@ -319,12 +307,31 @@ def _phase_protein_alignment(
 
 def _phase_augustus(
     config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
+    forced: frozenset[str],
 ) -> dict[str, Path]:
     """Phase 3: AUGUSTUS training and prediction."""
-    aug_extra: tuple = (ev["transcriptORFs"],) if config.has_transcripts else ()
+    evidence: tuple[Path, ...] = (ev["genemark"], ev["spaln"])
+    if config.has_transcripts:
+        evidence += (ev["transcriptORFs"],)
+    # Besides its evidence, AUGUSTUS reads the hint files: the protein hints beside
+    # the alignment, the RNA-seq hints, and the RepeatMasker hints and splice-site
+    # summary when another pipeline left them.
+    inputs = [config.genome, *evidence, ev["spaln"].parent / "hints_protein.gff"]
+    if config.rnaseq_hints:
+        inputs.append(config.rnaseq_hints)
+    for artifact in (Artifact.REPEATMASK_HINTS, Artifact.SPLICE_SUMMARY):
+        found = find(config.work_dir, artifact)
+        if found is not None:
+            inputs.append(found)
+    # The genetic code sets the stop codon frequencies (code 6); the splice summary
+    # is read under --splice-permissive's thresholds.
+    scalars = [
+        f"genetic_code={config.genetic_code}",
+        f"allow_noncanonical_splice={config.allow_noncanonical_splice}",
+    ]
     aug_path = _run_step(
-        config, manifest, "augustus", run_augustus,
-        ev["genemark"], ev["spaln"], *aug_extra,
+        config, manifest, "augustus", run_augustus, *evidence,
+        input_files=inputs, input_scalars=scalars, forced=forced,
     )
     _log_prediction_count("AUGUSTUS", aug_path)
     return {**ev, "augustus": aug_path}
@@ -332,30 +339,38 @@ def _phase_augustus(
 
 def _phase_snap_codingquarry(
     config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
+    forced: frozenset[str],
 ) -> dict[str, Path]:
     """Phase 4: SNAP, plus CodingQuarry for fungus/protist; skipped for has_t & non-fungus."""
     has_t = config.has_transcripts
 
+    genome = config.genome
     if has_t and config.is_fungus:
         assert config.transcripts_gff is not None
+        snap_ev: tuple[Path, ...] = (ev["augustus"], ev["spaln"], ev["transcriptORFs"])
+        cq_ev = config.transcripts_gff
         results = _run_concurrent_steps(config, manifest, [
-            ("snap", run_snap, (ev["augustus"], ev["spaln"], ev["transcriptORFs"]), {}),
-            ("codingquarry", run_codingquarry, (config.transcripts_gff,), {}),
-        ])
+            ("snap", run_snap, snap_ev, {"input_files": [genome, *snap_ev]}),
+            ("codingquarry", run_codingquarry, (cq_ev,), {"input_files": [genome, cq_ev]}),
+        ], forced)
         ev = {**ev, "snap": results["snap"], "codingquarry": results["codingquarry"]}
         _log_prediction_count("SNAP", ev["snap"])
         _log_prediction_count("CodingQuarry", ev["codingquarry"])
     elif not has_t and (config.is_fungus or config.is_protist):
+        snap_ev = (ev["augustus"], ev["spaln"])
+        cq_ev = ev["augustus"]
         results = _run_concurrent_steps(config, manifest, [
-            ("snap", run_snap, (ev["augustus"], ev["spaln"]), {}),
-            ("codingquarry", run_codingquarry, (ev["augustus"],), {}),
-        ])
+            ("snap", run_snap, snap_ev, {"input_files": [genome, *snap_ev]}),
+            ("codingquarry", run_codingquarry, (cq_ev,), {"input_files": [genome, cq_ev]}),
+        ], forced)
         ev = {**ev, "snap": results["snap"], "codingquarry": results["codingquarry"]}
         _log_prediction_count("SNAP", ev["snap"])
         _log_prediction_count("CodingQuarry", ev["codingquarry"])
     elif not has_t:
+        snap_ev = (ev["augustus"], ev["spaln"])
         snap_path = _run_step(
-            config, manifest, "snap", run_snap, ev["augustus"], ev["spaln"],
+            config, manifest, "snap", run_snap, *snap_ev,
+            input_files=[genome, *snap_ev], forced=forced,
         )
         ev = {**ev, "snap": snap_path}
         _log_prediction_count("SNAP", snap_path)
@@ -365,20 +380,24 @@ def _phase_snap_codingquarry(
 
 
 def _consensus_scalars(config: PipelineConfig) -> list[str]:
-    """Config values that change combinr consensus output, folded into the consensus
-    step's resume fingerprint so a change re-runs it on resume (in addition to the
-    explicit ``--run-consensus``). ``combinr_stringent_overlap`` tunes the
-    ``--alt-splice`` isoform grouping; weights and the genetic code feed the consensus
-    engine directly."""
+    """Config values that change the consensus step's output, folded into its resume
+    fingerprint so a change re-runs it on resume (in addition to the explicit
+    ``--run-consensus``). ``combinr_stringent_overlap`` tunes the ``--alt-splice``
+    isoform grouping; weights and the genetic code feed the consensus engine directly;
+    ``combinr_path`` picks the binary that runs it; ``orf_patch`` picks which
+    transcript ORFs, if any, are patched in after it."""
     return [
         f"weights={config.weights}",
         f"genetic_code={config.genetic_code}",
         f"combinr_stringent_overlap={config.combinr_stringent_overlap}",
+        f"combinr_path={config.combinr_path}",
+        f"orf_patch={config.orf_patch}",
     ]
 
 
 def _phase_consensus(
     config: PipelineConfig, manifest: RunManifest, ev: dict[str, Path],
+    forced: frozenset[str],
 ) -> Path:
     """Phase 5: combinr consensus. Argument order varies with which evidence ran."""
     consensus_args: list[Path] = [ev["spaln"], ev["augustus"]]
@@ -391,13 +410,15 @@ def _phase_consensus(
     if config.has_transcripts:
         assert config.transcripts_gff is not None
         transcripts = config.transcripts_gff
-    elif "snap" in ev and not (config.is_fungus or config.is_protist):
-        # Protein-only non-fungus/protist: stand GeneMark in as the
-        # transcript_alignments input the consensus engine expects.
-        transcripts = ev["genemark"]
 
+    inputs = [config.genome, *consensus_args]
+    if config.orf_patch is not None:
+        # The consensus then also patches in the transcript ORFs orf_finder left.
+        inputs.append(config.work_dir / "orf_finder" / "transcript_orfs.gff3")
+    if transcripts is not None:
+        inputs.append(transcripts)
     return _run_step(
         config, manifest, "consensus_models", build_consensus_models,
         *consensus_args, transcripts=transcripts,
-        input_scalars=_consensus_scalars(config),
+        input_files=inputs, input_scalars=_consensus_scalars(config), forced=forced,
     )

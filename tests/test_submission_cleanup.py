@@ -170,6 +170,8 @@ class TestCleanGff3:
         assert "ID=g2" not in text
         assert "ID=m2" not in text
         assert "ID=m1b" not in text
+        assert "ID=e1b" not in text  # with their exons
+        assert "ID=e2" not in text
         # Surviving features present
         assert "ID=g1" in text
         assert "ID=g3" in text

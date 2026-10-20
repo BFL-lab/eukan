@@ -2,79 +2,36 @@
 
 Downloads UniProt-SwissProt, Pfam, and KOfam databases, verifies
 integrity via MD5, and tracks state in a manifest file so subsequent
-runs skip up-to-date files.
+runs skip up-to-date files. The registry (names, URLs, file names) and the
+manifest helpers are in :mod:`eukan.infra.databases`.
 """
 
 from __future__ import annotations
 
 import gzip
-import json
 import shutil
 import tarfile
-from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from collections.abc import Callable
 from pathlib import Path
 
 import pyhmmer
 import requests
 
+from eukan.infra.databases import (
+    DATABASES,
+    HOMOLOGY_DB_TARGETS,
+    DatabaseEntry,
+    is_current,
+    load_db_manifest,
+    make_entry,
+    save_db_manifest,
+)
 from eukan.infra.logging import get_logger
-from eukan.infra.utils import concat_files, md5_file
+from eukan.infra.utils import concat_files
 
 log = get_logger(__name__)
 
-UNIPROT_URL = "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz"
-PFAM_URL = "https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz"
-KOFAM_PROFILES_URL = "https://www.genome.jp/ftp/db/kofam/profiles.tar.gz"
-KOFAM_KO_LIST_URL = "https://www.genome.jp/ftp/db/kofam/ko_list.gz"
-
 CHUNK_SIZE = 8 * 1024 * 1024  # 8MB
-MANIFEST_FILE = ".manifest.json"
-
-
-# ---------------------------------------------------------------------------
-# Manifest tracking
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class DatabaseEntry:
-    """Metadata for a single downloaded database."""
-
-    name: str
-    file: str
-    source_url: str
-    md5: str
-    date: str
-    size_bytes: int
-
-
-def load_db_manifest(db_dir: Path) -> dict[str, DatabaseEntry]:
-    """Load the database manifest from disk."""
-    manifest_path = db_dir / MANIFEST_FILE
-    if not manifest_path.exists():
-        return {}
-    try:
-        data = json.loads(manifest_path.read_text())
-        return {k: DatabaseEntry(**v) for k, v in data.items()}
-    except (json.JSONDecodeError, TypeError, KeyError) as exc:
-        log.warning("Corrupt database manifest at %s (%s), re-fetching", manifest_path, exc)
-        return {}
-
-
-def save_db_manifest(db_dir: Path, manifest: dict[str, DatabaseEntry]) -> None:
-    """Write the database manifest to disk."""
-    manifest_path = db_dir / MANIFEST_FILE
-    data = {k: asdict(v) for k, v in manifest.items()}
-    manifest_path.write_text(json.dumps(data, indent=2) + "\n")
-
-
-def _is_current(entry: DatabaseEntry, db_dir: Path) -> bool:
-    """Check if a database file matches its manifest entry."""
-    path = db_dir / entry.file
-    if not path.exists():
-        return False
-    return md5_file(path) == entry.md5
 
 
 # ---------------------------------------------------------------------------
@@ -126,17 +83,13 @@ def _download_file(url: str, dest: Path) -> None:
     partial.replace(dest)
 
 
-def _make_entry(name: str, filename: str, url: str, db_dir: Path) -> DatabaseEntry:
-    """Create a manifest entry for a freshly downloaded/processed file."""
-    path = db_dir / filename
-    return DatabaseEntry(
-        name=name,
-        file=filename,
-        source_url=url,
-        md5=md5_file(path),
-        date=datetime.now(UTC).isoformat(),
-        size_bytes=path.stat().st_size,
-    )
+def _fetch_gunzip(url: str, gz_path: Path, out_path: Path) -> None:
+    """Download *url* to *gz_path*, decompress it to *out_path*, delete the .gz."""
+    _download_file(url, gz_path)
+    log.info("Decompressing %s...", gz_path.name)
+    with gzip.open(gz_path, "rb") as f_in, open(out_path, "wb") as f_out:
+        shutil.copyfileobj(f_in, f_out)
+    gz_path.unlink()
 
 
 # ---------------------------------------------------------------------------
@@ -146,40 +99,25 @@ def _make_entry(name: str, filename: str, url: str, db_dir: Path) -> DatabaseEnt
 
 def download_uniprot(output_dir: Path) -> DatabaseEntry:
     """Download UniProt-SwissProt FASTA and decompress."""
-    gz_path = output_dir / "uniprot_sprot.fasta.gz"
-    faa_path = output_dir / "uniprot_sprot.faa"
-
-    _download_file(UNIPROT_URL, gz_path)
-
-    log.info("Decompressing UniProt FASTA...")
-    with gzip.open(gz_path, "rb") as f_in, open(faa_path, "wb") as f_out:
-        shutil.copyfileobj(f_in, f_out)
-
-    gz_path.unlink()
-    return _make_entry("uniprot", "uniprot_sprot.faa", UNIPROT_URL, output_dir)
+    db = DATABASES["uniprot"]
+    _fetch_gunzip(db.url, output_dir / "uniprot_sprot.fasta.gz", output_dir / db.file)
+    return make_entry("uniprot", output_dir)
 
 
 def download_pfam(output_dir: Path) -> DatabaseEntry:
     """Download Pfam-A HMM database, decompress, and press it."""
-    gz_path = output_dir / "Pfam-A.hmm.gz"
-    hmm_path = output_dir / "Pfam-A.hmm"
-
-    _download_file(PFAM_URL, gz_path)
-
-    log.info("Decompressing Pfam HMM...")
-    with gzip.open(gz_path, "rb") as f_in, open(hmm_path, "wb") as f_out:
-        shutil.copyfileobj(f_in, f_out)
-
-    gz_path.unlink()
+    db = DATABASES["pfam"]
+    hmm_path = output_dir / db.file
+    _fetch_gunzip(db.url, output_dir / "Pfam-A.hmm.gz", hmm_path)
 
     log.info("Pressing HMM database...")
-    pyhmmer.hmmer.hmmpress(hmms=pyhmmer.plan7.HMMFile(str(hmm_path)), output=str(hmm_path))
+    # HMMFile would read the .h3m an earlier fetch pressed while hmmpress truncates it.
+    for stale in output_dir.glob(f"{db.file}.h3?"):
+        stale.unlink()
+    with pyhmmer.plan7.HMMFile(str(hmm_path)) as hf:
+        pyhmmer.hmmer.hmmpress(hmms=hf, output=str(hmm_path))
 
-    return _make_entry("pfam", "Pfam-A.hmm", PFAM_URL, output_dir)
-
-
-KOFAM_HMM_FILE = "kofam_eukaryote.hmm"
-KOFAM_KO_LIST_FILE = "ko_list.tsv"
+    return make_entry("pfam", output_dir)
 
 
 def _read_hal(hal_path: Path) -> list[str]:
@@ -201,18 +139,24 @@ def download_kofam(output_dir: Path) -> DatabaseEntry:
     roughly proportional to the subset size. The per-KO ``.hmm`` files
     are extracted to a temporary directory and removed after pressing.
     """
+    db = DATABASES["kofam"]
     tarball = output_dir / "profiles.tar.gz"
     extract_dir = output_dir / "_kofam_profiles"
-    final_hmm = output_dir / KOFAM_HMM_FILE
+    final_hmm = output_dir / db.file
 
-    _download_file(KOFAM_PROFILES_URL, tarball)
+    _download_file(db.url, tarball)
 
     log.info("Extracting KOfam profiles to %s...", extract_dir)
     if extract_dir.exists():
         shutil.rmtree(extract_dir)
     extract_dir.mkdir(parents=True)
     with tarfile.open(tarball, "r:gz") as tf:
-        tf.extractall(extract_dir)
+        # The "data" filter refuses members that would land outside
+        # extract_dir; it exists from Python 3.11.4 (pyproject allows 3.11.0).
+        if hasattr(tarfile, "data_filter"):
+            tf.extractall(extract_dir, filter="data")
+        else:
+            tf.extractall(extract_dir)
     tarball.unlink()
 
     # Tarball layout: profiles/eukaryote.hal + profiles/K*.hmm
@@ -242,51 +186,33 @@ def download_kofam(output_dir: Path) -> DatabaseEntry:
     shutil.rmtree(extract_dir)
 
     log.info("Pressing KOfam HMM database (%s)...", final_hmm.name)
-    pyhmmer.hmmer.hmmpress(
-        hmms=pyhmmer.plan7.HMMFile(str(final_hmm)), output=str(final_hmm),
-    )
+    # As in download_pfam: first remove the pressed files of an earlier fetch.
+    for stale in output_dir.glob(f"{db.file}.h3?"):
+        stale.unlink()
+    with pyhmmer.plan7.HMMFile(str(final_hmm)) as hf:
+        pyhmmer.hmmer.hmmpress(hmms=hf, output=str(final_hmm))
 
-    return _make_entry("kofam", KOFAM_HMM_FILE, KOFAM_PROFILES_URL, output_dir)
+    return make_entry("kofam", output_dir)
 
 
 def download_ko_list(output_dir: Path) -> DatabaseEntry:
     """Download the KOfam ``ko_list`` TSV (per-KO thresholds + definitions)."""
-    gz_path = output_dir / "ko_list.gz"
-    tsv_path = output_dir / KOFAM_KO_LIST_FILE
-
-    _download_file(KOFAM_KO_LIST_URL, gz_path)
-
-    log.info("Decompressing ko_list...")
-    with gzip.open(gz_path, "rb") as f_in, open(tsv_path, "wb") as f_out:
-        shutil.copyfileobj(f_in, f_out)
-
-    gz_path.unlink()
-    return _make_entry("ko_list", KOFAM_KO_LIST_FILE, KOFAM_KO_LIST_URL, output_dir)
+    db = DATABASES["ko_list"]
+    _fetch_gunzip(db.url, output_dir / "ko_list.gz", output_dir / db.file)
+    return make_entry("ko_list", output_dir)
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-# Registry of available databases. ``kofam`` produces a pressed HMM;
-# ``ko_list`` carries the per-KO score thresholds + definitions used by
-# KOfam scoring. Both must be present for ``func-annot --homology-db kofam``.
-DATABASES = {
-    "uniprot": ("uniprot_sprot.faa", download_uniprot),
-    "pfam": ("Pfam-A.hmm", download_pfam),
-    "kofam": (KOFAM_HMM_FILE, download_kofam),
-    "ko_list": (KOFAM_KO_LIST_FILE, download_ko_list),
+# The downloader of each database in the registry (infra.databases.DATABASES).
+_DOWNLOADERS: dict[str, Callable[[Path], DatabaseEntry]] = {
+    "uniprot": download_uniprot,
+    "pfam": download_pfam,
+    "kofam": download_kofam,
+    "ko_list": download_ko_list,
 }
-
-
-HOMOLOGY_DB_TARGETS: dict[str, list[str]] = {
-    "uniprot": ["uniprot"],
-    "kofam": ["kofam", "ko_list"],
-}
-"""Per-homology-DB set of registry entries to fetch when no explicit
-``--database`` list is given. Pfam is always added on top in
-:func:`fetch_databases`.
-"""
 
 
 def fetch_databases(
@@ -322,14 +248,14 @@ def fetch_databases(
         targets = databases
 
     for db_name in targets:
-        if db_name not in DATABASES:
+        if db_name not in _DOWNLOADERS:
             log.warning("Unknown database: %s", db_name)
             continue
 
-        _filename, download_fn = DATABASES[db_name]
+        download_fn = _DOWNLOADERS[db_name]
 
         # Check if already current
-        if not force and db_name in manifest and _is_current(manifest[db_name], output_dir):
+        if not force and db_name in manifest and is_current(manifest[db_name], output_dir):
             entry = manifest[db_name]
             log.info("[%s] Up to date (md5:%s..., %s). Use --force to re-download.", db_name, entry.md5[:12], entry.date)
             continue
@@ -340,47 +266,3 @@ def fetch_databases(
         save_db_manifest(output_dir, manifest)
         log.info("[%s] Done. md5:%s... size:%s bytes", db_name, entry.md5[:12], f"{entry.size_bytes:,}")
 
-
-def check_databases(
-    db_dir: Path,
-    homology_db: str | None = None,
-) -> list[tuple[str, str, bool]]:
-    """Check status of databases relevant to the active homology choice.
-
-    When ``homology_db`` is given (``"uniprot"`` or ``"kofam"``), only that
-    homology DB's files plus Pfam are checked — the inactive choice is
-    skipped so users who never fetch it don't see false-negative warnings.
-    When ``None``, checks every entry in :data:`DATABASES`.
-
-    Returns:
-        List of (name, status_message, ok) tuples.
-    """
-    manifest = load_db_manifest(db_dir)
-    results: list[tuple[str, str, bool]] = []
-
-    if homology_db is not None:
-        wanted = set(HOMOLOGY_DB_TARGETS[homology_db]) | {"pfam"}
-    else:
-        wanted = set(DATABASES)
-
-    for db_name, (filename, _) in DATABASES.items():
-        if db_name not in wanted:
-            continue
-        path = db_dir / filename
-
-        if not path.exists():
-            results.append((db_name, f"{filename} not found in {db_dir}", False))
-            continue
-
-        if db_name not in manifest:
-            size = path.stat().st_size
-            results.append((db_name, f"{filename} present ({size:,} bytes) but no manifest entry", False))
-            continue
-
-        entry = manifest[db_name]
-        if _is_current(entry, db_dir):
-            results.append((db_name, f"{filename} OK (md5:{entry.md5[:12]}..., {entry.date})", True))
-        else:
-            results.append((db_name, f"{filename} CORRUPTED (md5 mismatch)", False))
-
-    return results

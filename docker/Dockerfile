@@ -1,7 +1,9 @@
 # Dockerfile for eukan genome annotation pipeline.
 #
 # Multi-stage build:
-#   Stage 1 (builder) — installs conda env, compiles fitild, installs GeneMark
+#   Stage 1 (builder) — installs the conda env, compiles fitild, the spaln
+#                       utilities and Trinity's ParaFly, installs combinr,
+#                       GeneMark and eukan
 #   Stage 2 (runtime) — copies only the conda env into a slim Debian base
 #
 # GeneMark is optional — if gmes_linux_64*.tar.gz and gm_key_64.gz are
@@ -9,39 +11,50 @@
 # succeeds and `eukan check` reports GeneMark as missing.
 
 # ============================= BUILDER STAGE =================================
-FROM condaforge/mambaforge:latest AS builder
+# Pinned: condaforge/mambaforge has had no release since 24.9.2-0 (2024-11-27;
+# Mambaforge is deprecated in favour of Miniforge3), and `latest` is that same
+# image (identical platform digests on Docker Hub, checked 2026-10-16).
+FROM condaforge/mambaforge:24.9.2-0 AS builder
 
-# System packages needed for building fitild and spaln from source, plus
+# System packages needed for building fitild and spaln from source (zlib1g-dev:
+# the spaln utilities include zlib.h and link -lz), plus
 # curl/xz to fetch and unpack the pre-built combinr release tarball. jq must be
 # on PATH before `mamba env create`: bioconductor data packages (pulled in
 # transitively by trinity's R stack, e.g. bioconductor-genomeinfodbdata) run a
 # post-link script that calls yq -> jq to parse their data-URL JSON, and the
 # mambaforge base image does not ship jq — without it the env create aborts.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git autoconf curl ca-certificates xz-utils jq \
+    build-essential git autoconf curl ca-certificates xz-utils jq zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
-# 1. Create the conda environment with all bioconda tools + eukan
+# 1. Create the conda environment with all bioconda tools
+#
+# Solved from environment.yml alone, so an edit to eukan's source does not
+# invalidate this layer (the multi-GB solve and download). environment.yml
+# ends with a pip step that installs eukan itself (`pip: - .`); it is cut
+# here and run in step 4, once the source has been copied in.
+#
+# Strict channel priority, as environment.yml requires: the base image's conda
+# defaults to flexible, which mixes channel builds (it pulls harfbuzz and
+# libxml2 from `defaults` under conda-forge's R stack).
 # ---------------------------------------------------------------------------
 WORKDIR /opt/eukan
 
-# Copy only dependency specs first (layer caching)
 COPY environment.yml /opt/eukan/
-COPY pyproject.toml poetry.lock README.md /opt/eukan/
-COPY eukan/ /opt/eukan/eukan/
-
-RUN mamba env create -f environment.yml \
-    && mamba clean -afy
+RUN sed -e '/^  - pip:$/d' -e '/^    - \.$/d' environment.yml > /tmp/environment.conda.yml \
+    && CONDA_CHANNEL_PRIORITY=strict mamba env create -f /tmp/environment.conda.yml \
+    && mamba clean -afy \
+    && rm /tmp/environment.conda.yml
 
 # Activate the eukan environment for all subsequent RUN commands
 SHELL ["conda", "run", "-n", "eukan", "/bin/bash", "-c"]
 
 # Trinity's bundled C++ needs no special handling here: the conda env installs
 # bioconda's current trinity build (compiled -march=x86-64-v3, AVX2/BMI2). The
-# former x86-64-v2 pins (star/augustus/spaln/spades/stringtie/trinity) were
-# dropped now that the deployment host is AVX2-capable, so this image requires
-# an x86-64-v3 (Haswell+/Broadwell+) CPU at runtime.
+# former x86-64-v2 conda pins were dropped now that the deployment host is
+# AVX2-capable, so this image requires an x86-64-v3 (Haswell+/Broadwell+) CPU
+# at runtime.
 # scripts/fix-trinity-avx2.sh remains only as a manual recovery tool for hosts
 # without AVX2 (it rebuilds Trinity's binaries at a lower -march).
 #
@@ -62,7 +75,7 @@ RUN git clone --depth 1 https://github.com/ogotoh/fitild /opt/conda/envs/eukan/o
     && make -j"$(nproc)" CFLAGS="-O3 -I/opt/conda/envs/eukan/include -L/opt/conda/envs/eukan/lib" \
     # Merge ILD models into spaln table directory
     && cat /opt/conda/envs/eukan/opt/fitild/table/IldModel*.txt \
-       > /opt/conda/envs/eukan/share/spaln/table/IldModel.txt 2>/dev/null || true \
+       > /opt/conda/envs/eukan/share/spaln/table/IldModel.txt \
     # Clean build artifacts — keep only compiled binaries and table
     && cd /opt/conda/envs/eukan/opt/fitild \
     && rm -rf .git src/*.o
@@ -70,17 +83,19 @@ RUN git clone --depth 1 https://github.com/ogotoh/fitild /opt/conda/envs/eukan/o
 # ---------------------------------------------------------------------------
 # 2b. Build spaln analysis utilities and install Perl scripts for makessp
 #     The bioconda spaln package only ships the core binaries (spaln, sortgrcd,
-#     makdbs, makmdm). Species-specific parameter generation (--spaln-ssp)
-#     additionally needs: utn, dvn, exinpot, npssm, kmers, rdn, plus the
+#     makdbs, makmdm). Species-specific parameter generation (annotate --spsp)
+#     additionally needs: utn, dvn, exinpot, npssm, kmers, rdn, eij2ild, plus the
 #     matching Perl scripts (make_eij.pl, make_ssp.pl, Util.pm, etc.).
+#     Only those utilities are built: `make all` also builds fitild & co.,
+#     which link gsl from /usr/local/lib and fail here. Explicit CFLAGS
+#     replace configure's Linux default of -march=native, which would tie the
+#     binaries to the build host's CPU; -I adds the env's gsl headers.
 # ---------------------------------------------------------------------------
 RUN git clone --depth 1 https://github.com/ogotoh/spaln /tmp/spaln_src \
     && cd /tmp/spaln_src/src \
-    && ./configure \
-    && make -j"$(nproc)" all 2>/dev/null || true \
-    && for bin in utn dvn exinpot npssm kmers rdn eij2ild; do \
-        [ -f /tmp/spaln_src/src/$bin ] && cp /tmp/spaln_src/src/$bin /opt/conda/envs/eukan/bin/ || true; \
-    done \
+    && CFLAGS="-O3 -I/opt/conda/envs/eukan/include" ./configure \
+    && make -j"$(nproc)" utn dvn exinpot npssm kmers rdn eij2ild \
+    && cp utn dvn exinpot npssm kmers rdn eij2ild /opt/conda/envs/eukan/bin/ \
     && cp /tmp/spaln_src/perl/*.pl /tmp/spaln_src/perl/*.pm \
        /opt/conda/envs/eukan/share/spaln/alndbs/ \
     && chmod +x /opt/conda/envs/eukan/share/spaln/alndbs/*.pl \
@@ -91,21 +106,33 @@ RUN git clone --depth 1 https://github.com/ogotoh/spaln /tmp/spaln_src \
 #
 # combinr provides `combinr assemble` (transcript consolidation) and
 # `combinr consensus` (weighted consensus gene models), both required by the
-# assemble/annotate pipelines. Pull the pinned, statically-linked musl build
-# from the GitHub release, verify its SHA-256, and install onto PATH (the conda
-# env's bin/, already first on PATH in the runtime stage). Bump VERSION and
-# SHA256 together to upgrade; they are validated against each other at build.
+# assemble/annotate pipelines. scripts/install-extras.sh, the local
+# installer, holds the pinned release and its SHA-256s; it downloads the
+# statically-linked musl build, verifies it, and installs it into the conda
+# env's bin/ (already first on PATH in the runtime stage).
 # ---------------------------------------------------------------------------
-ARG COMBINR_VERSION=0.1.1
-ARG COMBINR_SHA256=913c9698124cc3891c01d738cb775bcd5918f7af57ddd499108420d1aed7c222
-RUN combinr_dir="combinr-x86_64-unknown-linux-musl" \
-    && curl -fsSL -o "/tmp/${combinr_dir}.tar.xz" \
-       "https://github.com/BFL-lab/combinr/releases/download/v${COMBINR_VERSION}/${combinr_dir}.tar.xz" \
-    && echo "${COMBINR_SHA256}  /tmp/${combinr_dir}.tar.xz" | sha256sum -c - \
-    && tar xJf "/tmp/${combinr_dir}.tar.xz" -C /tmp \
-    && install -m 0755 "/tmp/${combinr_dir}/combinr" /opt/conda/envs/eukan/bin/combinr \
-    && rm -rf "/tmp/${combinr_dir}.tar.xz" "/tmp/${combinr_dir}" \
+COPY scripts/install-extras.sh /opt/eukan/scripts/
+RUN bash scripts/install-extras.sh combinr \
     && combinr --version
+
+# ---------------------------------------------------------------------------
+# 2d. Trinity's ParaFly, rebuilt with OpenMP
+#
+# Trinity runs its batches of independent commands (Butterfly, and Phase 2's
+# per-partition assemblies, de novo and genome-guided) through
+# trinity-plugins/BIN/ParaFly. bioconda's build passes -fopenmp only to the
+# linker, so ParaFly's `omp parallel for` is compiled out and the commands
+# run one at a time whatever --CPU says. Recompile the shipped source with
+# the base's g++, as for fitild and spaln. Static, so it loads no libgomp or
+# libstdc++ at run time and behaves the same under whatever LD_LIBRARY_PATH
+# eukan or Trinity sets; ld's dlopen warning comes from libgomp's offload
+# plugin loader, which ParaFly (no `omp target` code) never runs. The grep
+# fails the build if the OpenMP runtime did not get linked in.
+# ---------------------------------------------------------------------------
+RUN cd /opt/conda/envs/eukan/bin/trinity-plugins \
+    && /usr/bin/g++ -O2 -fopenmp -static -o BIN/ParaFly \
+       ParaFly/src/ParaFly.cpp ParaFly/src/argProcessor.cpp \
+    && grep -aq GOMP_parallel BIN/ParaFly
 
 # ---------------------------------------------------------------------------
 # 3. GeneMark (optional — requires user-provided license files)
@@ -116,15 +143,26 @@ RUN genemark_tar=$(ls /tmp/_genemark/gmes_linux_64*.tar.gz 2>/dev/null | head -1
         tar zxf "$genemark_tar" -C /opt/conda/envs/eukan/opt/ \
         && gm_dir=$(ls -d /opt/conda/envs/eukan/opt/gmes_linux_64* 2>/dev/null | head -1) \
         && ln -sfn "$gm_dir" /opt/conda/envs/eukan/opt/genemark \
-        && gunzip -c /tmp/_genemark/gm_key_64.gz > /root/.gm_key 2>/dev/null || true \
-        && sed -i 's|#!/usr/bin/perl|#!/usr/bin/env perl|g' /opt/conda/envs/eukan/opt/genemark/*.pl 2>/dev/null || true \
+        && gunzip -c /tmp/_genemark/gm_key_64.gz > /root/.gm_key \
+        && sed -i 's|#!/usr/bin/perl|#!/usr/bin/env perl|g' /opt/conda/envs/eukan/opt/genemark/*.pl \
         && echo "GeneMark installed from $genemark_tar"; \
     else \
-        echo "GeneMark files not found — skipping (install manually later)"; \
+        # Empty key: the runtime stage copies /root/.gm_key unconditionally.
+        : > /root/.gm_key \
+        && echo "GeneMark files not found — skipping (install manually later)"; \
     fi && rm -rf /tmp/_genemark
 
 # ---------------------------------------------------------------------------
-# 4. Strip conda env of unnecessary files to shrink the runtime image
+# 4. Install eukan into the env: the pip step cut from environment.yml in
+#    step 1. It comes after the tool builds, so a source edit re-runs only
+#    this step and the strip below.
+# ---------------------------------------------------------------------------
+COPY pyproject.toml poetry.lock README.md /opt/eukan/
+COPY eukan/ /opt/eukan/eukan/
+RUN pip install .
+
+# ---------------------------------------------------------------------------
+# 5. Strip conda env of unnecessary files to shrink the runtime image
 #
 # Removed in addition to the obvious caches/test dirs:
 #   - R interpreter + bioconductor (lib/R, bin/R, bin/Rscript) — never invoked
@@ -137,7 +175,7 @@ RUN genemark_tar=$(ls /tmp/_genemark/gmes_linux_64*.tar.gz 2>/dev/null | head -1
 #   - lib/ncbi-blast+ (391 MB BLAST+ dev SDK) — verified: no binary links to it
 #   - Unused BLAST CLIs (tblastx, psiblast, deltablast, rps*blast, seedtop,
 #     blast_formatter/_report, blastdbcheck) — not invoked by eukan or any
-#     bundled tool (RepeatMasker, RepeatModeler, PASA, Trinity)
+#     bundled tool (RepeatMasker, RepeatModeler, Trinity)
 #   - matplotlib + fontTools + contourpy + PIL + RNA python packages — only
 #     pulled in via lazy imports in scipy/biopython that we never trigger
 #   - AUGUSTUS pre-shipped species (165 of 166) — eukan always trains from
@@ -146,6 +184,11 @@ RUN genemark_tar=$(ls /tmp/_genemark/gmes_linux_64*.tar.gz 2>/dev/null | head -1
 #   - bin/k8 — JS shell for minimap2's paftools.js only; eukan calls the
 #     minimap2 binary directly (BAM via samtools/pysam), never paftools, so the
 #     read/transcript mapping is unaffected by removing it
+#
+# The `|| true` guards here are deliberate: every command is a best-effort
+# deletion (find -exec rm also exits non-zero when it descends into a dir it
+# just removed), so a failure can only leave the image larger, never broken.
+# The trailing chmod is not guarded.
 # ---------------------------------------------------------------------------
 RUN find /opt/conda/envs/eukan -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true \
     && find /opt/conda/envs/eukan -name "*.a" -delete 2>/dev/null || true \
@@ -221,7 +264,12 @@ RUN find /opt/conda/envs/eukan -type d -name "__pycache__" -exec rm -rf {} + 2>/
     # (AUGUSTUS species training writes to config/, spaln --spsp writes to
     # share/spaln/). Doing this in the builder avoids a 191 MB chown layer
     # in the runtime stage since COPY --link preserves these as-is.
-    && chmod -R a+rwX /opt/conda/envs/eukan/config /opt/conda/envs/eukan/share/spaln
+    # /bin/chmod, the base's own: under the conda SHELL a bare `chmod` is the
+    # env's coreutils 9.12, whose -R sets every entry below the named dirs
+    # with fchmodat(AT_SYMLINK_NOFOLLOW). This base's glibc 2.31 does not
+    # implement that (bookworm's 2.36 does), and chmod skips each such entry
+    # as an unchangeable symlink, so only the two named dirs changed, exit 0.
+    && /bin/chmod -R a+rwX /opt/conda/envs/eukan/config /opt/conda/envs/eukan/share/spaln
 
 # ============================= RUNTIME STAGE =================================
 FROM debian:bookworm-slim AS runtime
@@ -233,9 +281,11 @@ ARG GROUP_ID=1000
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
-    # Create non-root user
-    && groupadd -g ${GROUP_ID} eukan 2>/dev/null || true \
-    && useradd -u ${USER_ID} -g ${GROUP_ID} -m eukan 2>/dev/null || true
+    # Create non-root user. groupadd may fail only because GROUP_ID already
+    # names a group in the base image (e.g. 100 = users); useradd -g then
+    # joins that group.
+    && { groupadd -g ${GROUP_ID} eukan || true; } \
+    && useradd -u ${USER_ID} -g ${GROUP_ID} -m eukan
 
 # Copy the fully-built conda environment from the builder.
 # eukan itself (including tools.toml + configs/ under eukan/data/) lives in
@@ -245,26 +295,26 @@ COPY --link --from=builder /opt/conda/envs/eukan /opt/conda/envs/eukan
 # Copy GeneMark key — place in eukan home and /root, world-readable
 COPY --from=builder /root/.gm_key /root/.gm_key
 COPY --from=builder /root/.gm_key /home/eukan/.gm_key
-RUN chmod 644 /root/.gm_key /home/eukan/.gm_key 2>/dev/null || true
+RUN chmod 644 /root/.gm_key /home/eukan/.gm_key
 
 # AUGUSTUS config + share/spaln are already chmod a+rwX in the builder so
 # any UID can write during species training / spaln --spsp.
 
 # ---------------------------------------------------------------------------
-# Environment variables (mirrors conda-activate.sh)
+# Environment variables
+#
+# CONDA_PREFIX is what eukan keys its tool environment on: at startup the CLI
+# sets every env var and PATH dir declared in eukan/data/tools.toml (ZOE,
+# AUGUSTUS_CONFIG_PATH, ALN_TAB/ALN_DBS/PERL5LIB, opt/genemark, opt/fitild/src)
+# and gives each tool it runs LD_LIBRARY_PATH=$CONDA_PREFIX/lib, exactly as in
+# a conda install. Only what no conda activation sets here is spelled out:
+# the env's bin/ on PATH, plus TRINITY_HOME and QUARRY_PATH, which the
+# trinity and codingquarry packages export from their own activate.d hooks.
 # ---------------------------------------------------------------------------
-ENV CONDA_DEFAULT_ENV=eukan \
-    PATH="/opt/conda/envs/eukan/opt/genemark:/opt/conda/envs/eukan/opt/fitild/src:/opt/conda/envs/eukan/bin/EvmUtils:/opt/conda/envs/eukan/bin/EvmUtils/misc:/opt/conda/envs/eukan/opt/pasa-2.5.3/scripts:/opt/conda/envs/eukan/bin:${PATH}" \
-    LD_LIBRARY_PATH="/opt/conda/envs/eukan/lib" \
-    ZOE="/opt/conda/envs/eukan/share/snap" \
-    AUGUSTUS_CONFIG_PATH="/opt/conda/envs/eukan/config" \
+ENV CONDA_PREFIX=/opt/conda/envs/eukan \
+    PATH="/opt/conda/envs/eukan/bin:${PATH}" \
     QUARRY_PATH="/opt/conda/envs/eukan/opt/codingquarry-2.0/QuarryFiles" \
-    EVM_HOME="/opt/conda/envs/eukan/opt/evidencemodeler-2.1.0" \
     TRINITY_HOME="/opt/conda/envs/eukan/bin" \
-    PASAHOME="/opt/conda/envs/eukan/opt/pasa-2.5.3" \
-    ALN_TAB="/opt/conda/envs/eukan/share/spaln/table" \
-    ALN_DBS="/opt/conda/envs/eukan/share/spaln/seqdb" \
-    PERL5LIB="/opt/conda/envs/eukan/share/spaln/alndbs" \
     HOME=/home/eukan \
     USER=eukan
 

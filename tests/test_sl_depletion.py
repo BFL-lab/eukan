@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from eukan.assembly.sl_depletion import (
     _find_sites,
-    _revcomp,
     _variants,
 )
+from eukan.infra.genome import reverse_complement as _revcomp
 
 SL = "GTACTTTATT"  # 10 bp, meets _MIN_MOTIF_LEN
 

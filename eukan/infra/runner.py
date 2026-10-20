@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import os
+import signal
 import subprocess
 import tempfile
 import threading
@@ -34,9 +36,21 @@ def _untrack(proc: subprocess.Popen) -> None:
         _RUNNING.discard(proc)
 
 
+def _signal_group(proc: subprocess.Popen, sig: int) -> None:
+    """Send *sig* to *proc*'s whole process group, not only to *proc*.
+
+    Every child starts in its own session (see :func:`_tracked_popen`), so its
+    process-group id is its PID and the group also holds the worker processes
+    the tool forks, which signalling the PID alone would leave running. A
+    group that is already gone, or that may not be signalled, is ignored.
+    """
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(proc.pid, sig)
+
+
 @contextmanager
 def _tracked_popen(
-    cmd: list[str] | str,
+    cmd: list[str],
     *,
     cwd: Path,
     env: dict[str, str] | None,
@@ -45,8 +59,8 @@ def _tracked_popen(
 ) -> Iterator[subprocess.Popen]:
     """Spawn a Popen registered for SIGINT cleanup, with isolated session.
 
-    On ``KeyboardInterrupt`` the child is terminated (5s grace) then
-    SIGKILLed; in either case the process is unregistered before the
+    On ``KeyboardInterrupt`` the child's process group is terminated (5s
+    grace) then SIGKILLed; in either case the process is unregistered before the
     context exits. ``FileNotFoundError`` is translated to
     :class:`MissingToolError` when *missing_tool* is provided and the
     cwd actually exists (so a missing cwd surfaces as the original
@@ -64,21 +78,21 @@ def _tracked_popen(
     try:
         yield proc
     except KeyboardInterrupt:
-        proc.terminate()
+        _signal_group(proc, signal.SIGTERM)
         with contextlib.suppress(subprocess.TimeoutExpired):
             proc.communicate(timeout=5)
         if proc.returncode is None:
-            proc.kill()
+            _signal_group(proc, signal.SIGKILL)
         raise
     finally:
         _untrack(proc)
 
 
 def terminate_all_children(grace_period: float = 5.0) -> None:
-    """Terminate every tracked child process, then SIGKILL stragglers.
+    """Terminate every tracked child's process group, then SIGKILL stragglers.
 
     Called from the CLI's SIGINT handler so Ctrl-C doesn't orphan running
-    bioinformatics tools.
+    bioinformatics tools or the worker processes they fork.
     """
     with _REGISTRY_LOCK:
         procs = list(_RUNNING)
@@ -86,16 +100,14 @@ def terminate_all_children(grace_period: float = 5.0) -> None:
         return
     log.warning("Interrupted; terminating %d running child process(es)...", len(procs))
     for p in procs:
-        with contextlib.suppress(OSError):
-            p.terminate()
+        _signal_group(p, signal.SIGTERM)
     deadline = time.monotonic() + grace_period
     for p in procs:
         remaining = max(0.0, deadline - time.monotonic())
         try:
             p.wait(timeout=remaining)
         except subprocess.TimeoutExpired:
-            with contextlib.suppress(OSError):
-                p.kill()
+            _signal_group(p, signal.SIGKILL)
 
 
 def _tool_name(cmd: list[str]) -> str:
@@ -116,11 +128,8 @@ def run_cmd(
     cwd: Path,
     in_file: str | None = None,
     out_file: str | None = None,
-    err_file: str | None = None,
-    binary: bool = False,
-    timeout: int | None = None,
     extra_env: dict[str, str] | None = None,
-) -> subprocess.CompletedProcess:
+) -> None:
     """Run an external command safely.
 
     Args:
@@ -130,20 +139,14 @@ def run_cmd(
             for reading and connected to the child's stdin (no Python
             buffering — the child reads from the fd directly).
         out_file: If set, stdout is streamed straight to this filename
-            within *cwd* via the child's fd (no in-process capture).
-        err_file: If set, stderr is streamed straight to this filename
-            within *cwd* via the child's fd.
-        binary: Only meaningful when *out_file* is unset; controls
-            whether captured stdout is returned as bytes or str.
-        timeout: Optional timeout in seconds.
+            within *cwd* via the child's fd (no in-process capture);
+            otherwise stdout goes to ``/dev/null``. Stdout is never
+            captured, so nothing is returned.
         extra_env: Additional environment variables merged on top of
             the current environment for this subprocess only.
 
-    Returns:
-        The CompletedProcess result.
-
     Raises:
-        ExternalToolError: If the command exits non-zero or times out.
+        ExternalToolError: If the command exits non-zero.
     """
     cmd_str = " ".join(cmd)
     log.debug("Running: %s (cwd=%s)", cmd_str, cwd)
@@ -155,21 +158,14 @@ def run_cmd(
     with contextlib.ExitStack() as stack:
         in_handle = stack.enter_context(open(cwd / in_file, "rb")) if in_file else None
         out_handle = stack.enter_context(open(cwd / out_file, "wb")) if out_file else None
-        err_handle = stack.enter_context(open(cwd / err_file, "wb")) if err_file else None
 
         stdin_target: int | None = in_handle.fileno() if in_handle else None
         stdout_target: int = out_handle.fileno() if out_handle else subprocess.DEVNULL
-        stderr_target: int = err_handle.fileno() if err_handle else subprocess.PIPE
 
         tool = _tool_name(cmd)
         # External tools occasionally emit non-UTF-8 bytes on stderr (e.g.
         # AUGUSTUS surfaces raw locale-encoded bytes from its C++ layer); a
-        # strict decoder would crash before we ever see the message. errors
-        # only applies in text mode — pass it only when text=True so binary
-        # mode (binary=True) keeps returning raw bytes.
-        text_kwargs: dict[str, object] = (
-            {"text": True, "errors": "replace"} if not binary else {"text": False}
-        )
+        # strict decoder would crash before we ever see the message.
         with _tracked_popen(
             cmd,
             cwd=cwd,
@@ -177,25 +173,12 @@ def run_cmd(
             missing_tool=tool,
             stdin=stdin_target,
             stdout=stdout_target,
-            stderr=stderr_target,
-            **text_kwargs,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="replace",
         ) as proc:
-            try:
-                _, stderr = proc.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired as exc:
-                proc.kill()
-                with contextlib.suppress(subprocess.TimeoutExpired):
-                    proc.communicate(timeout=5)
-                raise ExternalToolError(
-                    f"{tool} timed out after {timeout}s",
-                    tool=tool, returncode=-1, cmd=cmd,
-                    stderr_snippet=str(exc),
-                ) from exc
+            _, stderr_text = proc.communicate()
 
-    if stderr is None:
-        stderr_text = ""
-    else:
-        stderr_text = stderr if isinstance(stderr, str) else stderr.decode(errors="replace")
     if stderr_text:
         log.debug("stderr from %s:\n%s", tool, stderr_text)
 
@@ -206,10 +189,6 @@ def run_cmd(
             tool=tool, returncode=proc.returncode, cmd=cmd,
             stderr_snippet=stderr_text,
         )
-
-    return subprocess.CompletedProcess(
-        args=cmd, returncode=proc.returncode, stdout=None, stderr=stderr,
-    )
 
 
 def run_piped(
@@ -247,7 +226,7 @@ def run_piped(
                 stdout, stderr = p2.communicate()
         except BaseException:
             # Tear down the producer if the consumer raises (or KeyboardInterrupt).
-            p1.kill()
+            _signal_group(p1, signal.SIGKILL)
             p1.wait()
             raise
         p1.wait()
@@ -263,12 +242,15 @@ def run_piped(
     if p2.returncode != 0:
         stderr_text = stderr.decode(errors="replace")
         # Fold in the producer's fate so a crashed/OOM-killed producer feeding
-        # an empty stream isn't masked by the consumer's "no input" error.
-        if p1.returncode not in (0, None):
+        # an empty stream isn't masked by the consumer's "no input" error. Its
+        # exit line goes after its stderr, so the kept tail of the snippet still
+        # shows it. A producer killed by SIGPIPE only saw the consumer stop
+        # reading: its stderr would just push the consumer's error out.
+        if p1.returncode not in (0, None, -13, 141):
             stderr_text = (
-                f"{_tool_name(cmd1)} (producer) exited {p1.returncode}: "
-                f"{producer_err.strip()}\n{stderr_text}"
-            )
+                f"{producer_err.strip()}\n"
+                f"{_tool_name(cmd1)} (producer) exited {p1.returncode}\n{stderr_text}"
+            ).lstrip()
         raise ExternalToolError(
             f"{_tool_name(cmd2)} failed (exit {p2.returncode})",
             tool=_tool_name(cmd2),
@@ -291,45 +273,3 @@ def run_piped(
 
     return output
 
-
-def run_shell(
-    cmd_str: str,
-    *,
-    cwd: Path,
-) -> subprocess.CompletedProcess:
-    """Run a shell command string with proper error handling.
-
-    Use this only when the command requires shell features (redirections,
-    pipes built by external tools, etc.) that cannot be expressed as a
-    list.  Prefer :func:`run_cmd` wherever possible.
-
-    Raises:
-        ExternalToolError: If the command exits non-zero.
-    """
-    log.debug("Running (shell): %s (cwd=%s)", cmd_str, cwd)
-
-    with _tracked_popen(
-        cmd_str, cwd=cwd, env=_subprocess_env(),
-        shell=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        errors="replace",
-    ) as proc:
-        stdout, stderr = proc.communicate()
-
-    if stderr:
-        log.debug("stderr (shell):\n%s", stderr)
-
-    if proc.returncode != 0:
-        tool = cmd_str.split()[0] if cmd_str.strip() else "shell"
-        log.error("Shell command failed (exit %d): %s", proc.returncode, cmd_str[:200])
-        raise ExternalToolError(
-            f"Shell command failed (exit {proc.returncode})",
-            tool=tool,
-            returncode=proc.returncode,
-            cmd=[cmd_str],
-            stderr_snippet=stderr,
-        )
-
-    return subprocess.CompletedProcess(
-        args=cmd_str, returncode=proc.returncode, stdout=stdout, stderr=stderr,
-    )

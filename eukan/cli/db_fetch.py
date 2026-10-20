@@ -7,17 +7,19 @@ from pathlib import Path
 import click
 from click_option_group import optgroup
 
-from eukan.cli._framework import force_option
+from eukan.cli._framework import PreformattedEpilogCommand, force_option
+from eukan.infra.databases import DATABASES, DEFAULT_DB_DIR, HOMOLOGY_DBS
 
 
-@click.command("db-fetch")
+@click.command("db-fetch", cls=PreformattedEpilogCommand)
 @optgroup.group("Pipeline parameters")
 @optgroup.option(
-    "--output-dir", "-o", type=click.Path(path_type=Path), default="databases",
+    "--output-dir", "-o", type=click.Path(resolve_path=True, path_type=Path),
+    default=str(DEFAULT_DB_DIR),
     show_default=True, help="Directory to download databases into.",
 )
 @optgroup.option(
-    "--homology-db", type=click.Choice(["uniprot", "kofam"], case_sensitive=False),
+    "--homology-db", type=click.Choice(HOMOLOGY_DBS, case_sensitive=False),
     default="uniprot", show_default=True,
     help="Which homology DB to fetch alongside Pfam. 'uniprot' downloads "
          "SwissProt; 'kofam' downloads the KOfam HMM profiles + ko_list "
@@ -25,7 +27,7 @@ from eukan.cli._framework import force_option
 )
 @optgroup.option(
     "--database", "-d", multiple=True,
-    type=click.Choice(["uniprot", "pfam", "kofam", "ko_list"], case_sensitive=False),
+    type=click.Choice(list(DATABASES), case_sensitive=False),
     help="Specific database(s) to fetch. Overrides --homology-db when given.",
 )
 @force_option(help_text="Re-download even if databases are up to date.")
@@ -44,13 +46,12 @@ def db_fetch(
     Use --database to fetch an explicit subset (e.g. -d pfam to refresh
     only Pfam, or -d kofam -d ko_list to fetch KOfam without touching Pfam).
     """
-    from eukan.functional.dbfetch import fetch_databases
+    from eukan.functional.dbfetch import fetch_databases  # lazy: startup cost
 
-    output_dir = output_dir.resolve()
     fetch_databases(
         output_dir,
         force=force,
         databases=list(database) if database else None,
-        homology_db=homology_db.lower(),
+        homology_db=homology_db,
     )
     click.echo("Done.")

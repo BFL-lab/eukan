@@ -1,20 +1,31 @@
 """Pre-flight checks for external tool availability.
 
 Reads the tool registry from tools.toml (via :mod:`tools_registry`) and
-verifies that each tool is installed, on PATH, and responds to a
-version/help probe. Also checks database integrity via the manifest.
+verifies that each tool is installed, on PATH, responds to a version/help
+probe and passes its own install check where it declares one (GeneMark's,
+which catches an expired license key). Also checks database integrity via
+the manifest.
+The report is rendered by :mod:`eukan.cli.check`.
 """
 
 from __future__ import annotations
 
+import importlib
+import io
 import os
+import pkgutil
+import re
 import shutil
 import signal
 import subprocess
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import eukan
+from eukan.infra.databases import DEFAULT_DB_DIR, check_databases
+from eukan.infra.environ import subprocess_env
 from eukan.infra.tools_registry import Tool, load_tools
 
 # ---------------------------------------------------------------------------
@@ -71,6 +82,40 @@ class CheckResult:
     version_output: str
     env_ok: bool
     crash_signal: str | None = None
+    # Why the tool's own install check (``install_check``) failed; None if it passed
+    # or was not run.
+    install_error: str | None = None
+
+    @property
+    def problems(self) -> list[str]:
+        """Why the tool is unusable, one reason per entry; empty when it is fine."""
+        problems = []
+        if not self.found:
+            problems.append(f"`{self.tool.binary}` not found on PATH")
+        elif self.crash_signal in _FATAL_SIGNALS:
+            problems.append(f"crashed with {self.crash_signal}")
+        elif not self.version_ok:
+            problems.append(f"version check failed: {self.version_output or 'no output'}")
+        elif self.install_error:
+            problems.append(f"install check failed: {self.install_error}")
+        if not self.env_ok:
+            missing = ", ".join(f"${v}" for v in _missing_env_vars(self.tool))
+            problems.append(f"env not set: {missing}")
+        return problems
+
+    @property
+    def ok(self) -> bool:
+        return not self.problems
+
+
+def _version_line(tool: Tool, output: str) -> str:
+    """The probe output line matching the tool's ``version_line``, else its first."""
+    lines = output.split("\n")
+    if tool.version_line:
+        for line in lines:
+            if re.search(tool.version_line, line):
+                return line
+    return lines[0]
 
 
 def check_tool(tool: Tool) -> CheckResult:
@@ -92,11 +137,13 @@ def check_tool(tool: Tool) -> CheckResult:
         # Use subprocess_env() so tools that depend on LD_LIBRARY_PATH
         # (e.g. fitild needs liblbfgs from $CONDA_PREFIX/lib) load their
         # shared libs without requiring the user to export LD_LIBRARY_PATH.
-        from eukan.infra.environ import subprocess_env
         result = subprocess.run(
             tool.version_cmd,
             capture_output=True,
             text=True,
+            # Version banners can carry non-UTF-8 bytes (Debian's samtools
+            # prints a Latin-1 byte); a strict decode would report it broken.
+            errors="replace",
             timeout=10,
             stdin=subprocess.DEVNULL,
             env=subprocess_env(),
@@ -142,10 +189,9 @@ def check_tool(tool: Tool) -> CheckResult:
         output = str(e)
         version_ok = False
 
-    if crash_sig:
-        version_output = f"crashed with {crash_sig}"
-    else:
-        version_output = output.split("\n")[0][:120] if output else ""
+    version_output = (
+        f"crashed with {crash_sig}" if crash_sig else _version_line(tool, output)[:120]
+    )
 
     return CheckResult(
         tool=tool,
@@ -155,7 +201,36 @@ def check_tool(tool: Tool) -> CheckResult:
         version_output=version_output,
         env_ok=_check_env(tool),
         crash_signal=crash_sig,
+        install_error=(
+            _install_check_error(tool.install_check, binary_path)
+            if version_ok and tool.install_check else None
+        ),
     )
+
+
+def _install_check_error(script_name: str, binary_path: str) -> str | None:
+    """Run the install check *script_name* beside the resolved *binary_path*; return
+    what it printed if it failed (its stderr, then its last stdout line), else None.
+
+    It runs in an empty directory, since GeneMark's check_install.bash also
+    test-runs gmhmme3 when it finds ./GeneMark-E-tests, and without the
+    subprocess_env() LD_LIBRARY_PATH, whose conda libtinfo makes the system bash
+    print a warning.
+    """
+    script = Path(binary_path).resolve().parent / script_name
+    with tempfile.TemporaryDirectory() as cwd:
+        try:
+            result = subprocess.run(
+                ["bash", str(script)], cwd=cwd, capture_output=True, text=True,
+                errors="replace", timeout=10, stdin=subprocess.DEVNULL,
+            )
+        except subprocess.TimeoutExpired:
+            return f"{script_name} timed out"
+    if result.returncode == 0:
+        return None
+    lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
+    lines += [line.strip() for line in result.stdout.splitlines() if line.strip()][-1:]
+    return " ".join(lines) or f"{script_name} exited with {result.returncode}"
 
 
 def _check_env(tool: Tool) -> bool:
@@ -243,22 +318,16 @@ def _check_python_dep(name: str, probe: Callable[[], str]) -> PythonCheckResult:
 
 def _check_module_imports() -> PythonCheckResult:
     """Import every first-party module, collecting any failures."""
-    modules = [
-        "eukan", "eukan.cli", "eukan.settings", "eukan.infra.health",
-        "eukan.infra.runner", "eukan.infra.manifest", "eukan.infra.steps", "eukan.infra.pipeline", "eukan.infra.logging", "eukan.infra.environ",
-        "eukan.annotation", "eukan.annotation.pipeline",
-        "eukan.assembly", "eukan.assembly.pipeline",
-        "eukan.repeats", "eukan.repeats.pipeline", "eukan.repeats.modeler", "eukan.repeats.masker",
-        "eukan.functional", "eukan.functional.pipeline", "eukan.functional.dbfetch",
-        "eukan.submission",
-        "eukan.gff.transforms", "eukan.gff.hierarchy", "eukan.gff.concordance", "eukan.gff.io",
-        "eukan.compare", "eukan.compare.engine", "eukan.compare.format",
-        "eukan.compare.models",
+    # walk_packages imports each package to list its children; a package that
+    # fails there is still yielded, and the loop below reports it.
+    modules = ["eukan"] + [
+        info.name
+        for info in pkgutil.walk_packages(eukan.__path__, "eukan.", onerror=lambda _name: None)
     ]
     failures = []
     for mod in modules:
         try:
-            __import__(mod)
+            importlib.import_module(mod)
         except Exception as e:
             failures.append(f"{mod}: {e}")
     if failures:
@@ -267,67 +336,63 @@ def _check_module_imports() -> PythonCheckResult:
 
 
 def _probe_pyhmmer() -> str:
-    import pyhmmer.easel
-    import pyhmmer.hmmer
+    import pyhmmer.easel  # lazy: the import is part of the probe
+    import pyhmmer.hmmer  # lazy: the import is part of the probe
     alpha = pyhmmer.easel.Alphabet.amino()
     seq = pyhmmer.easel.TextSequence(
         name=b"test", sequence="MKFLILLFNILCLFPVLAADNH"
     ).digitize(alpha)
     hits = list(pyhmmer.hmmer.phmmer([seq], [seq], cpus=1))  # type: ignore[list-item]
-    assert len(hits) == 1 and len(hits[0]) >= 1
+    if len(hits) != 1 or len(hits[0]) < 1:
+        raise RuntimeError("phmmer did not find the query sequence in itself")
     return "phmmer search works"
 
 
 def _probe_gffutils() -> str:
-    import gffutils
+    import gffutils  # lazy: the import is part of the probe
     gff = "chr1\ttest\tgene\t100\t500\t.\t+\t.\tID=g1"
     db = gffutils.create_db(gff, ":memory:", from_string=True)
-    assert len(list(db.features_of_type("gene"))) == 1
+    genes = len(list(db.features_of_type("gene")))
+    if genes != 1:
+        raise RuntimeError(f"in-memory DB holds {genes} genes after loading 1")
     return "in-memory DB works"
 
 
 def _probe_biopython() -> str:
-    import io
-
-    from Bio import SeqIO
-    from Bio.Seq import Seq
-    from Bio.SeqRecord import SeqRecord
+    from Bio import SeqIO  # lazy: the import is part of the probe
+    from Bio.Seq import Seq  # lazy: the import is part of the probe
+    from Bio.SeqRecord import SeqRecord  # lazy: the import is part of the probe
     record = SeqRecord(Seq("ATGAAATAA"), id="test")
     buf = io.StringIO()
     SeqIO.write(record, buf, "fasta")
     buf.seek(0)
-    assert len(list(SeqIO.parse(buf, "fasta"))) == 1
+    records = len(list(SeqIO.parse(buf, "fasta")))
+    if records != 1:
+        raise RuntimeError(f"read back {records} FASTA records after writing 1")
     return "sequence I/O works"
 
 
 def _probe_pydantic_settings() -> str:
-    import tempfile
-
-    from eukan.settings import PipelineConfig
+    from eukan.settings import PipelineConfig  # lazy: the import is part of the probe
     with tempfile.NamedTemporaryFile(suffix=".fa") as f:
         config = PipelineConfig(genome=Path(f.name), proteins=[Path(f.name)])
-        assert config.num_cpu >= 1
+    if config.num_cpu < 1:
+        raise RuntimeError(f"default num_cpu is {config.num_cpu}")
     return "config loads OK"
 
 
 def _probe_scipy() -> str:
-    from scipy.stats import (
-        chi2_contingency,
-        false_discovery_control,
-        ks_2samp,
-    )
-    d, _ = ks_2samp([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
-    assert 0.0 <= d <= 1.0
-    chi2_res = chi2_contingency([[10, 20], [30, 40]])
-    assert int(chi2_res.dof) == 1
-    adj = false_discovery_control([0.01, 0.5], method="bh")
-    assert len(adj) == 2
-    return "ks_2samp/chi2/BH work"
+    from scipy.optimize import linear_sum_assignment  # lazy: the import is part of the probe
+    _, cols = linear_sum_assignment([[1, 5], [4, 1]], maximize=True)
+    if cols.tolist() != [1, 0]:
+        raise RuntimeError(f"linear_sum_assignment returned {cols.tolist()}, expected [1, 0]")
+    return "linear_sum_assignment works"
 
 
 def _probe_tool_registry() -> str:
     tools = load_tools()
-    assert len(tools) > 10
+    if len(tools) <= 10:
+        raise RuntimeError(f"only {len(tools)} tools loaded from tools.toml")
     return f"{len(tools)} tools loaded from tools.toml"
 
 
@@ -375,10 +440,7 @@ def run_checks(
 
     for tool in tools:
         result = check_tool(tool)
-        if result.found and result.version_ok and result.env_ok:
-            passed.append(result)
-        else:
-            failed.append(result)
+        (passed if result.ok else failed).append(result)
 
     # Database checks
     db_results: list[tuple[str, str, bool]] = []
@@ -386,113 +448,7 @@ def run_checks(
         s in ("func-annot", "annotate", "db-fetch") for s in subcommands
     )
     if db_relevant:
-        from eukan.functional.dbfetch import check_databases
-        db_dir = db_dir or Path("databases")
+        db_dir = db_dir or DEFAULT_DB_DIR
         db_results = check_databases(db_dir, homology_db=homology_db)
 
     return passed, failed, db_results, python_results
-
-
-# ---------------------------------------------------------------------------
-# Formatting
-# ---------------------------------------------------------------------------
-
-
-def format_results(
-    passed: list[CheckResult],
-    failed: list[CheckResult],
-    db_results: list[tuple[str, str, bool]] | None = None,
-    python_results: list[PythonCheckResult] | None = None,
-) -> str:
-    """Format check results as a human-readable report."""
-    lines: list[str] = []
-
-    # --- Python dependencies ---
-    if python_results:
-        py_ok = [pr for pr in python_results if pr.ok]
-        py_fail = [pr for pr in python_results if not pr.ok]
-
-        if py_ok:
-            lines.append(f"  {len(py_ok)} Python checks OK:")
-            for pr in py_ok:
-                lines.append(f"    \u2713 {pr.name:<30s} {pr.detail}")
-        if py_fail:
-            lines.append(f"\n  {len(py_fail)} Python checks FAILED:")
-            for pr in py_fail:
-                lines.append(f"    \u2717 {pr.name:<30s} {pr.detail}")
-        lines.append("")
-
-    # --- External tools ---
-    if passed:
-        lines.append(f"  {len(passed)} tools OK:")
-        for tr in passed:
-            lines.append(f"    \u2713 {tr.tool.name:<30s} {tr.version_output}")
-
-    if failed:
-        lines.append(f"\n  {len(failed)} tools MISSING or BROKEN:")
-        for tr in failed:
-            issues = []
-            if not tr.found:
-                issues.append(f"`{tr.tool.binary}` not found on PATH")
-            elif tr.crash_signal in _FATAL_SIGNALS:
-                issues.append(f"crashed with {tr.crash_signal}")
-            elif not tr.version_ok:
-                issues.append(f"version check failed: {tr.version_output or 'no output'}")
-            if not tr.env_ok:
-                missing = ", ".join(f"${v}" for v in _missing_env_vars(tr.tool))
-                issues.append(f"env not set: {missing}")
-            lines.append(f"    \u2717 {tr.tool.name:<30s} {'; '.join(issues)}")
-            lines.append(f"      used by: {', '.join(tr.tool.required_by)}")
-            if tr.tool.install_hint and not tr.found:
-                lines.append(f"      hint: {tr.tool.install_hint}")
-
-    total = len(passed) + len(failed)
-    lines.append(f"\n  Checked {total} external tools total.")
-
-    # When any tool died from a fatal signal, surface the CPU baseline so
-    # the user can see whether the binary is built for a newer CPU than
-    # they have. SIGILL on the same set of bioconda packages (augustus,
-    # spaln, STAR) is almost always a CPU baseline mismatch \u2014 bioconda
-    # ships x86-64-v3 (Haswell+) builds.
-    crashed = [tr for tr in failed if tr.crash_signal in _FATAL_SIGNALS]
-    if crashed:
-        baseline = cpu_baseline()
-        if baseline is not None:
-            level, _ = baseline
-            lines.append("")
-            lines.append(f"  CPU baseline: {level}")
-            sigill_tools = [tr.tool.name for tr in crashed if tr.crash_signal == "SIGILL"]
-            if sigill_tools and level in ("x86-64", "x86-64-v2"):
-                lines.append(
-                    "    SIGILL crashes typically mean the binary requires a newer"
-                )
-                lines.append(
-                    "    CPU baseline than this machine provides. Bioconda ships"
-                )
-                lines.append(
-                    "    x86-64-v3 (AVX2/FMA/BMI2) builds for many tools. To fix:"
-                )
-                lines.append(
-                    "    rebuild from source on this host, run inside Docker on a"
-                )
-                lines.append(
-                    "    newer CPU, or pin to an older bioconda build."
-                )
-
-    # --- Databases ---
-    if db_results:
-        lines.append("")
-        db_ok = [r for r in db_results if r[2]]
-        db_fail = [r for r in db_results if not r[2]]
-
-        if db_ok:
-            lines.append(f"  {len(db_ok)} databases OK:")
-            for name, msg, _ in db_ok:
-                lines.append(f"    \u2713 {name:<30s} {msg}")
-        if db_fail:
-            lines.append(f"\n  {len(db_fail)} databases MISSING or INVALID:")
-            for name, msg, _ in db_fail:
-                lines.append(f"    \u2717 {name:<30s} {msg}")
-            lines.append("      run: eukan db-fetch")
-
-    return "\n".join(lines)

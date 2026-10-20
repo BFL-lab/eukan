@@ -1,19 +1,24 @@
-"""Tests for eukan.dbfetch — manifest tracking, integrity, and resumable downloads."""
+"""Tests for eukan.functional.dbfetch — resumable downloads and database preparation."""
 
+import gzip
+import io
+import json
+import tarfile
+from pathlib import Path
 from unittest.mock import patch
 
+import pyhmmer
+import pytest
+
 from eukan.functional import dbfetch
-from eukan.functional.dbfetch import (
-    DatabaseEntry,
-    _download_file,
-    _is_current,
+from eukan.functional.dbfetch import _download_file
+from eukan.functional.search import _open_hmm_db
+from eukan.infra.databases import (
+    DATABASES,
+    MANIFEST_FILE,
     check_databases,
-)
-from eukan.functional.dbfetch import (
-    load_db_manifest as load_manifest,
-)
-from eukan.functional.dbfetch import (
-    save_db_manifest as save_manifest,
+    is_current,
+    load_db_manifest,
 )
 from eukan.infra.utils import md5_file
 
@@ -58,93 +63,6 @@ class TestMd5:
         f1.write_text("hello")
         f2.write_text("world")
         assert md5_file(f1) != md5_file(f2)
-
-
-class TestManifest:
-    def test_round_trip(self, tmp_path):
-        """Save and load should preserve entries."""
-        entry = DatabaseEntry(
-            name="test", file="test.faa", source_url="https://example.com",
-            md5="abc123", date="2026-01-01", size_bytes=1000,
-        )
-        save_manifest(tmp_path, {"test": entry})
-        loaded = load_manifest(tmp_path)
-        assert "test" in loaded
-        assert loaded["test"].md5 == "abc123"
-        assert loaded["test"].size_bytes == 1000
-
-    def test_load_missing(self, tmp_path):
-        """Missing manifest should return empty dict."""
-        assert load_manifest(tmp_path) == {}
-
-    def test_load_corrupt(self, tmp_path):
-        """Corrupt manifest should return empty dict."""
-        (tmp_path / ".manifest.json").write_text("not json{{{")
-        assert load_manifest(tmp_path) == {}
-
-
-class TestIsCurrent:
-    def test_matching_file(self, tmp_path):
-        """File with correct md5 should be current."""
-        f = tmp_path / "test.faa"
-        f.write_text("data")
-        md5 = md5_file(f)
-        entry = DatabaseEntry("test", "test.faa", "", md5, "", f.stat().st_size)
-        assert _is_current(entry, tmp_path)
-
-    def test_modified_file(self, tmp_path):
-        """File with wrong md5 should not be current."""
-        f = tmp_path / "test.faa"
-        f.write_text("data")
-        entry = DatabaseEntry("test", "test.faa", "", "wrong_md5", "", 0)
-        assert not _is_current(entry, tmp_path)
-
-    def test_missing_file(self, tmp_path):
-        """Missing file should not be current."""
-        entry = DatabaseEntry("test", "missing.faa", "", "abc", "", 0)
-        assert not _is_current(entry, tmp_path)
-
-
-class TestCheckDatabases:
-    def test_missing_databases(self, tmp_path):
-        """Empty directory should report every registered database missing."""
-        from eukan.functional.dbfetch import DATABASES
-        results = check_databases(tmp_path)
-        assert len(results) == len(DATABASES)
-        assert all(not ok for _, _, ok in results)
-
-    def test_present_without_manifest(self, tmp_path):
-        """File present but no manifest should warn."""
-        (tmp_path / "uniprot_sprot.faa").write_text(">seq1\nMKK\n")
-        results = check_databases(tmp_path)
-        uniprot_result = [r for r in results if r[0] == "uniprot"][0]
-        assert not uniprot_result[2]  # not OK — no manifest
-        assert "no manifest" in uniprot_result[1]
-
-    def test_present_with_valid_manifest(self, tmp_path):
-        """File matching manifest should be OK."""
-        f = tmp_path / "uniprot_sprot.faa"
-        f.write_text(">seq1\nMKK\n")
-        entry = DatabaseEntry(
-            "uniprot", "uniprot_sprot.faa", "https://example.com",
-            md5_file(f), "2026-01-01", f.stat().st_size,
-        )
-        save_manifest(tmp_path, {"uniprot": entry})
-        results = check_databases(tmp_path)
-        uniprot_result = [r for r in results if r[0] == "uniprot"][0]
-        assert uniprot_result[2]  # OK
-
-    def test_homology_db_uniprot_excludes_kofam(self, tmp_path):
-        """homology_db='uniprot' should skip KOfam / ko_list entries."""
-        results = check_databases(tmp_path, homology_db="uniprot")
-        names = {n for n, _, _ in results}
-        assert names == {"uniprot", "pfam"}
-
-    def test_homology_db_kofam_excludes_uniprot(self, tmp_path):
-        """homology_db='kofam' should skip the UniProt entry."""
-        results = check_databases(tmp_path, homology_db="kofam")
-        names = {n for n, _, _ in results}
-        assert names == {"kofam", "ko_list", "pfam"}
 
 
 class TestDownloadResume:
@@ -221,3 +139,143 @@ class TestDownloadResume:
 
         assert not dest.exists()
         assert partial.exists() and partial.read_bytes() == b"first-chunk"
+
+
+# pyhmmer's bundled test HMMs (10 RRE families), as tests/test_functional_search.py uses them.
+RREFAM = Path(pyhmmer.__file__).parent / "tests" / "data" / "hmms" / "txt" / "RREFam.hmm"
+needs_rrefam = pytest.mark.skipif(
+    not RREFAM.exists(), reason="pyhmmer installed without its bundled test HMMs",
+)
+
+
+def _serve_gzipped_rrefam(url, dest):
+    with gzip.open(dest, "wb") as fh:
+        fh.write(RREFAM.read_bytes())
+
+
+def _serve_rrefam_profiles_tarball(url, dest):
+    """A profiles.tar.gz with one .hmm per RRE family, all listed in eukaryote.hal."""
+    with pyhmmer.plan7.HMMFile(str(RREFAM)) as hf:
+        hmms = list(hf)
+    with tarfile.open(dest, "w:gz") as tf:
+        def add(name: str, data: bytes) -> None:
+            info = tarfile.TarInfo(f"profiles/{name}")
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+
+        for hmm in hmms:
+            buf = io.BytesIO()
+            hmm.write(buf)
+            add(f"{hmm.name}.hmm", buf.getvalue())
+        add("eukaryote.hal", "".join(f"{hmm.name}.hmm\n" for hmm in hmms).encode())
+
+
+def _pressed_profile_count(hmm: Path) -> int:
+    with pyhmmer.plan7.HMMFile(str(hmm)) as hf:
+        return len(hf.optimized_profiles())
+
+
+@needs_rrefam
+class TestDownloadPfam:
+    def test_decompresses_presses_and_records(self, tmp_path):
+        """The fetched .gz is decompressed to Pfam-A.hmm and removed, the HMMs
+        are pressed, and the manifest entry hashes the decompressed file."""
+        with patch.object(dbfetch, "_download_file", side_effect=_serve_gzipped_rrefam):
+            entry = dbfetch.download_pfam(tmp_path)
+
+        hmm = tmp_path / "Pfam-A.hmm"
+        assert hmm.read_bytes() == RREFAM.read_bytes()
+        assert not (tmp_path / "Pfam-A.hmm.gz").exists()
+        assert entry.md5 == md5_file(hmm)
+        assert _pressed_profile_count(hmm) == 10
+
+    def test_refetch_presses_over_earlier_pressed_files(self, tmp_path):
+        """A second fetch (db-fetch --force) presses again over the .h3* files of
+        the first; HMMFile used to read the old .h3m while hmmpress truncated it
+        ("failed to read mat[...]"), leaving the pressed files empty."""
+        with patch.object(dbfetch, "_download_file", side_effect=_serve_gzipped_rrefam):
+            dbfetch.download_pfam(tmp_path)
+            dbfetch.download_pfam(tmp_path)
+
+        assert _pressed_profile_count(tmp_path / "Pfam-A.hmm") == 10
+
+
+def _fetch_pfam(db_dir: Path) -> list[str]:
+    """fetch_databases(["pfam"]) with RREFam served; the URLs downloaded."""
+    urls: list[str] = []
+
+    def serve(url, dest):
+        urls.append(url)
+        _serve_gzipped_rrefam(url, dest)
+
+    with patch.object(dbfetch, "_download_file", side_effect=serve):
+        dbfetch.fetch_databases(db_dir, databases=["pfam"])
+    return urls
+
+
+def _profiles_func_annot_loads(hmm: Path) -> int:
+    with _open_hmm_db(hmm) as profiles:
+        return len(profiles)
+
+
+@needs_rrefam
+class TestPressedFilesTracked:
+    """func-annot reads a pressed database from the .h3* files; with an empty
+    .h3f beside an intact .hmm it loads no profiles at all."""
+
+    def test_damaged_press_is_fetched_again(self, tmp_path):
+        assert _fetch_pfam(tmp_path) == [DATABASES["pfam"].url]
+        (tmp_path / "Pfam-A.hmm.h3f").write_bytes(b"")
+        assert _profiles_func_annot_loads(tmp_path / "Pfam-A.hmm") == 0
+
+        pfam = {name: (msg, ok) for name, msg, ok in check_databases(tmp_path)}["pfam"]
+        assert pfam == ("Pfam-A.hmm pressed files do not match the manifest", False)
+        assert _fetch_pfam(tmp_path) == [DATABASES["pfam"].url]
+        assert _profiles_func_annot_loads(tmp_path / "Pfam-A.hmm") == 10
+        assert _fetch_pfam(tmp_path) == []  # now up to date
+
+    def test_entry_saved_before_press_hashes_is_fetched_again(self, tmp_path):
+        """An entry from a db-fetch that did not hash the pressed files cannot
+        vouch for them, so the database is fetched once more."""
+        _fetch_pfam(tmp_path)
+        manifest = tmp_path / MANIFEST_FILE
+        data = json.loads(manifest.read_text())
+        data["pfam"].pop("pressed_md5", None)
+        manifest.write_text(json.dumps(data))
+
+        assert not is_current(load_db_manifest(tmp_path)["pfam"], tmp_path)
+        assert _fetch_pfam(tmp_path) == [DATABASES["pfam"].url]
+        assert is_current(load_db_manifest(tmp_path)["pfam"], tmp_path)
+
+
+@needs_rrefam
+class TestDownloadKofam:
+    def test_refetch_presses_over_earlier_pressed_files(self, tmp_path):
+        """As for Pfam: a second fetch presses again over the first one's .h3* files."""
+        with patch.object(dbfetch, "_download_file", side_effect=_serve_rrefam_profiles_tarball):
+            dbfetch.download_kofam(tmp_path)
+            dbfetch.download_kofam(tmp_path)
+
+        assert _pressed_profile_count(tmp_path / DATABASES["kofam"].file) == 10
+
+
+class TestKofamExtraction:
+    @pytest.mark.skipif(
+        not hasattr(tarfile, "data_filter"), reason="extraction filters need Python >= 3.11.4",
+    )
+    def test_member_escaping_extract_dir_is_refused(self, tmp_path):
+        """A profiles.tar.gz member named ../escaped.txt must not be written
+        outside the extraction directory."""
+
+        def fake_download(url, dest):
+            data = b"escaped\n"
+            info = tarfile.TarInfo("../escaped.txt")
+            info.size = len(data)
+            with tarfile.open(dest, "w:gz") as tf:
+                tf.addfile(info, io.BytesIO(data))
+
+        with patch.object(dbfetch, "_download_file", side_effect=fake_download):
+            with pytest.raises(tarfile.OutsideDestinationError):
+                dbfetch.download_kofam(tmp_path)
+
+        assert not (tmp_path / "escaped.txt").exists()

@@ -1,7 +1,8 @@
 """Run manifest data model and I/O.
 
 Defines the ``RunManifest`` pydantic model serialized to ``eukan-run.json``
-and the load/save/init/format helpers around it. Pipeline lifecycle (the
+and the load/save/init helpers around it (``eukan status`` renders it, in
+:mod:`eukan.cli.status`). Pipeline lifecycle (the
 context manager that opens/closes a step record) lives in
 :mod:`eukan.infra.steps`; the driver loop that consumes step specs lives
 in :mod:`eukan.infra.pipeline`.
@@ -10,10 +11,17 @@ The manifest enables:
 - Resume: re-run skips completed steps
 - Reproducibility: exact record of what ran and with what versions
 - Diagnostics: ``eukan status`` reads the manifest to report progress
+
+Each pipeline keeps its own run-level record (status, timing, CPUs, tool
+versions, inputs) under ``pipelines``, so pipelines sharing a run dir do not
+overwrite one another's. Version 1 manifests held a single set of run-level
+fields instead; those are still read and kept, never written.
 """
 
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 import threading
 from datetime import UTC, datetime
@@ -21,9 +29,11 @@ from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
+from eukan.infra.health import check_tool
 from eukan.infra.logging import get_logger
+from eukan.infra.tools_registry import load_tools
 
 log = get_logger(__name__)
 
@@ -77,6 +87,8 @@ class StepRecord(BaseModel):
     started_at: str | None = None
     finished_at: str | None = None
     duration_seconds: float | None = None
+    # Relative to the run dir when inside it (see steps.run_dir_relative); older
+    # manifests hold absolute paths, which still resolve.
     output_file: str | None = None
     output_md5: str | None = None
     # Fingerprint of the step's declared *inputs* at the time it last completed.
@@ -87,39 +99,57 @@ class StepRecord(BaseModel):
     error: str | None = None
 
 
-class RunManifest(BaseModel):
-    """Full pipeline run manifest -- serialized to eukan-run.json."""
+class PipelineRecord(BaseModel):
+    """One pipeline's latest run in this run dir.
 
-    version: str = "1"
+    Its driver writes it when the run starts (``running``) and again when it
+    ends (``completed``, or ``failed`` if it raised or was interrupted), with
+    the run's CPUs, the installed tool versions and the inputs the pipeline
+    takes; the inputs it does not take stay ``None``.
+    """
+
     status: str = "running"
     started_at: str = ""
     finished_at: str | None = None
-    genome: str = ""
-    proteins: list[str] = Field(default_factory=list)
-    kingdom: str | None = None
-    genetic_code: str = ""
     num_cpu: int = 1
-    has_transcripts: bool = False
     tool_versions: dict[str, str] = Field(default_factory=dict)
+    genome: Path | None = None
+    proteins: list[Path] | None = None
+    kingdom: str | None = None
+    genetic_code: str | None = None
+    has_transcripts: bool | None = None
+
+
+# The run-level fields of a version 1 manifest, which whichever pipeline created
+# it set once. None in a manifest created since, and then left out of the file.
+_V1_FIELDS = (
+    "status", "started_at", "finished_at", "genome", "proteins", "kingdom",
+    "genetic_code", "num_cpu", "has_transcripts", "tool_versions",
+)
+
+
+class RunManifest(BaseModel):
+    """Full pipeline run manifest -- serialized to eukan-run.json."""
+
+    version: str = "2"
+    # Version 1 run-level fields (see _V1_FIELDS): read from older manifests
+    # (eukan status, prep-submission's genome discovery) and kept, never written.
+    status: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    genome: str | None = None
+    proteins: list[str] | None = None
+    kingdom: str | None = None
+    genetic_code: str | None = None
+    num_cpu: int | None = None
+    has_transcripts: bool | None = None
+    tool_versions: dict[str, str] | None = None
+    # Keyed by PipelineName.
+    pipelines: dict[str, PipelineRecord] = Field(default_factory=dict)
     steps: dict[str, StepRecord] = Field(default_factory=dict)
-
-    def pipeline_status(self, prefix: str) -> str:
-        """Get the aggregate status for a pipeline (assembly, annotation, functional).
-
-        Returns 'completed' if all steps with the prefix are completed,
-        'running' if any are running, 'failed' if any failed, else 'pending'.
-        """
-        pipeline_steps = {k: v for k, v in self.steps.items() if k.startswith(prefix + "/")}
-        if not pipeline_steps:
-            return "pending"
-        statuses = {r.status for r in pipeline_steps.values()}
-        if StepStatus.failed in statuses:
-            return "failed"
-        if StepStatus.running in statuses:
-            return "running"
-        if all(s == StepStatus.completed for s in statuses):
-            return "completed"
-        return "running"
+    # This copy as last loaded or saved; save_manifest writes only what changed
+    # since, so copies saving to one run dir keep each other's changes.
+    _synced: dict[str, Any] = PrivateAttr(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -133,37 +163,40 @@ def load_manifest(work_dir: Path) -> RunManifest | None:
     if not path.exists():
         return None
     try:
-        return RunManifest.model_validate_json(path.read_text())
+        manifest = RunManifest.model_validate_json(path.read_text())
     except (ValueError, KeyError, OSError) as exc:
         log.warning("Corrupt manifest at %s (%s), ignoring", path, exc)
         return None
+    manifest._synced = manifest.model_dump(mode="json")
+    return manifest
 
 
 _manifest_lock = threading.Lock()
 
 
 def save_manifest(work_dir: Path, manifest: RunManifest) -> None:
-    """Save the run manifest to disk atomically.
+    """Save the run manifest to disk atomically, merged with the one there.
 
-    Writes to a temp file first, then renames -- prevents corruption
-    if the process crashes mid-write.  Thread-safe within a process via
-    ``_manifest_lock``; cross-process safe via an fcntl lock on the
-    target path so two simultaneous ``eukan`` invocations against the
-    same work_dir don't tear writes.
+    Several ``eukan`` invocations, and annotation's concurrent steps, save to
+    one eukan-run.json. Under the lock the file on disk is re-read, and only
+    what this copy changed since it was last loaded or saved (step records,
+    pipeline records, top-level fields) is written over it, so a writer keeps
+    the records others saved meanwhile. Writes to a temp file first, then
+    renames -- prevents corruption if the process crashes mid-write. Thread-safe within a
+    process via ``_manifest_lock``; cross-process safe via an fcntl lock on the
+    target path so two simultaneous ``eukan`` invocations against the same
+    work_dir don't tear writes.
 
     The fcntl import is local because Windows ships without it; on
     Windows we fall back to in-process locking only.
     """
-    payload = manifest.model_dump_json(indent=2) + "\n"
     target = work_dir / MANIFEST_FILE
-    tmp = target.with_suffix(".tmp")
 
     with _manifest_lock:
         try:
-            import fcntl
+            import fcntl  # lazy: absent on Windows, which falls back below
         except ImportError:
-            tmp.write_text(payload)
-            tmp.replace(target)
+            _write_merged(work_dir, manifest)
             return
 
         # Lock a sidecar file (target itself may not exist yet, and we
@@ -172,53 +205,43 @@ def save_manifest(work_dir: Path, manifest: RunManifest) -> None:
         with open(lock_path, "w") as lock_fh:
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
             try:
-                tmp.write_text(payload)
-                tmp.replace(target)
+                _write_merged(work_dir, manifest)
             finally:
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
 
-def init_manifest(config: Any) -> RunManifest:
-    """Create a new manifest from a pipeline config, snapshotting tool versions.
-
-    Defensive against partial configs: only ``PipelineConfig`` carries
-    every field below. ``AssemblyConfig`` / ``RepeatsConfig`` /
-    ``FunctionalConfig`` populate what they have and leave the rest at
-    their defaults — so whichever pipeline runs first in a clean
-    work_dir gets a coherent (if sparse) record. Subsequent pipelines
-    sharing the manifest are free to add their step records.
-    """
-    kingdom = getattr(config, "kingdom", None)
-    proteins = getattr(config, "proteins", None) or []
-    # Normalize scalar paths (FunctionalConfig has a single `proteins: Path`,
-    # PipelineConfig has `list[Path]`).
-    if isinstance(proteins, (str, Path)):
-        proteins = [proteins]
-    return RunManifest(
-        started_at=_now(),
-        genome=str(getattr(config, "genome", "")),
-        proteins=[str(p) for p in proteins],
-        kingdom=kingdom.value if kingdom else None,
-        genetic_code=getattr(config, "genetic_code", "") or "",
-        num_cpu=getattr(config, "num_cpu", 1),
-        has_transcripts=bool(getattr(config, "has_transcripts", False)),
-        tool_versions=_snapshot_tool_versions(),
-    )
+def _write_merged(work_dir: Path, manifest: RunManifest) -> None:
+    """Write *manifest*'s changes since it was last synced over the manifest in
+    *work_dir* (temp file, then rename). Caller holds the locks."""
+    mine = manifest.model_dump(mode="json")
+    on_disk = load_manifest(work_dir)
+    merged = mine
+    if on_disk is not None:
+        merged = on_disk.model_dump(mode="json")
+        synced = manifest._synced
+        for field, value in mine.items():
+            if field not in ("pipelines", "steps") and value != synced.get(field):
+                merged[field] = value
+        for section in ("pipelines", "steps"):
+            for key, record in mine[section].items():
+                if record != synced.get(section, {}).get(key):
+                    merged[section][key] = record
+    final = RunManifest.model_validate(merged)
+    unset_v1 = {field for field in _V1_FIELDS if getattr(final, field) is None}
+    target = work_dir / MANIFEST_FILE
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(final.model_dump_json(indent=2, exclude=unset_v1) + "\n")
+    tmp.replace(target)
+    manifest._synced = mine
 
 
-def get_or_create_manifest(work_dir: Path, config: Any = None) -> RunManifest:
+def get_or_create_manifest(work_dir: Path) -> RunManifest:
     """Load existing manifest or create a fresh one.
 
-    This is the preferred entry point for all pipelines.  A single
-    eukan-run.json is shared across assembly, annotation, and functional
-    pipelines running from the same work directory.
+    A single eukan-run.json is shared across the pipelines running from the
+    same run dir; each driver opens it through ``infra.pipeline.pipeline_run``.
     """
-    manifest = load_manifest(work_dir)
-    if manifest:
-        return manifest
-    if config is not None:
-        return init_manifest(config)
-    return RunManifest(started_at=_now(), tool_versions=_snapshot_tool_versions())
+    return load_manifest(work_dir) or RunManifest()
 
 
 # ---------------------------------------------------------------------------
@@ -226,29 +249,24 @@ def get_or_create_manifest(work_dir: Path, config: Any = None) -> RunManifest:
 # ---------------------------------------------------------------------------
 
 
-_CONDA_TOOLS = ["samtools", "augustus", "star", "hmmer", "spaln", "snap"]
-
-
 def _tool_versions_cache_path() -> Path:
     """Per-user cache file for the conda tool-version snapshot."""
-    import os
-
     base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
     return Path(base) / "eukan" / "tool-versions.json"
 
 
 def _snapshot_tool_versions() -> dict[str, str]:
-    """Capture version strings for key tools via conda. Best-effort, never fails.
+    """Capture the version of every conda package in tools.toml. Best-effort, never fails.
+
+    From ``conda list``, or where there is no ``conda`` from each tool's
+    ``eukan check`` version probe (:func:`_probe_tool_versions`).
 
     Cached in ``$XDG_CACHE_HOME/eukan/tool-versions.json`` (or
-    ``~/.cache/eukan/tool-versions.json``) keyed by ``CONDA_PREFIX`` and
-    its mtime — re-running ``conda list`` on every fresh manifest costs
-    hundreds of milliseconds, and the result only changes when packages
-    are installed or upgraded.
+    ``~/.cache/eukan/tool-versions.json``) keyed by ``CONDA_PREFIX``, its
+    mtime and the package list — re-running ``conda list`` on every fresh
+    manifest costs hundreds of milliseconds, and the result only changes
+    when packages are installed or upgraded.
     """
-    import json
-    import os
-
     prefix = os.environ.get("CONDA_PREFIX", "")
     if not prefix:
         return {}
@@ -258,31 +276,36 @@ def _snapshot_tool_versions() -> dict[str, str]:
     except OSError:
         prefix_mtime = 0.0
 
+    packages = sorted({t.conda_package for t in load_tools() if t.conda_package})
+    key = {"prefix": prefix, "mtime": prefix_mtime, "packages": packages}
     cache_path = _tool_versions_cache_path()
     if cache_path.exists():
         try:
             cached = json.loads(cache_path.read_text())
-            if cached.get("prefix") == prefix and cached.get("mtime") == prefix_mtime:
+            if all(cached.get(k) == v for k, v in key.items()):
                 return dict(cached.get("versions") or {})
         except (OSError, ValueError):
             pass
 
-    versions = _query_conda_versions(prefix)
+    versions = _query_conda_versions(prefix, packages)
+    if versions is None:
+        versions = _probe_tool_versions()
 
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(
-            {"prefix": prefix, "mtime": prefix_mtime, "versions": versions},
-            indent=2,
-        ))
+        cache_path.write_text(json.dumps({**key, "versions": versions}, indent=2))
     except OSError:
         pass  # caching is best-effort
 
     return versions
 
 
-def _query_conda_versions(prefix: str) -> dict[str, str]:
-    """Run ``conda list`` once and parse version strings for known tools."""
+def _query_conda_versions(prefix: str, packages: list[str]) -> dict[str, str] | None:
+    """Run ``conda list`` once and parse the version of each of *packages*.
+
+    None when there is no ``conda`` to run (the Docker image ships the env
+    without it).
+    """
     try:
         result = subprocess.run(
             ["conda", "list", "-p", prefix, "--no-pip"],
@@ -290,6 +313,8 @@ def _query_conda_versions(prefix: str) -> dict[str, str]:
         )
         if result.returncode != 0:
             return {}
+    except FileNotFoundError:
+        return None
     except Exception:
         return {}
 
@@ -298,69 +323,25 @@ def _query_conda_versions(prefix: str) -> dict[str, str]:
         if line.startswith("#"):
             continue
         parts = line.split()
-        if len(parts) >= 2 and parts[0] in _CONDA_TOOLS:
+        if len(parts) >= 2 and parts[0] in packages:
             versions[parts[0]] = parts[1]
     return versions
 
 
-# ---------------------------------------------------------------------------
-# Status formatting
-# ---------------------------------------------------------------------------
+def _probe_tool_versions() -> dict[str, str]:
+    """Each conda-packaged tool's ``eukan check`` version line, keyed by its package.
 
-
-_STATUS_ICONS = {
-    StepStatus.completed: "\u2713",
-    StepStatus.running: "\u25b6",
-    StepStatus.failed: "\u2717",
-    StepStatus.pending: "\u00b7",
-    StepStatus.skipped: "-",
-}
-
-
-def format_status(manifest: RunManifest) -> str:
-    """Format the manifest as a human-readable status report."""
-    lines = [
-        f"Run: {manifest.status}",
-        f"Started: {manifest.started_at}",
-    ]
-    if manifest.finished_at:
-        lines.append(f"Finished: {manifest.finished_at}")
-    lines += [
-        f"Genome: {manifest.genome}",
-        f"Kingdom: {manifest.kingdom or 'not set'}",
-        f"CPUs: {manifest.num_cpu}",
-        "",
-    ]
-
-    if manifest.tool_versions:
-        lines.append("Tool versions:")
-        for tool, ver in manifest.tool_versions.items():
-            lines.append(f"  {tool:<20s} {ver}")
-        lines.append("")
-
-    # Per-pipeline summary above the step detail.
-    pipeline_summaries = [
-        (p, manifest.pipeline_status(p.value)) for p in PipelineName
-    ]
-    if any(status != "pending" for _, status in pipeline_summaries):
-        lines.append("Pipelines:")
-        for pipeline, status in pipeline_summaries:
-            if status == "pending":
-                continue
-            lines.append(f"  {pipeline.value:<12s} {status}")
-        lines.append("")
-
-    lines.append("Steps:")
-    for step_name, record in manifest.steps.items():
-        icon = _STATUS_ICONS.get(record.status, "?")
-        duration = f" ({record.duration_seconds}s)" if record.duration_seconds else ""
-        lines.append(f"  {icon} {step_name:<25s} {record.status.value}{duration}")
-        if record.error:
-            lines.append(f"    error: {record.error[:200]}")
-        if record.output_md5:
-            lines.append(f"    output: {record.output_file} (md5:{record.output_md5[:12]}...)")
-
-    return "\n".join(lines)
+    For a conda env without ``conda`` (the Docker image), where ``conda list``
+    cannot run. A banner such as ``samtools 1.24`` rather than a bare version;
+    tools whose probe fails are left out.
+    """
+    versions: dict[str, str] = {}
+    for tool in load_tools():
+        if tool.conda_package:
+            result = check_tool(tool)
+            if result.version_ok:
+                versions[tool.conda_package] = result.version_output
+    return versions
 
 
 # ---------------------------------------------------------------------------

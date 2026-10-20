@@ -1,10 +1,8 @@
 """Tests for GeneMark source-column homogenization.
 
-GeneMark stamps column 2 of its GFF3 as ``GeneMark.hmm3`` (version-dependent),
-while the consensus weights map uses the token ``genemark`` — the consensus
-engine matches weights by source token, so without normalization the predictions
-would be silently weighted zero. ``_genemark_homogenize_source`` rewrites the
-source regardless of GeneMark's value.
+GeneMark stamps column 2 of its GFF3 as ``GeneMark.hmm3`` (version-dependent);
+``_genemark_homogenize_source`` rewrites it to ``genemark`` regardless of
+GeneMark's value, so genemark.gff3 does not change with the GeneMark release.
 """
 
 from __future__ import annotations

@@ -47,7 +47,7 @@ docker build -t eukan -f docker/Dockerfile .
 
 ### CLI (`eukan/cli/`)
 
-Click-based CLI package with subcommands: `annotate`, `assemble`, `mask-repeats`, `func-annot`, `prep-submission`, `gff3toseq`, `db-fetch`, `check`, `status`, `compare`. One file per subcommand under `eukan/cli/`; shared infrastructure (option-group rendering, `numcpu_option`, `genome_option`, error formatting) lives in `eukan/cli/_framework.py`. Entry point defined in `pyproject.toml` as `eukan = "eukan.cli:cli"`. All subcommands use harmonized option groups ("Required input", "Pipeline parameters", "Re-run steps"). Step re-run flags follow the `--run-*` pattern (e.g., `--run-genemark`, `--run-star`).
+Click-based CLI package with subcommands: `annotate`, `assemble`, `mask-repeats`, `func-annot`, `prep-submission`, `gff3toseq`, `db-fetch`, `check`, `status`, `compare`. One file per subcommand under `eukan/cli/`; shared infrastructure (option-group rendering, `numcpu_option`, `genome_option`, error formatting) lives in `eukan/cli/_framework.py`. Entry point defined in `pyproject.toml` as `eukan = "eukan.cli:cli"`. All subcommands use harmonized option groups ("Required input", "Pipeline parameters", "Re-run steps"). Step re-run flags follow the `--run-*` pattern (e.g., `--run-genemark`, `--run-minimap2`).
 
 ### Package Structure
 
@@ -70,19 +70,21 @@ eukan/
 ├── exceptions.py       # ConfigurationError and friends
 │
 ├── infra/              # Runtime infrastructure (cross-pipeline)
-│   ├── runner.py       # run_cmd(), run_piped(), run_parallel() — subprocess execution
+│   ├── runner.py       # run_cmd(), run_piped(), terminate_all_children() — subprocess execution (process-group signalling)
 │   ├── concurrency.py  # parallel_map() and friends
-│   ├── manifest.py     # RunManifest, pipeline_step() — run tracking and reproducibility
-│   ├── steps.py        # step_dir(), step_complete(), validate_or_raise() — step dir mgmt
+│   ├── manifest.py     # RunManifest, get_or_create_manifest()/load_manifest()/save_manifest() — run tracking and reproducibility
+│   ├── steps.py        # step_dir(), pipeline_step(), is_step_complete(), fingerprint_inputs(), clean_interrupted_step() — step dir mgmt + resume checks
 │   ├── pipeline.py     # StepSpec + run_simple_pipeline() / run_orchestrated_step() driver
 │   ├── layout.py       # PIPELINE_SUBDIRS, step_work_dir(), sibling_step_dir() — per-step run dir layout
 │   ├── artifacts.py    # Artifact enum + find() — cross-pipeline artifact registry
-│   ├── logging.py      # get_logger(), setup_logging(), md5_file()
+│   ├── logging.py      # get_logger(), setup_logging()
 │   ├── genome.py       # ContigIndex, FASTA helpers
 │   ├── genetic_code.py # Genetic code table abstractions
 │   ├── health.py       # Tool/database probes for `eukan check`
 │   ├── tools_registry.py # Tool metadata loaded from data/tools.toml
-│   ├── conda_env.py    # Conda env var setup at CLI startup
+│   ├── combinr.py      # combinr_bin(), run_combinr() — the combinr binary shared by assemble + annotate (version gate >= 0.3.0)
+│   ├── databases.py    # Reference-database registry (names, URLs, filenames, HOMOLOGY_DBS) + database manifest/integrity check
+│   ├── utils.py        # Shared utility functions: md5_file(), symlink(), package_resource(), concat_files()
 │   └── environ.py      # Env var helpers
 │
 ├── gff/                # GFF3 format operations
@@ -91,6 +93,9 @@ eukan/
 │   ├── intervals.py    # Lower-level interval primitives
 │   ├── hierarchy.py    # gene>mRNA>CDS hierarchy fixers, prettify_gff3()
 │   ├── normalize.py    # GFF3 cleanup before downstream tools (e.g., table2asn)
+│   ├── db.py           # create_gff_db(), create_gff_db_from_features(), transform_db() — the gffutils builders (re-exported by eukan.gff)
+│   ├── rows.py         # iter_gff3_rows(), parse_attrs() — stdlib line-level GFF3/GTF reading
+│   ├── transcripts.py  # Transcript record + read/write/split_at/stitch/stream_cut (shared by the assembly cut steps)
 │   └── io.py           # featuredb2gff3_file(), count_gff3_features(), iter_assembled_sequences()
 │
 ├── annotation/         # Genome annotation pipeline
@@ -102,20 +107,20 @@ eukan/
 │   ├── augustus.py     # AUGUSTUS training and prediction
 │   ├── training.py     # Training-set construction shared across predictors
 │   ├── snap.py         # SNAP and CodingQuarry gene prediction
-│   ├── evidence.py     # Evidence-source role mapping + weights helpers for the consensus engine
-│   ├── combinr_consensus.py # Consensus engine: external `combinr consensus` (weighted DP; folds in UTRs + alt isoforms)
-│   └── consensus.py    # Final model building: combinr consensus + ORF patch + prettification
+│   ├── combinr_consensus.py # Consensus engine: evidence roles/weights + external `combinr consensus` (weighted DP; folds in UTRs + alt isoforms)
+│   └── consensus.py    # Final model building: combinr consensus + opt-in ORF patch (--orf-patch supported|all) + prettification
 │
 ├── assembly/           # Transcriptome assembly pipeline
-│   ├── pipeline.py     # run_assembly() dispatch (StepSpec-driven); _DOWNSTREAM cascade
-│   ├── star.py         # STAR read mapping + STARlong spliced transcript→genome mapping (map_transcripts)
-│   ├── segemehl.py     # segemehl read/transcript mapping (fallback + non-canonical primary); _TRANSCRIPT_SETS
+│   ├── pipeline.py     # run_assembly(): STEPS tuple + _DOWNSTREAM cascade via force_steps_from_run_flags(downstream=)
+│   ├── minimap2.py     # minimap2 read/transcript mapping — the single aligner for the assembly pipeline
+│   ├── bam_utils.py    # Shared BAM helpers (quickcheck, unmapped FASTA, FASTA record count)
+│   ├── bam_reads.py    # Per-read BAM primitives: primary filter, soft-clip extraction, intron walk, dinucleotides
 │   ├── align_hints.py  # RNA-seq intron/coverage hint emission from the read BAM
-│   ├── bam_diagnostic.py # Post-STAR soft-clip + intron BAM walk → trans-splicing / non-canonical-splice verdict
-│   ├── bam_introns.py  # Max-intron-bounded BAM filtering primitive
+│   ├── bam_diagnostic.py # Post-mapping soft-clip + intron BAM walk → trans-splicing / non-canonical-splice verdict
 │   ├── trinity.py      # Trinity genome-guided + de novo assembly (the active assembler, both modes)
-│   ├── tracks.py       # Single source of truth for the mapped Trinity track stems + per-track filenames
-│   ├── jaccard.py      # In-house jaccard fusion-clip (replaces Trinity --jaccard_clip; STAR-based, tunable)
+│   ├── tracks.py       # Single source of truth: TRANSCRIPT_SETS + every per-track filename/suffix
+│   ├── jaccard.py      # In-house jaccard fusion-clip (replaces Trinity --jaccard_clip; minimap2-based, tunable)
+│   ├── diamond.py      # One `diamond blastx` helper (DB build + run) shared by strand_correction and defuse
 │   ├── strand_correction.py # Homology-calibrated per-transcript splice-strand flip (diamond blastx, opt-in --uniprot)
 │   ├── defuse.py       # Homology-grounded chimera splitting (opt-in --defuse + --uniprot)
 │   ├── max_intron.py   # Strand-agnostic max-intron split of transcript models (SL-independent; runs before sl_cut)
@@ -123,8 +128,6 @@ eukan/
 │   ├── sl_cut.py       # Genomic SL cut of transcript models at trans-splice acceptors → {stem}.cut.gff3
 │   ├── polya.py        # Poly-A characterization + unmapped de-novo transcript output
 │   ├── combinr.py      # combinr-assemble consolidation → nr_transcripts.{fasta,gff3} + hints_rnaseq.gff
-│   ├── rnaspades.py    # DORMANT: rnaSPAdes de novo (kept, unwired — Trinity replaced it)
-│   ├── stringtie.py    # DORMANT: StringTie genome-guided (kept, unwired — Trinity replaced it)
 │   └── sl_depletion.py # SL-motif primitives (FASTA depletion path retired for the genomic SL cut)
 │
 ├── repeats/            # Repeat masking pipeline
@@ -136,7 +139,7 @@ eukan/
 │   ├── pipeline.py     # run_functional_annotation() — branches on homology_db
 │   ├── search.py       # pyhmmer phmmer/hmmscan + UniProt/KOfam/Pfam GFF3/FASTA emitters
 │   ├── kofam.py        # KOfam (KofamKOALA-style): ko_list parsing, EC extraction, per-KO threshold scoring
-│   └── dbfetch.py      # UniProt/KOfam/Pfam database download and integrity tracking
+│   └── dbfetch.py      # UniProt/KOfam/Pfam downloaders (registry + manifest live in infra/databases.py)
 │
 ├── submission/         # NCBI submission prep
 │   ├── pipeline.py     # table2asn wrapper (eukan prep-submission)
@@ -159,11 +162,11 @@ eukan/
 3. Protein alignment via spaln (intron-rich) or gth (intron-poor)
    - Default: fitild intron length distribution → spaln `-yI`
    - `--spsp`: species-specific parameters via `make_eij.pl`/`make_ssp.pl` → spaln `-T` (experimental, uses separate `prot_align_ssp/` step dir)
-4. AUGUSTUS training and prediction using protein + RNA-seq hints — auto-allows non-canonical splice sites from STAR evidence (`splice_site_summary.json`); `--splice-permissive` lowers thresholds
-5. SNAP training and prediction (fungus/protist also runs CodingQuarry)
-6. Consensus model building, weighted by evidence type, via the external `combinr consensus` engine (weighted DP), genetic-code aware, which folds UTRs and alternative isoforms in from transcript evidence in a single pass. Protein (`prot.gff3`, CDS-format) and transcript (`nr_transcripts.gff3`, flat exon) evidence are converted to `Target=` match chains; ab initio predictions and the weights file are reused as-is. Isoform-grouping stringency is tunable via `--combinr-stringent-overlap`; the binary is resolved via `--combinr-path` or PATH.
-7. Final GFF3 formatting with locus tags
-8. Optional functional annotation via `func-annot` (UniProt-or-KOfam plus Pfam, selected by `--homology-db`) → `final.mod.gff3`. KOfam mode is an adaptation of KofamKOALA: per-KO bit-score thresholds from `ko_list`, full vs domain score selection per KO, EC numbers parsed out of `[EC:…]` tags into a dedicated `ec_number=` GFF3 attribute, KEGG accessions emitted as `Dbxref=KEGG:K…`
+4. AUGUSTUS training and prediction using protein + RNA-seq hints — auto-allows non-canonical splice sites from RNA-seq junction evidence (`splice_site_summary.json`, derived from the minimap2 read alignments; >= 10 junctions, >= 50 unique reads, >= 1% of all junctions); `--splice-permissive` drops the 1% share gate, keeping the floors
+5. SNAP training and prediction, plus CodingQuarry for fungi (and for protists in protein-only runs); with transcripts, non-fungal kingdoms skip SNAP and CodingQuarry
+6. Consensus model building, weighted by evidence type, via the external `combinr consensus` engine (weighted DP), genetic-code aware, which folds UTRs and alternative isoforms in from transcript evidence in a single pass. Protein (`prot.gff3`, CDS-format) and transcript (`nr_transcripts.gff3`, flat exon) evidence are converted to `Target=` match chains; ab initio predictions and the weights file are reused as-is. Isoform-grouping stringency is tunable via `--combinr-stringent-overlap`; the binary is resolved via `--combinr-path` or PATH. Every run also writes `combinr.evidence_report.txt` next to `consensus_models.gff3` in the `consensus_models/` step dir: per gene, the evidence supporting each exon and intron, EVM `.evm.out` style, keyed by combinr's gene IDs (not cross-referenceable by ID from `final.gff3`, whose genes get locus tags).
+7. Optional transcript-ORF patch, then final GFF3 formatting with locus tags. With `--orf-patch supported|all` (off when not given) the ORFs from step 1 that overlap no consensus gene on either strand are added: `all` adds every one, `supported` only those whose CDS span overlaps a CDS row of the protein alignment (`prot.gff3`) on the same strand. Column 2 of `final.gff3` is `eukan`, except `eukan-orf-patch` on the patched genes' rows; patched mRNAs carry `support=transcript_orf` (combinr's carry `support=consensus`). `orf_patch` is one of the consensus step's resume scalars, and `orf_finder/transcript_orfs.gff3` is a consensus input only while the patch is on
+8. Optional functional annotation via `func-annot` (UniProt-or-KOfam plus Pfam, selected by `--homology-db`) → `final.mod.gff3`, with the annotated protein FASTA (`<stem>.mod.<ext>`) and the search cache (`<stem>.{phmmer,kofam}.search.json`) beside it under `func-annot/`. KOfam mode is an adaptation of KofamKOALA: per-KO bit-score thresholds from `ko_list`, full vs domain score selection per KO, EC numbers parsed out of `[EC:…]` tags into a dedicated `ec_number=` GFF3 attribute, KEGG accessions emitted as `Dbxref=KEGG:K…`
 9. Optional `prep-submission` runs NCBI's table2asn validator over `final.mod.gff3` to produce a `.sqn` plus `.val/.dr/.stats` reports for iterative GFF3 refinement
 
 ### Per-step Run Directory Layout
@@ -189,27 +192,31 @@ When adding a new cross-pipeline file, register it in both `Artifact` and `_PROD
 
 ### Run Manifest
 
-All pipelines share a single `eukan-run.json` per run dir. Step names are prefixed by pipeline (`annotation/genemark`, `assembly/star`, `functional/search`, `repeats/modeler`, `submission/table2asn`). The manifest tracks per-step status, timing, and output checksums for resume and integrity checking. Key functions: `get_or_create_manifest()`, `pipeline_step()`, `is_step_complete()` in `infra/manifest.py`. Each config has a `manifest_dir` field (defaults to `work_dir`) controlling where the manifest is written.
+All pipelines share a single `eukan-run.json` per run dir. Step names are prefixed by pipeline (`annotation/genemark`, `assembly/minimap2`, `functional/search`, `repeats/modeler`); `prep-submission` writes no manifest. The file is schema version 2: a `pipelines` map holds one record per pipeline (status, timings, tool versions and that pipeline's inputs), written by each driver at start and end; version-1 files still load and resume. Paths in the manifest are relative to the run dir, so a moved run dir still resumes; concurrent saves merge on disk under a lock. The manifest tracks per-step status, timing, and output checksums for resume and integrity checking. Key functions: `get_or_create_manifest()` in `infra/manifest.py`; `pipeline_step()` and `is_step_complete()` in `infra/steps.py`. Each config has a `manifest_dir` field (defaults to `work_dir`) controlling where the manifest is written.
 
 ### Pipeline Driver
 
 `infra/pipeline.py` provides two entry points:
 
-- `run_simple_pipeline(steps: list[StepSpec], …)` — linear case used by `assemble` and `mask-repeats`. Each `StepSpec` declares name, function, output filename, and re-run flag display string.
-- `run_orchestrated_step(work_dir, manifest, step_key, fn, *args, …)` — lower-level primitive used directly by the annotation and functional pipelines, whose execution graph isn't a straight line (annotation has fan-out phases, functional caches JSON between steps).
+- `run_simple_pipeline(steps: list[StepSpec], …)` — linear case used by `assemble`. Each `StepSpec` declares name, function, output filename, re-run flag display string, and its `inputs`/`scalars` resolvers (files and config values the step reads, fingerprinted for resume) plus `clears` (sibling outputs removed with it on re-run).
+- `run_orchestrated_step(work_dir, manifest, step_key, fn, *args, …)` — lower-level primitive used directly by the annotation, repeats and functional pipelines (annotation has fan-out phases; functional's search step declares its one hits-cache JSON as its output).
+
+Resume rules are uniform: a completed step is reused only while its recorded input fingerprint still matches (output-less steps too); a forced step, or one whose inputs changed, re-runs from scratch — its output, `clears` files and step dir are removed first.
 
 Both wrap step-dir setup, manifest updates, and force/skip logic so that step-level resume and integrity checking are uniform across pipelines.
 
 ### Conventions
 
-- GFF3 manipulations chain through `gffutils.create_db(':memory:', transform=fn)` passes
+- GFF3 manipulations chain through `create_gff_db(..., transform=fn)` / `transform_db()` from `gff/db.py` (in-memory gffutils DBs); the stdlib row reader `gff/rows.py` and transcript model `gff/transcripts.py` are for code that needs a few columns, not a DB
+- CLI precedence is flag > `EUKAN_*` environment variable > default: only options given on the command line are forwarded to the config, so an env var fills any option left off
+- Configs do no discovery, read no files and create no directories at construction; the CLI commands call `config.discover()` to locate prior pipeline outputs, each driver calls `config.ensure_dirs()` first, and unknown keyword arguments are rejected
 - External commands use `run_cmd(["cmd", "arg"], cwd=step_dir)` — never shell strings
 - `--kingdom` flag (fungus/protist/animal/plant) controls which predictors run
 - All pipeline state is in a pydantic-settings config (`PipelineConfig`, `AssemblyConfig`, etc.) — no mutable class state
 - Each pipeline package follows the same shape: `pipeline.py` (driver) + one file per tool
 - Per-step output isolation: every subcommand writes under its own `<cwd>/<step-subdir>/`. Don't write into `cwd` directly — use `step_work_dir(step)` from `infra/layout.py`
 - Cross-pipeline files go through `Artifact` + `find()` rather than hardcoded paths
-- CLI option groups are harmonized across subcommands: "Required input", "Pipeline parameters", "Re-run steps". Step re-run flags follow the `--run-*` pattern (e.g., `--run-genemark`, `--run-star`). See "CLI conventions" below for the full canonical layout.
+- CLI option groups are harmonized across subcommands: "Required input", "Pipeline parameters", "Re-run steps". Step re-run flags follow the `--run-*` pattern (e.g., `--run-genemark`, `--run-minimap2`). See "CLI conventions" below for the full canonical layout.
 - Prediction-count logging: every per-tool step that emits a GFF3 calls `_log_prediction_count("Tool", path)` (annotation pipeline) or `count_gff3_features()` so the user sees gene counts at each phase
 - 3-way concordance (`gff/concordance.extract_supported_models`) emits per-source counts at INFO and a WARNING when concordance falls below `WEAK_CONCORDANCE_THRESHOLD` (250 gene models) — used by both AUGUSTUS and SNAP training-set construction
 
@@ -228,13 +235,13 @@ Authoritative reference for shared flag spellings and option-group layout. New s
 | `-f` | `--force` | **Reserved.** Use `force_option` (or `force_option(help_text=...)` for custom wording). |
 | `-c` | `--code` | NCBI genetic code. Use `code_option(default=N)` from `_framework.py`. |
 | `-o` | `--output-file` / `--output-dir` | Output destination — pick `-file` for a path, `-dir` for a directory. Never bare `--output`. |
-| `-d` | directory option | `--db-dir`, `--work-dir`, `--output-dir`. |
+| `-d` | directory option | `--work-dir` (status), `--output-dir` (prep-submission). Standing exception: `--database` in db-fetch (a database name, not a directory). check's `--db-dir` has no short flag. |
 | `-k` | `--kingdom` | annotate only. |
 | `-l` / `-r` / `-s` | `--left` / `--right` / `--single` | assemble paired/single reads. |
 | `-r` | `--reference` (compare), `--rnaseq-hints` (annotate) | Different commands, no real collision. |
 | `-e` | `--evalue` | func-annot. |
 | `-w` | `--weights` | annotate. |
-| `-t` | `--template` (prep-submission), `--align-mode` (assemble) | Different commands. |
+| `-t` | `--template` | prep-submission. |
 
 **Option groups**, in display order:
 
@@ -249,7 +256,7 @@ Authoritative reference for shared flag spellings and option-group layout. New s
 **Shared helpers** (`eukan/cli/_framework.py`): always use these instead of redefining inline.
 
 - `genome_option(help_text=...)` — required `--genome/-g`.
-- `numcpu_option` — `--numcpu/-n` with `cpu_count()` default.
+- `numcpu_option` — `--numcpu/-n` defaulting to the CPUs the process may run on (`available_cpus()`).
 - `force_option` or `force_option(help_text="…")` — `--force/-f` flag.
 - `code_option(default=N)` — `--code/-c` int with command-specific default.
 

@@ -23,7 +23,6 @@ MODULES = [
     "eukan.cli",
     "eukan.settings",
     "eukan.infra.health",
-    "eukan.infra.conda_env",
     "eukan.annotation.orf",
     "eukan.infra",
     "eukan.infra.runner",
@@ -90,6 +89,19 @@ def test_cli_short_help():
     """eukan -h should work (not just --help)."""
     result = subprocess.run(["eukan", "-h"], capture_output=True, text=True)
     assert result.returncode == 0
+
+
+def test_annotate_help_drops_unread_flags():
+    """--existing-augustus and --strand-specific reached no code, so they are gone."""
+    from click.testing import CliRunner
+
+    from eukan.cli import cli
+
+    result = CliRunner().invoke(cli, ["annotate", "--help"])
+    assert result.exit_code == 0
+    assert "--existing-augustus" not in result.output
+    assert "--strand-specific" not in result.output
+    assert "strand-specificity" not in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -193,17 +205,3 @@ def test_functional_config_defaults(tmp_path):
     config = FunctionalConfig(proteins=proteins)
     assert "databases" in str(config.uniprot_db)
     assert "databases" in str(config.pfam_db)
-
-
-# ---------------------------------------------------------------------------
-# Environment file generation
-# ---------------------------------------------------------------------------
-
-
-def test_generate_env_no_hmmer():
-    """Generated environment.yml should not include hmmer."""
-    from eukan.infra.conda_env import generate_environment_yml
-    content = generate_environment_yml()
-    assert "hmmer" not in content
-    assert "bioconda" in content
-    assert "augustus" in content

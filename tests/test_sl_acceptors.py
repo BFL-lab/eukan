@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 
 import pysam
 
+from eukan.assembly.bam_diagnostic import NonCanonicalSpliceCall, TransSplicingCall, Verdict
 from eukan.assembly.sl_acceptors import (
     AcceptorSite,
     _iter_sl_ops,
@@ -13,8 +15,9 @@ from eukan.assembly.sl_acceptors import (
     detect_sl_acceptors,
     load_sl_acceptors,
 )
-from eukan.assembly.sl_depletion import _revcomp, is_adapter
+from eukan.assembly.sl_depletion import is_adapter
 from eukan.infra.artifacts import Artifact
+from eukan.infra.genome import reverse_complement as _revcomp
 from eukan.settings import AssemblyConfig
 
 SL = "GTACTTTATT"            # 10 bp, meets _MIN_MOTIF_LEN
@@ -114,11 +117,17 @@ def test_iter_sl_ops_both_terminal_clips():
 
 
 def _write_verdict(tmp_path, call, consensus=SL):
-    summary = {"verdict": {"trans_splicing": {
-        "call": call, "top_non_trivial_cluster_consensus": consensus,
-        "top_non_trivial_cluster_key": consensus,
-    }}}
-    (tmp_path / Artifact.SOFTCLIP_DIAGNOSTIC.value).write_text(json.dumps(summary))
+    verdict = Verdict(
+        TransSplicingCall(
+            call=call, top_non_trivial_cluster_key=consensus,
+            top_non_trivial_cluster_consensus=consensus, top_non_trivial_cluster_n_loci=0,
+            top_non_trivial_cluster_n_reads=0, sl_bucket_pct_of_consistent=0.0,
+        ),
+        NonCanonicalSpliceCall(call="ABSENT", canonical_pct=99.0, top_non_canonical_dinuc=""),
+    )
+    (tmp_path / Artifact.SOFTCLIP_DIAGNOSTIC.value).write_text(
+        json.dumps({"verdict": asdict(verdict)})
+    )
 
 
 def test_consensus_override_wins(tmp_path):
@@ -304,6 +313,13 @@ def test_consensus_real_sl_wins_over_dominant_adapter(tmp_path):
 
 def test_consensus_adapter_verdict_rejected(tmp_path):
     _write_verdict(tmp_path, "STRONG", consensus=ADAPT16)
+    assert build_joint_consensus(_config(tmp_path), []) is None
+
+
+def test_consensus_unreadable_verdict_counts_as_none(tmp_path):
+    # A summary that does not hold a whole verdict is no verdict (as for the
+    # non-canonical escalation), not a JSONDecodeError out of SL detection.
+    (tmp_path / Artifact.SOFTCLIP_DIAGNOSTIC.value).write_text("{")
     assert build_joint_consensus(_config(tmp_path), []) is None
 
 

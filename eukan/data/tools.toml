@@ -4,12 +4,14 @@
 #   - eukan check                    (verifies tools are installed)
 #   - eukan.infra.environ            (configures conda env vars at runtime)
 #   - eukan.infra.tools_registry     (loader shared by the above)
-#   - environment.yml                (regenerate with: eukan dev generate-env)
+#   - environment.yml                (regenerate with: python scripts/generate-env.py)
 #   - docker/Dockerfile              (ARG versions should match min_version here)
 #
 # Per-tool fields (all optional unless marked required):
 #   binary          = executable name on PATH                           (required)
 #   version_cmd     = command to probe the tool (exit 0 or stdout/stderr = success)
+#   version_line    = regex selecting the probe output line `eukan check` shows
+#                     as the version (default: the first line)
 #   required_by     = which eukan subcommands need this tool
 #   conda_package   = bioconda/conda-forge package name (omit if not available)
 #   min_version     = minimum version for conda pin (omit for unpinned)
@@ -34,6 +36,14 @@
 #   conda_lib_dirs  = dirs relative to $CONDA_PREFIX, prepended to
 #                     LD_LIBRARY_PATH in subprocesses only (keeps system
 #                     tools like git from breaking in the parent process).
+#                     Every tool eukan runs gets these entries, not only the
+#                     tool declaring them (only fitild does; install-extras.sh
+#                     builds it against $CONDA_PREFIX/lib). This is deliberate:
+#                     the Docker image sets LD_LIBRARY_PATH to the env's lib/
+#                     for every process and conda-activate.sh exports it too,
+#                     so scoping it to fitild would change only a conda env
+#                     without the activate script, making it the one setup in
+#                     which the other tools run without the env's lib/.
 
 [augustus]
 binary = "augustus"
@@ -63,8 +73,13 @@ env_vars = [{ var = "QUARRY_PATH" }]
 [genemark]
 binary = "gmes_petap.pl"
 version_cmd = ["gmes_petap.pl"]
+# Its usage text opens with a rule line; the suite version comes a few lines on.
+version_line = "Suite version"
 required_by = ["annotate"]
 install_hint = "Requires a license from https://topaz.gatech.edu/GeneMark/license_download.cgi"
+# gmes_petap.pl runs without the license key; GeneMark's own check runs gmhmme3,
+# which reports a missing or expired key.
+install_check = "check_install.bash"
 conda_path_dirs = ["opt/genemark"]
 
 [diamond]
@@ -87,29 +102,6 @@ required_by = ["assemble"]
 conda_package = "minimap2"
 # 2.29 introduced the splice:sr short-read spliced preset used for read mapping.
 min_version = "2.29"
-
-[stringtie]
-binary = "stringtie"
-version_cmd = ["stringtie", "--version"]
-# DORMANT: Trinity (genome-guided) replaced StringTie in the active pipeline.
-# Kept installable (conda_package retained, so it stays in environment.yml) in
-# case the unwired stringtie module is re-activated; required_by emptied so
-# `eukan check assemble` does not demand it.
-required_by = []
-conda_package = "stringtie"
-min_version = "3.0"
-
-[rnaspades]
-binary = "rnaspades.py"
-version_cmd = ["rnaspades.py", "--version"]
-# DORMANT: Trinity (de novo) replaced rnaSPAdes in the active pipeline. Kept
-# installable (conda_package retained, so it stays in environment.yml) in case
-# the unwired rnaspades module is re-activated; required_by emptied so
-# `eukan check assemble` does not demand it.
-required_by = []
-# rnaspades.py ships in the bioconda 'spades' package.
-conda_package = "spades"
-min_version = "4.3"
 
 [trinity]
 binary = "Trinity"
@@ -155,7 +147,7 @@ version_cmd = ["fitild"]
 required_by = ["annotate"]
 install_hint = "Build from source: git clone https://github.com/ogotoh/fitild && cd fitild/src && ./configure && make"
 conda_path_dirs = ["opt/fitild/src"]
-conda_lib_dirs = ["lib"]
+conda_lib_dirs = ["lib"]  # reaches every tool eukan runs (see conda_lib_dirs above)
 
 [combinr]
 binary = "combinr"
@@ -164,12 +156,12 @@ required_by = ["assemble", "annotate"]
 # Rust tool, not on conda. The Docker image installs the pinned pre-built
 # release binary, and scripts/install-extras.sh fetches the same binary for a
 # local conda env. To install by hand, download the archive for your platform
-# from https://github.com/BFL-lab/combinr/releases (v0.1.1), extract `combinr`,
+# from https://github.com/BFL-lab/combinr/releases (v0.3.0), extract `combinr`,
 # and put it on PATH (or set the combinr_path config /
 # EUKAN_ASSEMBLE_COMBINR_PATH). Consolidates transcript-to-genome BAMs into
 # non-redundant models (assemble) and builds weighted consensus gene models
 # (annotate).
-install_hint = "Download the combinr v0.1.1 release binary from https://github.com/BFL-lab/combinr/releases and put it on PATH (or run scripts/install-extras.sh, or set EUKAN_ASSEMBLE_COMBINR_PATH)."
+install_hint = "Download the combinr v0.3.0 release binary from https://github.com/BFL-lab/combinr/releases and put it on PATH (or run scripts/install-extras.sh, or set EUKAN_ASSEMBLE_COMBINR_PATH)."
 
 [genomethreader]
 binary = "gth"

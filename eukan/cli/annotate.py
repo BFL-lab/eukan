@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import click
 from click_option_group import optgroup
@@ -11,11 +12,11 @@ from eukan.cli._framework import (
     FULL_CODE_TABLE,
     PreformattedEpilogCommand,
     code_option,
-    drop_none,
     genome_option,
+    given,
     numcpu_option,
-    resolve_optional_path,
 )
+from eukan.infra.layout import step_work_dir
 
 
 @click.command(cls=PreformattedEpilogCommand, epilog=FULL_CODE_TABLE)
@@ -26,7 +27,7 @@ from eukan.cli._framework import (
 )
 @optgroup.option(
     "--proteins", "-p", required=True, multiple=True,
-    type=click.Path(exists=True, path_type=Path),
+    type=click.Path(exists=True, resolve_path=True, path_type=Path),
     help="One or more protein FASTA files.",
 )
 @optgroup.group("Pipeline parameters")
@@ -36,10 +37,6 @@ from eukan.cli._framework import (
     help="Target organism kingdom (tunes predictor parameters).",
 )
 @numcpu_option
-@optgroup.option(
-    "--existing-augustus", type=str, default=None,
-    help="Use pre-trained AUGUSTUS species parameters.",
-)
 @optgroup.option(
     "--weights", "-w", type=int, multiple=True, default=(2, 1, 3),
     show_default=True,
@@ -52,34 +49,40 @@ from eukan.cli._framework import (
     "only when their span overlap is >= this percent of the shorter (default 0 = any "
     "overlap). Raise it (e.g. 30) to keep tip-overlapping collinear neighbours separate.",
 )
+@optgroup.option(
+    "--orf-patch", type=click.Choice(["supported", "all"]), default=None,
+    help="Patch transcript ORFs that overlap no consensus gene into the final models, "
+    "labelled eukan-orf-patch / support=transcript_orf: 'supported' only those whose CDS "
+    "overlaps a protein-alignment CDS on the same strand, 'all' every one (default: off).",
+)
 @code_option(default=11)
 @optgroup.group("Override options")
 @optgroup.option(
-    "--transcripts-fasta", "-tf", type=click.Path(exists=True, path_type=Path),
+    "--transcripts-fasta", "-tf", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     help="Override auto-discovered transcript FASTA.",
 )
 @optgroup.option(
-    "--transcripts-gff", "-tg", type=click.Path(exists=True, path_type=Path),
+    "--transcripts-gff", "-tg", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     help="Override auto-discovered transcript GFF3.",
 )
 @optgroup.option(
-    "--rnaseq-hints", "-r", type=click.Path(exists=True, path_type=Path),
+    "--rnaseq-hints", "-r", type=click.Path(exists=True, resolve_path=True, path_type=Path),
     help="Override auto-discovered RNA-seq hints GFF.",
 )
-@optgroup.option("--strand-specific", is_flag=True, help="Transcripts are strand-oriented.")
 @optgroup.option(
-    "--combinr-path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    "--combinr-path", type=click.Path(exists=True, dir_okay=False, resolve_path=True, path_type=Path),
     help="Path to the combinr binary (default: 'combinr' on PATH).",
 )
 @optgroup.option(
-    "--splice-permissive", is_flag=True, default=False,
-    help="Allow non-canonical splice sites (GC-AG, AT-AC). "
-    "When assembly evidence exists, observed splice types are used automatically; "
-    "otherwise enables blanket allowance in AUGUSTUS.",
+    "--splice-permissive", "allow_noncanonical_splice", is_flag=True, default=False,
+    help="Allow rarer non-canonical splice sites in AUGUSTUS. With assembly evidence, "
+    "every observed donor-acceptor pair seen at >= 10 junctions by >= 50 unique reads "
+    "is allowed regardless of its share of all junctions (the default also requires "
+    ">= 1%); without evidence, allows AT-AC.",
 )
 @optgroup.group("Experimental")
 @optgroup.option(
-    "--spsp", is_flag=True, default=False,
+    "--spsp", "spaln_ssp", is_flag=True, default=False,
     help="Build species-specific spaln parameters from transcripts (alternative to fitild).",
 )
 @optgroup.group("Re-run steps")
@@ -88,70 +91,27 @@ from eukan.cli._framework import (
 @optgroup.option("--run-augustus", is_flag=True, help="Force re-run AUGUSTUS training and prediction.")
 @optgroup.option("--run-snap", is_flag=True, help="Force re-run SNAP (and CodingQuarry) prediction.")
 @optgroup.option("--run-consensus", is_flag=True, help="Force re-run consensus model building.")
-def annotate(
-    genome: Path,
-    proteins: tuple[Path, ...],
-    transcripts_fasta: Path | None,
-    transcripts_gff: Path | None,
-    rnaseq_hints: Path | None,
-    existing_augustus: str | None,
-    strand_specific: bool,
-    splice_permissive: bool,
-    spsp: bool,
-    numcpu: int,
-    weights: tuple[int, ...],
-    code: int,
-    combinr_path: Path | None,
-    combinr_stringent_overlap: float | None,
-    kingdom: str | None,
-    run_genemark: bool,
-    run_prot_align: bool,
-    run_augustus: bool,
-    run_snap: bool,
-    run_consensus: bool,
-) -> None:
+def annotate(**opts: Any) -> None:
     """Run the genome annotation pipeline.
 
     \b
     When run in the same directory as `eukan assemble`, transcript evidence
-    (FASTA, GFF3, RNA-seq hints) and strand-specificity are discovered
-    automatically. Use the override options to supply your own files or to
-    replace the auto-discovered values.
+    (FASTA, GFF3, RNA-seq hints) is discovered automatically. Use the override
+    options to supply your own files or to replace the auto-discovered values.
     """
-    from eukan.annotation import run_annotation_pipeline
-    from eukan.annotation.pipeline import force_steps_from_run_flags
-    from eukan.infra.layout import step_work_dir
-    from eukan.settings import PipelineConfig
+    from eukan.annotation import run_annotation_pipeline  # lazy: startup cost
+    from eukan.annotation.pipeline import force_steps_from_run_flags  # lazy: startup cost
+    from eukan.settings import PipelineConfig  # lazy: startup cost
 
-    # Only pass fields explicitly set by the user; pydantic-settings
-    # fills the rest from pyproject.toml / env vars / defaults.
-    config = PipelineConfig(**drop_none(
-        genome=genome.resolve(),
-        proteins=[p.resolve() for p in proteins],
-        work_dir=step_work_dir("annotate"),
-        manifest_dir=Path.cwd(),
-        num_cpu=numcpu,
-        genetic_code=str(code),
-        weights=list(weights),
-        combinr_path=resolve_optional_path(combinr_path),
-        combinr_stringent_overlap=combinr_stringent_overlap,
-        strand_specific=strand_specific,
-        allow_noncanonical_splice=splice_permissive,
-        spaln_ssp=spsp,
-        kingdom=kingdom or None,
-        transcripts_fasta=resolve_optional_path(transcripts_fasta),
-        transcripts_gff=resolve_optional_path(transcripts_gff),
-        rnaseq_hints=resolve_optional_path(rnaseq_hints),
-    ))
-
-    force_steps = force_steps_from_run_flags(
-        spaln_ssp=spsp,
-        run_genemark=run_genemark,
-        run_prot_align=run_prot_align,
-        run_augustus=run_augustus,
-        run_snap=run_snap,
-        run_consensus=run_consensus,
+    run_flags = {k: opts.pop(k) for k in list(opts) if k.startswith("run_")}
+    # Only the options given on the command line; the config fills the rest
+    # from EUKAN_* env vars or its defaults.
+    config = PipelineConfig(
+        **given(opts), work_dir=step_work_dir("annotate"), manifest_dir=Path.cwd(),
     )
+    config.discover()
+
+    force_steps = force_steps_from_run_flags(spaln_ssp=config.spaln_ssp, **run_flags)
 
     result = run_annotation_pipeline(config, force_steps=force_steps or None)
     click.echo(f"Done. Final annotation: {result}")

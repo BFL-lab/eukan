@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-import random
 from pathlib import Path
 
 import pysam
-import pytest
 
 from eukan.assembly import jaccard as j
 from eukan.assembly.jaccard import (
     Trough,
     _candidate_troughs,
     _group_and_pick_best,
-    _partition_exons,
     _require_hills,
-    clip_gff3,
     coverage_array,
     find_clip_points,
     iter_fragment_spans,
@@ -23,26 +19,8 @@ from eukan.assembly.jaccard import (
     run_jaccard,
     split_fasta_record,
 )
+from eukan.gff.transcripts import partition_exons as _partition_exons
 from eukan.settings import AssemblyConfig
-
-# A 120 bp non-palindromic genome (seeded) so reverse-complement is distinct —
-# essential for the minus-strand split test to actually exercise the sign.
-GENOME = "".join(random.Random(42).choice("ACGT") for _ in range(120))
-
-
-def _read_fasta(path) -> dict[str, str]:
-    recs, name, seq = {}, None, []
-    for line in path.read_text().splitlines():
-        if line.startswith(">"):
-            if name is not None:
-                recs[name] = "".join(seq)
-            name, seq = line[1:].split()[0], []
-        else:
-            seq.append(line)
-    if name is not None:
-        recs[name] = "".join(seq)
-    return recs
-
 
 # --- jaccard math ----------------------------------------------------------
 
@@ -278,105 +256,6 @@ def test_partition_exons_minus_strand():
     assert segs == [[(31, 50), (16, 20)], [(1, 15)]]
 
 
-# Two exons (1..40) + (51..90); spliced length 80 so a clip at 45 leaves both
-# pieces above the 25 bp floor.
-_GFF_TEMPLATE = (
-    "##gff-version 3\n"
-    "chr1\ttest\tgene\t1\t90\t.\t{s}\t.\tID=g1\n"
-    "chr1\ttest\tmRNA\t1\t90\t.\t{s}\t.\tID=t1;Parent=g1\n"
-    "chr1\ttest\texon\t1\t40\t.\t{s}\t.\tID=t1.e1;Parent=t1\n"
-    "chr1\ttest\texon\t51\t90\t.\t{s}\t.\tID=t1.e2;Parent=t1\n"
-)
-
-
-def _orig_spliced(gff, genome):
-    from eukan.gff import create_gff_db
-    from eukan.gff.io import iter_assembled_sequences
-
-    return dict(
-        (m.id, s)
-        for m, s in iter_assembled_sequences(
-            create_gff_db(str(gff)), genome, child_featuretype="exon"
-        )
-    )["t1"]
-
-
-@pytest.mark.parametrize("strand", ["+", "-"])
-def test_clip_gff3_splits_and_reextracts(tmp_path, strand):
-    (tmp_path / "genome.fa").write_text(f">chr1\n{GENOME}\n")
-    gff = tmp_path / "tx.gff3"
-    gff.write_text(_GFF_TEMPLATE.format(s=strand))
-
-    orig = _orig_spliced(gff, tmp_path / "genome.fa")
-    assert len(orig) == 80
-
-    out_gff = tmp_path / "clipped.gff3"
-    out_fa = tmp_path / "clipped.fasta"
-    clip_gff3(gff, tmp_path / "genome.fa", {"t1": [45]}, out_gff, out_fa)
-
-    recs = _read_fasta(out_fa)
-    assert set(recs) == {"t1.j1", "t1.j2"}
-    assert recs["t1.j1"] == orig[:45]      # guards the minus-strand sign
-    assert recs["t1.j2"] == orig[45:]
-    assert recs["t1.j1"] + recs["t1.j2"] == orig
-
-
-def test_split_models_at_clips_counts_and_passthrough(tmp_path):
-    gff = tmp_path / "tx.gff3"
-    gff.write_text(_GFF_TEMPLATE.format(s="+"))
-    # spliced length 80; a clip at 45 splits into two >=25 bp pieces.
-    out, n_split = j._split_models_at_clips(gff, {"t1": [45]}, 25)
-    assert n_split == 1
-    assert sorted(m.tid for m in out) == ["t1.j1", "t1.j2"]
-    # no clip for this id -> passthrough, n_split 0.
-    out2, n2 = j._split_models_at_clips(gff, {}, 25)
-    assert n2 == 0 and [m.tid for m in out2] == ["t1"]
-
-
-def test_write_spliced_fasta_matches_iter_assembled(tmp_path):
-    # _write_spliced_fasta must use the SAME orientation as iter_assembled_sequences
-    # (ascending-genomic concat, RC on '-'), so clip coords line up across paths.
-    from eukan.assembly.jaccard import _parse_transcript_models, _write_transcript_models_gff3
-    from eukan.gff import create_gff_db
-    from eukan.gff.io import iter_assembled_sequences
-
-    (tmp_path / "genome.fa").write_text(f">chr1\n{GENOME}\n")
-    gtf = tmp_path / "stringtie.gtf"
-    gtf.write_text(
-        'chr1\tStringTie\texon\t1\t40\t.\t+\t.\ttranscript_id "p";\n'
-        'chr1\tStringTie\texon\t51\t90\t.\t+\t.\ttranscript_id "p";\n'
-        'chr1\tStringTie\texon\t1\t40\t.\t-\t.\ttranscript_id "m";\n'
-        'chr1\tStringTie\texon\t51\t90\t.\t-\t.\ttranscript_id "m";\n'
-    )
-    models = _parse_transcript_models(gtf)
-    mine_path = tmp_path / "spliced.fasta"
-    j._write_spliced_fasta(models, tmp_path / "genome.fa", mine_path)
-    mine = _read_fasta(mine_path)
-
-    norm = tmp_path / "norm.gff3"
-    _write_transcript_models_gff3(models, norm)
-    ref = {
-        m.id: s
-        for m, s in iter_assembled_sequences(
-            create_gff_db(str(norm)), tmp_path / "genome.fa", child_featuretype="exon"
-        )
-    }
-    assert mine == ref
-    assert mine["m"] != mine["p"]  # minus strand really is reverse-complemented
-
-
-def test_resolve_stringtie_models_prefers_clipped(tmp_path):
-    from eukan.assembly.jaccard import STRINGTIE_JACCARD_GFF3, resolve_stringtie_models
-
-    (tmp_path / "stringtie.gtf").write_text("x")
-    assert resolve_stringtie_models(tmp_path).name == "stringtie.gtf"
-    # empty clipped file is ignored (size 0); non-empty one is preferred.
-    (tmp_path / STRINGTIE_JACCARD_GFF3).write_text("")
-    assert resolve_stringtie_models(tmp_path).name == "stringtie.gtf"
-    (tmp_path / STRINGTIE_JACCARD_GFF3).write_text("##gff-version 3\n")
-    assert resolve_stringtie_models(tmp_path).name == STRINGTIE_JACCARD_GFF3
-
-
 def _header_bam(path, refs):
     header = {"HD": {"VN": "1.6", "SO": "coordinate"},
               "SQ": [{"SN": n, "LN": ln} for n, ln in refs.items()]}
@@ -384,72 +263,9 @@ def _header_bam(path, refs):
         pass
 
 
-def test_clip_stringtie_gtf_splits_fused_model(tmp_path, monkeypatch):
-    (tmp_path / "genome.fa").write_text(f">chr1\n{GENOME}\n")
-    gtf = tmp_path / "stringtie.gtf"
-    gtf.write_text(
-        'chr1\tStringTie\ttranscript\t1\t90\t.\t+\t.\ttranscript_id "STRG.1.1";\n'
-        'chr1\tStringTie\texon\t1\t40\t.\t+\t.\ttranscript_id "STRG.1.1";\n'
-        'chr1\tStringTie\texon\t51\t90\t.\t+\t.\ttranscript_id "STRG.1.1";\n'
-    )
-    bam = tmp_path / "jaccard_stringtie_Aligned.sortedByCoord.out.bam"
-    _header_bam(bam, {"STRG.1.1": 80})  # spliced length of the transcript
-
-    monkeypatch.setattr(j, "map_reads_to_transcripts", lambda cfg, fa, tag: bam)
-    monkeypatch.setattr(j, "iter_fragment_spans", lambda b: iter([("STRG.1.1", [(1, 80)])]))
-    # decouple from the jaccard math (tested elsewhere): clip the 80 bp tx at 45.
-    monkeypatch.setattr(j, "find_clip_points", lambda spans, length, **kw: [45])
-
-    config = AssemblyConfig(
-        genome=tmp_path / "genome.fa", work_dir=tmp_path,
-        left_reads=tmp_path / "l.fq", right_reads=tmp_path / "r.fq", num_cpu=1,
-    )
-    n_in, n_split = j._clip_stringtie_gtf(config)
-    assert (n_in, n_split) == (1, 1)
-    out = (tmp_path / "stringtie.jaccard.gff3").read_text()
-    assert out.count("\tmRNA\t") == 2  # split into two models
-    assert "STRG.1.1.j1" in out and "STRG.1.1.j2" in out
-    assert not (tmp_path / "stringtie.spliced.fasta").exists()  # intermediate cleaned
-
-
-def test_clip_threads_config_knobs_into_find_clip_points(tmp_path, monkeypatch):
-    # The config's jaccard detection knobs reach find_clip_points unchanged, so a
-    # user-supplied stringency setting actually governs clip detection.
-    (tmp_path / "genome.fa").write_text(f">chr1\n{GENOME}\n")
-    gtf = tmp_path / "stringtie.gtf"
-    gtf.write_text(
-        'chr1\tStringTie\texon\t1\t40\t.\t+\t.\ttranscript_id "STRG.1.1";\n'
-        'chr1\tStringTie\texon\t51\t90\t.\t+\t.\ttranscript_id "STRG.1.1";\n'
-    )
-    bam = tmp_path / "jaccard_stringtie_Aligned.sortedByCoord.out.bam"
-    _header_bam(bam, {"STRG.1.1": 80})
-    monkeypatch.setattr(j, "map_reads_to_transcripts", lambda cfg, fa, tag: bam)
-    monkeypatch.setattr(j, "iter_fragment_spans", lambda b: iter([("STRG.1.1", [(1, 80)])]))
-    captured: dict[str, float] = {}
-
-    def _capture(spans, length, **kw):
-        captured.update(kw)
-        return []
-
-    monkeypatch.setattr(j, "find_clip_points", _capture)
-
-    config = AssemblyConfig(
-        genome=tmp_path / "genome.fa", work_dir=tmp_path,
-        left_reads=tmp_path / "l.fq", right_reads=tmp_path / "r.fq", num_cpu=1,
-        jaccard_greediness=2.0, jaccard_max_trough=0.08,
-        jaccard_min_delta=0.5, jaccard_max_adaptive_trough=0.4,
-    )
-    j._clip_stringtie_gtf(config)
-    assert captured == {
-        "greed": 2.0, "max_trough": 0.08,
-        "min_delta": 0.5, "max_adaptive_trough": 0.4,
-    }
-
-
 def test_clip_one_fasta_threads_config_knobs(tmp_path, monkeypatch):
-    # The de novo FASTA path (the primary jaccard target — rnaSPAdes contigs) threads
-    # the same config knobs into find_clip_points as the StringTie path, so reverting
-    # it to the old greed-only call would be caught here too.
+    # The FASTA clip path threads the config's jaccard knobs into find_clip_points,
+    # so reverting it to the old greed-only call would be caught here.
     src = tmp_path / "rnaspades.fasta"
     src.write_text(">c1\n" + "ACGT" * 50 + "\n")
     bam = tmp_path / "rnaspades.jaccard_Aligned.sortedByCoord.out.bam"
@@ -485,31 +301,6 @@ def test_assembly_config_jaccard_knob_defaults():
     assert cfg.jaccard_max_trough == j._MAX_TROUGH_VAL == 0.05
     assert cfg.jaccard_min_delta == j._MIN_JACCARD_DELTA == 0.35
     assert cfg.jaccard_max_adaptive_trough == j._MAX_ADAPTIVE_TROUGH == 0.30
-
-
-def test_run_jaccard_clips_stringtie_when_present(tmp_path, monkeypatch):
-    monkeypatch.setattr(j, "_clip_one_fasta", lambda cfg, src, out: (1, 1, 0))
-    called: list[str] = []
-    monkeypatch.setattr(j, "_clip_stringtie_gtf", lambda cfg: called.append("st") or (3, 1))
-
-    (tmp_path / "rnaspades.fasta").write_text(">c1\nACGTACGT\n")
-    (tmp_path / "stringtie.gtf").write_text("chr1\tx\texon\t1\t5\t.\t+\t.\ttranscript_id \"a\";\n")
-    config = AssemblyConfig(
-        genome=tmp_path / "genome.fa", work_dir=tmp_path,
-        left_reads=tmp_path / "l.fq", right_reads=tmp_path / "r.fq", num_cpu=1,
-    )
-    run_jaccard(config)
-    assert called == ["st"]  # StringTie GTF clipped alongside the de novo FASTA
-
-
-def test_clip_gff3_passthrough_when_no_clip(tmp_path):
-    (tmp_path / "genome.fa").write_text(f">chr1\n{GENOME}\n")
-    gff = tmp_path / "tx.gff3"
-    gff.write_text(_GFF_TEMPLATE.format(s="+"))
-    out_gff = tmp_path / "out.gff3"
-    out_fa = tmp_path / "out.fasta"
-    clip_gff3(gff, tmp_path / "genome.fa", {}, out_gff, out_fa)  # no clips
-    assert set(_read_fasta(out_fa)) == {"t1"}
 
 
 # --- run_jaccard wiring ----------------------------------------------------

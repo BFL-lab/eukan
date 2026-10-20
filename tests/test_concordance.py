@@ -1,11 +1,12 @@
 """Tests for eukan.gff.concordance — multi-source gene-model operations."""
 
+from collections import Counter
+from pathlib import Path
+
 import gffutils
-import pytest
 
 from eukan.gff.concordance import (
     _cds_boundaries_match,
-    _features_overlap,
     _find_overlapping_genes,
     combine_nonredundant_models,
     extract_supported_models,
@@ -13,6 +14,7 @@ from eukan.gff.concordance import (
     find_nonoverlapping_genes,
     merge_fully_overlapping_transcript_genes,
 )
+from eukan.gff.intervals import IntervalIndex
 
 
 def _feature(chrom, start, end, strand="+", featuretype="gene", id="g1", **attrs):
@@ -26,29 +28,6 @@ def _feature(chrom, start, end, strand="+", featuretype="gene", id="g1", **attrs
 # ---------------------------------------------------------------------------
 # Overlap detection
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("a", "b", "expected"),
-    [
-        (("chr1", 100, 500, "+"), ("chr1", 400, 800, "+"), True),
-        (("chr1", 100, 300, "+"), ("chr1", 400, 800, "+"), False),
-        (("chr1", 100, 500, "+"), ("chr1", 100, 500, "-"), False),
-        (("chr1", 100, 500, "+"), ("chr2", 100, 500, "+"), False),
-        (("chr1", 100, 200, "+"), ("chr1", 201, 300, "+"), False),
-        (("chr1", 100, 200, "+"), ("chr1", 200, 300, "+"), True),
-    ],
-    ids=[
-        "overlapping",
-        "non_overlapping",
-        "different_strand",
-        "different_chrom",
-        "adjacent",
-        "touching",
-    ],
-)
-def test_features_overlap(a, b, expected):
-    assert _features_overlap(_feature(*a), _feature(*b)) == expected
 
 
 class TestFindOverlappingGenes:
@@ -206,6 +185,52 @@ class TestFindNonoverlapping:
         result = find_nonoverlapping_genes(db_source, db_target)
         assert [f.id for f in result if f.featuretype == "gene"] == []
 
+    _ANTISENSE_SOURCE = (
+        "chr1\ttest\tgene\t100\t300\t.\t-\t.\tID=src\n"
+        "chr1\ttest\tmRNA\t100\t300\t.\t-\t.\tID=m;Parent=src\n"
+        "chr1\ttest\tCDS\t100\t300\t.\t-\t0\tID=c;Parent=m\n"
+    )
+    _SENSE_TARGET = "chr1\ttest\tgene\t200\t500\t.\t+\t.\tID=t1\n"
+
+    def test_overlap_is_same_strand_by_default(self, db_from_string):
+        result = find_nonoverlapping_genes(
+            db_from_string(self._ANTISENSE_SOURCE), db_from_string(self._SENSE_TARGET),
+        )
+        assert [f.id for f in result if f.featuretype == "gene"] == ["src"]
+
+    def test_ignore_strand_counts_an_antisense_overlap(self, db_from_string):
+        result = find_nonoverlapping_genes(
+            db_from_string(self._ANTISENSE_SOURCE), db_from_string(self._SENSE_TARGET),
+            ignore_strand=True,
+        )
+        assert result == []
+
+    def test_support_keeps_genes_whose_cds_span_overlaps_it(self, db_from_string):
+        db_source = db_from_string(
+            "chr1\ttest\tgene\t100\t300\t.\t+\t.\tID=g1\n"
+            "chr1\ttest\tmRNA\t100\t300\t.\t+\t.\tID=m1;Parent=g1\n"
+            "chr1\ttest\tCDS\t150\t200\t.\t+\t0\tID=c1a;Parent=m1\n"
+            "chr1\ttest\tCDS\t240\t250\t.\t+\t0\tID=c1b;Parent=m1\n"
+            "chr1\ttest\tgene\t700\t1000\t.\t+\t.\tID=g2\n"
+            "chr1\ttest\tmRNA\t700\t1000\t.\t+\t.\tID=m2;Parent=g2\n"
+            "chr1\ttest\tCDS\t800\t900\t.\t+\t0\tID=c2;Parent=m2\n"
+            "chr1\ttest\tgene\t1500\t1600\t.\t+\t.\tID=g3\n"
+            "chr1\ttest\tmRNA\t1500\t1600\t.\t+\t.\tID=m3;Parent=g3\n"
+            "chr1\ttest\tCDS\t1500\t1600\t.\t+\t0\tID=c3;Parent=m3\n"
+        )
+        support = IntervalIndex([
+            _feature("chr1", 210, 230),  # between g1's two CDSs: inside their span
+            _feature("chr1", 950, 990),  # over g2's 3' UTR only
+            _feature("chr1", 1550, 1560, strand="-"),  # g3's CDS, other strand
+        ])
+
+        result = find_nonoverlapping_genes(
+            db_source, db_from_string("chr2\ttest\tgene\t1\t10\t.\t+\t.\tID=t1\n"),
+            support=support,
+        )
+
+        assert [f.id for f in result if f.featuretype == "gene"] == ["g1"]
+
 
 # ---------------------------------------------------------------------------
 # Concordant models
@@ -296,18 +321,11 @@ class TestCombineNonredundant:
 
 
 # ---------------------------------------------------------------------------
-# Training-set extraction (3-path concurrent branch)
+# Training-set extraction
 # ---------------------------------------------------------------------------
 
 
 class TestExtractSupportedModels:
-    """Regression: the 3-path branch fans concordance passes across a
-    ``ThreadPoolExecutor``.  Returning ``gffutils.FeatureDB`` from worker
-    threads broke at the next main-thread query with
-    ``sqlite3.ProgrammingError: SQLite objects created in a thread can
-    only be used in that same thread``.  The fix returns Feature lists
-    from workers and builds dbs on the main thread.
-    """
 
     def _write_simple_pair(self, dirp, name, gene_id, start=100, end=400):
         path = dirp / name
@@ -318,33 +336,38 @@ class TestExtractSupportedModels:
         )
         return path
 
-    def test_three_paths_does_not_leak_db_across_threads(self, tmp_path):
-        """Calling extract_supported_models with 3 paths must produce a
-        usable FeatureDB on the main thread, with no SQLite cross-thread
-        error."""
+    def test_three_paths_parses_each_source_once(self, tmp_path, monkeypatch):
+        """The three concordance pairs share one parse per source file
+        (3 file parses, not one parse per side of every pair: 6)."""
+        from eukan.gff import concordance
+
+        parses: Counter[str] = Counter()
+        real_create = concordance.create_gff_db
+
+        def counting(source, **kwargs):
+            if isinstance(source, (str, Path)):
+                parses[Path(source).name] += 1
+            return real_create(source, **kwargs)
+
+        monkeypatch.setattr(concordance, "create_gff_db", counting)
         a = self._write_simple_pair(tmp_path, "a.gff3", "ga")
         b = self._write_simple_pair(tmp_path, "b.gff3", "ga")
         c = self._write_simple_pair(tmp_path, "c.gff3", "ga")
 
         result = extract_supported_models(a, b, c, output_dir=tmp_path)
 
-        # The query that previously raised ProgrammingError in the failing run.
-        genes = list(result.features_of_type("gene"))
-        assert len(genes) == 1
-        assert genes[0].id == "ga"
+        assert [parses[n] for n in ("a.gff3", "b.gff3", "c.gff3")] == [1, 1, 1]
+        assert [g.id for g in result.features_of_type("gene")] == ["ga"]
         assert (tmp_path / "training_set.gff3").exists()
 
-    def test_three_paths_partial_concordance_queryable_main_thread(self, tmp_path):
-        """When some pairs concord and others don't, the per-worker
-        Feature lists vary in length — but the assembled db must still be
-        queryable on the main thread without a cross-thread error."""
-        # ga concordant in (a,b) and (a,c); (b,c) finds gc only when c==b's gene.
-        # We arrange: a==b==c on ga; (a,c) concord ga; (c,b) finds nothing.
+    def test_three_paths_near_identical_locus_kept_once(self, tmp_path):
+        """The pairs return different sources' genes for one locus within
+        the boundary tolerance; the training set keeps it once."""
+        # (a,b) and (a,c) return a's ga; (c,b) returns c's gc, because
+        # find_concordant_models compares structure, not IDs.
         a = self._write_simple_pair(tmp_path, "a.gff3", "ga", start=100, end=400)
         b = self._write_simple_pair(tmp_path, "b.gff3", "ga", start=105, end=395)
-        # c shares ga's locus with a, but different ID — concord (a,c) finds ga,
-        # (c,b) compares c's gc-named gene against b's ga, which won't match by ID
-        # but find_concordant_models doesn't compare IDs, only structure.
+        # c shares ga's locus with a, but under a different ID.
         c_path = tmp_path / "c.gff3"
         c_path.write_text(
             "chr1\tpred\tgene\t102\t398\t.\t+\t.\tID=gc\n"
@@ -354,13 +377,53 @@ class TestExtractSupportedModels:
 
         result = extract_supported_models(a, b, c_path, output_dir=tmp_path)
 
-        # Must not raise — and must be queryable on the main thread.
+        # gc is the same locus as ga: the first source's model is kept, once.
         genes = list(result.features_of_type("gene"))
-        assert {g.id for g in genes} <= {"ga", "gc"}
-        assert len(genes) >= 1
+        assert [g.id for g in genes] == ["ga"]
+
+    @staticmethod
+    def _write_two_cds(dirp, name, gene_id, offset=0):
+        """One 2-CDS gene at 100-900 (+offset) on chr1."""
+        s = 100 + offset
+        path = dirp / name
+        path.write_text(
+            f"chr1\tpred\tgene\t{s}\t{s + 800}\t.\t+\t.\tID={gene_id}\n"
+            f"chr1\tpred\tmRNA\t{s}\t{s + 800}\t.\t+\t.\tID=m_{gene_id};Parent={gene_id}\n"
+            f"chr1\tpred\tCDS\t{s}\t{s + 200}\t.\t+\t0\tID=c1_{gene_id};Parent=m_{gene_id}\n"
+            f"chr1\tpred\tCDS\t{s + 400}\t{s + 800}\t.\t+\t0\tID=c2_{gene_id};Parent=m_{gene_id}\n"
+        )
+        return path
+
+    def test_locus_concordant_in_all_three_sources_kept_once(self, tmp_path, caplog):
+        """One identical locus in all three sources, under each source's own
+        IDs: (genemark,prot) and (genemark,orfs) return gm1, (orfs,prot)
+        returns orf1. The training set must hold one gene, not gm1 + orf1."""
+        import logging
+        gm = self._write_two_cds(tmp_path, "genemark.gff3", "gm1")
+        prot = self._write_two_cds(tmp_path, "prot.gff3", "pr1")
+        orfs = self._write_two_cds(tmp_path, "orfs.gff3", "orf1")
+
+        with caplog.at_level(logging.WARNING, logger="eukan.gff.concordance"):
+            result = extract_supported_models(gm, prot, orfs, output_dir=tmp_path)
+
+        assert [g.id for g in result.features_of_type("gene")] == ["gm1"]
+        written = (tmp_path / "training_set.gff3").read_text()
+        assert written.count("\tgene\t") == 1
+        assert "Only 1 concordant" in caplog.text
+
+    def test_locus_supported_only_by_third_pair_is_kept(self, tmp_path):
+        """A locus where only the third and second sources agree (no
+        first-source model there) still enters the training set."""
+        gm = self._write_two_cds(tmp_path, "genemark.gff3", "gm1")
+        prot = self._write_two_cds(tmp_path, "prot.gff3", "pr1", offset=5000)
+        orfs = self._write_two_cds(tmp_path, "orfs.gff3", "orf1", offset=5000)
+
+        result = extract_supported_models(gm, prot, orfs, output_dir=tmp_path)
+
+        assert [g.id for g in result.features_of_type("gene")] == ["orf1"]
 
     def test_two_paths_unchanged(self, tmp_path):
-        """The 2-path branch is sequential; verify it still works."""
+        """The 2-path branch: one concordance pass."""
         a = self._write_simple_pair(tmp_path, "a.gff3", "ga")
         b = self._write_simple_pair(tmp_path, "b.gff3", "ga")
 
@@ -368,6 +431,17 @@ class TestExtractSupportedModels:
         genes = list(result.features_of_type("gene"))
         assert len(genes) == 1
         assert genes[0].id == "ga"
+
+    def test_no_concordant_models_returns_empty_db(self, tmp_path):
+        """Zero concordant models: an empty training_set.gff3 and an empty
+        DB (re-reading the empty file raised gffutils' EmptyInputError)."""
+        a = self._write_simple_pair(tmp_path, "a.gff3", "ga")
+        b = self._write_simple_pair(tmp_path, "b.gff3", "gb", start=5000, end=5300)
+
+        result = extract_supported_models(a, b, output_dir=tmp_path)
+
+        assert result.count_features_of_type("gene") == 0
+        assert (tmp_path / "training_set.gff3").read_text() == ""
 
     def test_three_paths_logs_per_source_counts(self, tmp_path, caplog):
         """3-way concordance: per-source gene counts always go to INFO,

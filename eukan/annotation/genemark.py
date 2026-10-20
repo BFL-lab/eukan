@@ -6,8 +6,10 @@ from pathlib import Path
 
 import gffutils
 
+from eukan.gff import create_gff_db, transform_db
 from eukan.gff import transforms as gff_transforms
 from eukan.gff.normalize import normalize_to_gff3
+from eukan.gff.rows import iter_gff3_rows
 from eukan.infra.logging import get_logger
 from eukan.infra.runner import run_cmd
 from eukan.infra.steps import step_dir
@@ -21,9 +23,11 @@ def _genemark_homogenize_source(f: gffutils.Feature) -> gffutils.Feature:
     """Set ``source`` to ``genemark`` for all features.
 
     GeneMark stamps column 2 as ``GeneMark.hmm`` (or ``GeneMark.hmm3`` in
-    newer releases). The consensus engine matches weights by the source token, so a
-    version-dependent value silently zeros out GeneMark's contribution.
-    Mirror what ``augustus`` / ``snap`` / ``codingquarry`` already do.
+    newer releases); genemark.gff3 says ``genemark`` whatever the release, as
+    the AUGUSTUS, SNAP and CodingQuarry outputs carry their own names. Nothing
+    downstream reads the column: the GeneMark models choose between spaln and
+    gth, supply spaln's gene lengths (and its introns when there are no intron
+    hints), and train AUGUSTUS, but never reach the consensus engine.
     """
     f.source = "genemark"
     return f
@@ -37,10 +41,9 @@ def _read_genemark_gtf(path: Path) -> gffutils.FeatureDB:
     type to its identifying attributes; the second pass converts GTF to
     GFF3 conventions via ``gff_transforms.gtf2gff3``.
     """
-    gmgtf = gffutils.create_db(
-        str(path), ":memory:", verbose=False,
+    gmgtf = create_gff_db(
+        path,
         disable_infer_genes=True, disable_infer_transcripts=True,
-        merge_strategy="create_unique",
         id_spec={
             "gene": "gene_id",
             "mRNA": "transcript_id",
@@ -51,13 +54,14 @@ def _read_genemark_gtf(path: Path) -> gffutils.FeatureDB:
             "stop_codon": ["gene_id", "transcript_id"],
         },
     )
-    from eukan.gff import transform_db
     return transform_db(gmgtf, gff_transforms.gtf2gff3)
 
 
 def run_genemark(config: PipelineConfig, hints: Path | None = None) -> Path:
     """Run GeneMark-ES/ET gene prediction."""
     output = "genemark.gff3"
+    # Raises for a genetic code GeneMark cannot run, before any work.
+    gcode_flag = config.genetic_code_obj.genemark_flag
     sdir = step_dir(config.work_dir, "genemark")
     log.info("Running GeneMark gene prediction...")
 
@@ -70,18 +74,16 @@ def run_genemark(config: PipelineConfig, hints: Path | None = None) -> Path:
     has_intron_hints = False
     if hints is not None:
         intron_count = 0
-        with open(hints) as fin, open(sdir / "introns.gff", "w") as fout:
-            for line in fin:
-                cols = line.split("\t")
-                if len(cols) >= 3 and cols[2] == "intron":
-                    fout.write(line)
+        with open(sdir / "introns.gff", "w") as fout:
+            for cols in iter_gff3_rows(hints):
+                if cols[2] == "intron":
+                    fout.write("\t".join(cols) + "\n")
                     intron_count += 1
         has_intron_hints = intron_count >= 150
 
     training_type = (
         ["--ET=introns.gff", "--et_score=3"] if has_intron_hints else ["--ES"]
     )
-    gcode_flag = config.genetic_code_obj.genemark_flag
 
     if not (sdir / "genemark.gtf").exists():
         run_cmd(

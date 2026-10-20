@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pysam
 
+from eukan.assembly.bam_diagnostic import run_softclip_diagnostic
 from eukan.assembly.bam_utils import _write_unmapped_fasta
 from eukan.assembly.polya import (
     POLYA_DIAGNOSTIC,
@@ -119,7 +120,7 @@ def test_characterize_polya_bam_forward_and_reverse(tmp_path):
         dict(query_name="t2", query_sequence="C" * 10 + "ACGT" * 5, flag=0,
              reference_id=0, reference_start=5, cigartuples=[(0, 10), (4, 20)]),
         # reverse read whose mRNA 3' tail is poly-A: stored RC -> LEADING 20S of T's;
-        # _extract_clips re-orients to a "3p" A-rich clip.
+        # extract_clips re-orients to a "3p" A-rich clip.
         dict(query_name="t3", query_sequence="T" * 20 + "G" * 10, flag=16,
              reference_id=0, reference_start=5, cigartuples=[(4, 20), (0, 10)]),
     ]
@@ -217,7 +218,6 @@ def test_map_one_transcript_set_captures_unmapped(tmp_path, monkeypatch):
 
     monkeypatch.setattr(minimap2, "run_piped", fake_piped)
     monkeypatch.setattr(minimap2, "run_cmd", lambda *a, **k: None)
-    monkeypatch.setattr(minimap2, "_coordinate_sort_and_filter", lambda *a, **k: None)
     monkeypatch.setattr(minimap2, "_bam_is_complete", lambda _p: False)
 
     (tmp_path / "genome.fa").write_text(">c1\n" + "ACGT" * 100 + "\n")
@@ -235,7 +235,7 @@ def test_map_one_transcript_set_captures_unmapped(tmp_path, monkeypatch):
     assert "tx_M" not in text
 
 
-# --- align_hints integration (the "reads" section) -------------------------
+# --- soft-clip diagnostic integration (the "reads" section) ----------------
 
 
 def _reads_bam_with_polya(tmp_path):
@@ -252,8 +252,6 @@ def _reads_bam_with_polya(tmp_path):
 
 
 def test_run_softclip_diagnostic_writes_reads_polya_section(tmp_path):
-    from eukan.assembly.align_hints import run_softclip_diagnostic
-
     bam, genome = _reads_bam_with_polya(tmp_path)
     run_softclip_diagnostic(bam, genome, tmp_path)
 
@@ -263,8 +261,6 @@ def test_run_softclip_diagnostic_writes_reads_polya_section(tmp_path):
 
 
 def test_run_softclip_diagnostic_backfills_reads_section_on_resume(tmp_path):
-    from eukan.assembly.align_hints import run_softclip_diagnostic
-
     bam, genome = _reads_bam_with_polya(tmp_path)
     run_softclip_diagnostic(bam, genome, tmp_path)            # cold: writes both
     (tmp_path / POLYA_DIAGNOSTIC).unlink()                    # simulate pre-feature run dir
@@ -297,8 +293,38 @@ def test_finalize_transcript_diagnostics_writes_sections(tmp_path):
     _finalize_transcript_diagnostics(config)
 
     data = json.loads((tmp_path / POLYA_DIAGNOSTIC).read_text())
-    assert data["transcripts"]["n_polyA_3p"] == 1
-    assert data["unmapped_transcripts"] == {"n_seqs": 1, "n_with_polyA_tail": 1}
+    assert data["transcripts"]["trinity-denovo"]["n_polyA_3p"] == 1
+    assert data["unmapped_transcripts"] == {
+        "trinity-denovo": {"n_seqs": 1, "n_with_polyA_tail": 1},
+    }
+
+
+def test_finalize_transcript_diagnostics_keeps_every_track(tmp_path):
+    # Both Trinity tracks get their own entry; the genome-guided one used to
+    # overwrite the de novo one under the shared section key.
+    from eukan.assembly.minimap2 import _finalize_transcript_diagnostics
+
+    _finalize_setup(tmp_path)  # de novo: 1 poly-A clip
+    (tmp_path / "trinity-gg.fasta").write_text(">g1\n" + "ACGT" * 50 + "\n")
+    _write_bam(tmp_path / "trinity-gg.genome.bam", [("c1", 800)], [
+        dict(query_name=f"g{i}", query_sequence="C" * 10 + "A" * 20, flag=0,
+             reference_id=0, reference_start=5 + i * 40, cigartuples=[(0, 10), (4, 20)])
+        for i in range(2)
+    ])
+    (tmp_path / "trinity-denovo.unmapped_transcripts.fasta").write_text(">u1\nACGT\n")
+    (tmp_path / "trinity-gg.unmapped_transcripts.fasta").write_text(
+        ">u1\nACGT\n>u2\n" + "ACGT" * 4 + "A" * 16 + "\n"
+    )
+    config = AssemblyConfig(genome=tmp_path / "genome.fa", work_dir=tmp_path, num_cpu=1)
+    _finalize_transcript_diagnostics(config)
+
+    data = json.loads((tmp_path / POLYA_DIAGNOSTIC).read_text())
+    assert data["transcripts"]["trinity-denovo"]["n_polyA_3p"] == 1
+    assert data["transcripts"]["trinity-gg"]["n_polyA_3p"] == 2
+    assert data["unmapped_transcripts"] == {
+        "trinity-denovo": {"n_seqs": 1, "n_with_polyA_tail": 0},
+        "trinity-gg": {"n_seqs": 2, "n_with_polyA_tail": 1},
+    }
 
 
 def test_finalize_transcript_diagnostics_respects_diagnose_off(tmp_path):

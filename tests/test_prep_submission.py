@@ -6,11 +6,13 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
+from eukan.annotation import pipeline as annotation_pipeline
 from eukan.exceptions import ConfigurationError
-from eukan.settings import SubmissionConfig
-from eukan.submission import build_command, shell_repr
+from eukan.functional import pipeline as functional_pipeline
+from eukan.infra.manifest import MANIFEST_FILE, PipelineRecord, RunManifest
+from eukan.settings import FunctionalConfig, PipelineConfig, SubmissionConfig
+from eukan.submission import build_command, run_prep_submission, shell_repr
 from eukan.submission.pipeline import _parse_val_report
 
 # ---------------------------------------------------------------------------
@@ -83,6 +85,12 @@ class TestBuildCommand:
         config = _base_config(submission_inputs, organism=None, isolate=None)
         # source_info is also None; build_command should raise
         with pytest.raises(ConfigurationError, match="source qualifier"):
+            build_command(config)
+
+    def test_undiscovered_config_raises(self, submission_inputs):
+        # genome not given and discover() not called: no command with "None" in it
+        config = _base_config(submission_inputs, genome=None)
+        with pytest.raises(ValueError, match="call discover"):
             build_command(config)
 
     def test_locus_tag_prefix_appended(self, submission_inputs):
@@ -158,7 +166,60 @@ class TestAutoDiscovery:
             organism="Foo bar",
             gff3=submission_inputs["gff3"],
         )
+        config.discover()
         assert config.genome == submission_inputs["genome"]
+
+    def test_discovers_genome_when_func_annot_ran_first(
+        self, submission_inputs, tmp_path: Path, monkeypatch,
+    ):
+        """func-annot, which takes no genome, created the run dir's manifest and
+        annotate ran after it: the genome annotate ran on is still found."""
+        run = tmp_path / "run"
+        proteins = tmp_path / "proteins.faa"
+        proteins.write_text(">p\nMK\n")
+
+        def search(config, cache):
+            cache.write_text('{"homology": {}, "pfam": {}}')
+            return {"homology": {}, "pfam": {}}
+
+        monkeypatch.setattr(functional_pipeline, "_search_and_cache", search)
+        monkeypatch.setattr(functional_pipeline, "annotate_fasta", lambda *a: None)
+        functional_pipeline.run_functional_annotation(FunctionalConfig(
+            proteins=proteins, work_dir=run / "func-annot", manifest_dir=run, num_cpu=1,
+        ))
+        monkeypatch.setattr(annotation_pipeline, "_execute_steps", lambda *a: None)
+        annotation_pipeline.run_annotation_pipeline(PipelineConfig(
+            genome=submission_inputs["genome"], proteins=[proteins],
+            work_dir=run / "annotate", manifest_dir=run, num_cpu=1,
+        ))
+
+        config = SubmissionConfig(
+            work_dir=run / "submission", manifest_dir=run,
+            template=submission_inputs["template"], organism="Foo bar",
+            gff3=submission_inputs["gff3"],
+        )
+        config.discover()
+        assert config.genome == submission_inputs["genome"]
+
+    def test_genome_preference_order(self, submission_inputs, tmp_path: Path):
+        """annotate's genome (often the masked one), then mask-repeats', then
+        assemble's, then a version 1 manifest's single genome."""
+        run = tmp_path / "run"
+        run.mkdir()
+        manifest = RunManifest(genome=str(tmp_path / "v1.fa"), pipelines={
+            p: PipelineRecord(genome=tmp_path / f"{p}.fa")
+            for p in ("assembly", "repeats", "annotation")
+        })
+        for expected in ("annotation", "repeats", "assembly", "v1"):
+            (run / MANIFEST_FILE).write_text(manifest.model_dump_json())
+            config = SubmissionConfig(
+                work_dir=run / "submission", manifest_dir=run,
+                template=submission_inputs["template"], organism="Foo bar",
+                gff3=submission_inputs["gff3"],
+            )
+            config.discover()
+            assert config.genome == tmp_path / f"{expected}.fa"
+            manifest.pipelines.pop(expected, None)
 
     def test_discovers_gff3_prefers_mod(self, submission_inputs, tmp_path: Path):
         work_dir = tmp_path / "wd"
@@ -174,6 +235,7 @@ class TestAutoDiscovery:
             template=submission_inputs["template"],
             organism="Foo bar",
         )
+        config.discover()
         assert config.gff3 == mod
 
     def test_discovers_gff3_falls_back_to_plain(self, submission_inputs, tmp_path: Path):
@@ -187,30 +249,46 @@ class TestAutoDiscovery:
             template=submission_inputs["template"],
             organism="Foo bar",
         )
+        config.discover()
         assert config.gff3 == plain
 
+    def test_construction_reads_no_manifest(self, submission_inputs, tmp_path: Path):
+        """Building the config needs neither input and reads no manifest;
+        discover() fills them in or says which one is missing."""
+        work_dir = tmp_path / "wd"
+        work_dir.mkdir()
+        config = SubmissionConfig(
+            work_dir=work_dir, template=submission_inputs["template"], organism="Foo bar",
+        )
+        assert config.genome is None
+        assert config.gff3 is None
+        with pytest.raises(ConfigurationError, match="genome not set"):
+            config.discover()
+
     def test_missing_genome_raises(self, submission_inputs, tmp_path: Path):
-        # work_dir has no eukan-run.json; no --genome → ValidationError.
+        # work_dir has no eukan-run.json; no --genome → discover() raises.
         empty = tmp_path / "empty"
         empty.mkdir()
-        with pytest.raises(ValidationError, match="genome"):
-            SubmissionConfig(
-                work_dir=empty,
-                template=submission_inputs["template"],
-                gff3=submission_inputs["gff3"],
-                organism="Foo bar",
-            )
+        config = SubmissionConfig(
+            work_dir=empty,
+            template=submission_inputs["template"],
+            gff3=submission_inputs["gff3"],
+            organism="Foo bar",
+        )
+        with pytest.raises(ConfigurationError, match="genome"):
+            config.discover()
 
     def test_missing_gff3_raises(self, submission_inputs, tmp_path: Path):
         empty = tmp_path / "empty"
         empty.mkdir()
-        with pytest.raises(ValidationError, match="gff3"):
-            SubmissionConfig(
-                work_dir=empty,
-                template=submission_inputs["template"],
-                genome=submission_inputs["genome"],
-                organism="Foo bar",
-            )
+        config = SubmissionConfig(
+            work_dir=empty,
+            template=submission_inputs["template"],
+            genome=submission_inputs["genome"],
+            organism="Foo bar",
+        )
+        with pytest.raises(ConfigurationError, match="gff3"):
+            config.discover()
 
 
 # ---------------------------------------------------------------------------
@@ -253,3 +331,18 @@ def test_shell_repr_quotes_arguments_with_spaces(submission_inputs):
     rendered = shell_repr(cmd)
     # The -j value contains a space and brackets; both must be quoted.
     assert "'[organism=Homo sapiens]'" in rendered
+
+
+def test_cleanup_runs_on_the_cleaned_gff3_without_changing_the_callers_config(
+    submission_inputs, caplog,
+):
+    import logging
+
+    config = _base_config(submission_inputs)
+    given = config.gff3
+    with caplog.at_level(logging.INFO, logger="eukan.submission.pipeline"):
+        run_prep_submission(config, dry_run=True)
+    assert config.gff3 == given
+    cleaned = config.output_dir / "final.mod.cleaned.gff3"
+    assert cleaned.exists()
+    assert f" -f {cleaned} " in caplog.text

@@ -1,25 +1,35 @@
 """Eukan exception hierarchy.
 
 Structured, domain-specific exceptions carrying actionable context for
-CLI error formatting. The CLI's top-level handler in ``cli.py``
-dispatches on the category classes below, so the hierarchy stays
-minimal and isinstance-friendly::
+CLI error formatting. The CLI's top-level handler (``EukanGroup.invoke``
+in :mod:`eukan.cli._framework`) renders any of them through its
+``format_for_cli()``, so a class exists only where it carries behaviour::
 
     EukanError
     ├── ConfigurationError
-    │   └── InvalidOptionError
     ├── ValidationError
     │   ├── FastaValidationError
     │   └── GFFValidationError
-    ├── DependencyError
-    │   ├── MissingToolError
-    │   └── ToolEnvError
+    ├── MissingToolError
+    ├── ToolEnvError
     └── ExternalToolError
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+
+# Stderr fragments that mean a tool ran out of disk space. "no space" and
+# "disk quota exceeded" cover the strerror texts of ENOSPC and EDQUOT. htslib
+# (samtools) reports a write to a full disk as "File write failed" or as
+# 'failed writing to "x.bam": Illegal seek', with a misleading errno.
+DISK_FULL_MARKERS = (
+    "no space",
+    "disk quota exceeded",
+    "illegal seek",
+    "failed writing",
+    "write failed",
+)
 
 
 class EukanError(Exception):
@@ -49,10 +59,6 @@ class ConfigurationError(EukanError):
     """Bad settings, missing options, or invalid combinations."""
 
 
-class InvalidOptionError(ConfigurationError):
-    """An option value is out of range or an incompatible combination was given."""
-
-
 class ValidationError(EukanError):
     """Invalid input files."""
 
@@ -78,11 +84,7 @@ class GFFValidationError(ValidationError):
     _kind = "GFF3"
 
 
-class DependencyError(EukanError):
-    """Missing or broken external tools or databases."""
-
-
-class MissingToolError(DependencyError):
+class MissingToolError(EukanError):
     """A required external binary is not installed or not on PATH.
 
     Raised when ``subprocess`` cannot locate the executable for an
@@ -102,7 +104,7 @@ class MissingToolError(DependencyError):
         )
 
 
-class ToolEnvError(DependencyError):
+class ToolEnvError(EukanError):
     """Required environment variable for a tool is not set."""
 
     def __init__(self, tool: str, *, env_var: str) -> None:
@@ -118,10 +120,13 @@ class ExternalToolError(EukanError):
     """An external tool exited non-zero.
 
     Attributes:
+        message: What failed. Shown by the CLI unless it only restates the
+            generic ``"<tool> failed (exit N)"`` title.
         tool: Binary name (e.g. ``"gmes_petap.pl"``).
         returncode: Process exit code.
         cmd: Full command as a list of strings.
-        stderr_snippet: First 500 characters of stderr output.
+        stderr_snippet: Last 500 characters of stderr output (tools print
+            progress first and their error last).
         step: Pipeline step name, if known.
     """
 
@@ -136,10 +141,11 @@ class ExternalToolError(EukanError):
         step: str = "",
         **kwargs,
     ) -> None:
+        self.message = message
         self.tool = tool
         self.returncode = returncode
         self.cmd = cmd or []
-        self.stderr_snippet = stderr_snippet[:500]
+        self.stderr_snippet = stderr_snippet[-500:]
         self.step = step
         super().__init__(message, **kwargs)
 
@@ -150,11 +156,20 @@ class ExternalToolError(EukanError):
         return msg
 
     def format_for_cli(self) -> tuple[str, list[str]]:
-        title = f"Error: {self.tool} failed (exit {self.returncode})"
+        generic = f"{self.tool} failed (exit {self.returncode})"
         details: list[str] = []
+        if self.message != generic:
+            details.append(self.message)
         if self.step:
             details.append(f"Step: {self.step}")
         if self.stderr_snippet:
-            details.append(f"stderr: {self.stderr_snippet[:300]}")
+            details.append(f"stderr: {self.stderr_snippet[-300:]}")
+        if any(marker in self.stderr_snippet.lower() for marker in DISK_FULL_MARKERS):
+            # Point at the fix rather than at -v; the CLI adds the hint, if any.
+            advice = [] if self.hint else [
+                "Free up disk space on the device hosting the work directory and re-run.",
+            ]
+            tool = f"Tool: {self.tool} (exit {self.returncode})"
+            return "Error: no space left on device", [tool, *details, *advice]
         details.append("Run with -v for full command and stderr output.")
-        return title, details
+        return f"Error: {generic}", details

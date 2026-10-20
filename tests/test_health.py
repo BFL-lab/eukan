@@ -1,13 +1,20 @@
-"""Tests for eukan.infra.health and eukan.infra.conda_env."""
+"""Tests for eukan.infra.health."""
 
+import importlib
+import os
+import subprocess
+import sys
+from pathlib import Path
 
-from eukan.infra.conda_env import generate_environment_yml
+import eukan
+from eukan.cli.check import format_results
+from eukan.infra import health
 from eukan.infra.health import (
     PythonCheckResult,
+    _check_module_imports,
     _crash_signal,
     check_tool,
     cpu_baseline,
-    format_results,
     run_checks,
 )
 from eukan.infra.tools_registry import EnvVarSpec, Tool, load_tools
@@ -38,6 +45,60 @@ class TestCheckTool:
         result = check_tool(tool)
         assert result.found
         assert not result.env_ok
+
+    def test_non_utf8_version_output_is_ok(self, tmp_path):
+        """A working tool whose version banner holds a non-UTF-8 byte (Debian's
+        samtools prints a Latin-1 0xab) is not reported broken."""
+        script = tmp_path / "fakesamtools.sh"
+        script.write_text("printf 'samtools 1.21\\nbuilt in \\253BUILDPATH\\273\\n'\n")
+        tool = Tool("fakesamtools", "sh", ("sh", str(script)), ("test",))
+        result = check_tool(tool)
+        assert result.found
+        assert result.version_ok
+        assert result.version_output == "samtools 1.21"
+
+    @staticmethod
+    def _fake_genemark(tmp_path, monkeypatch, check_install):
+        """The registry's genemark entry, with a GeneMark dir on PATH whose
+        gmes_petap.pl prints its usage banner and whose check_install.bash is
+        *check_install*."""
+        gm = tmp_path / "gmes_linux_64_4"
+        gm.mkdir()
+        petap = gm / "gmes_petap.pl"
+        petap.write_text(
+            "#!/bin/sh\necho '# -------------------'\necho 'Usage: gmes_petap.pl'\n"
+            "echo\necho 'GeneMark-ES Suite version 4.71_lic'\n"
+        )
+        petap.chmod(0o755)
+        (gm / "check_install.bash").write_text(check_install)
+        monkeypatch.setenv("PATH", f"{gm}{os.pathsep}{os.environ['PATH']}")
+        (genemark,) = [t for t in load_tools() if t.name == "genemark"]
+        return genemark
+
+    def test_genemark_with_an_ended_license_fails(self, tmp_path, monkeypatch):
+        """gmes_petap.pl runs without the key, so only GeneMark's own install
+        check (gmhmme3) shows that the license period has ended."""
+        genemark = self._fake_genemark(tmp_path, monkeypatch, (
+            'echo "Checking GeneMark-ES installation"\n'
+            'echo "GeneMark.hmm is set"\n'
+            'echo "Your license period has ended" >&2\n'
+            'echo "Error, unexpected condition was detected"\n'
+            "exit 1\n"
+        ))
+        result = check_tool(genemark)
+        assert result.problems == [
+            "install check failed: Your license period has ended "
+            "Error, unexpected condition was detected",
+        ]
+
+    def test_genemark_whose_install_check_passes_is_ok(self, tmp_path, monkeypatch):
+        genemark = self._fake_genemark(
+            tmp_path, monkeypatch, 'echo "All required components for GeneMark-ES were found"\n',
+        )
+        result = check_tool(genemark)
+        assert result.ok
+        # The suite's version line, not the first line of the usage banner.
+        assert result.version_output == "GeneMark-ES Suite version 4.71_lic"
 
     def test_direct_sigill_detected(self):
         """A binary killed by SIGILL should be flagged as broken."""
@@ -138,25 +199,13 @@ class TestToolRegistry:
         assert "augustus" in names
         assert "samtools" in names
 
-    # stringtie/rnaspades were replaced by Trinity (both modes) in the active
-    # pipeline. They're dormant: required_by is intentionally empty so
-    # `eukan check assemble` doesn't demand them, but they keep a conda_package
-    # so they stay installable via environment.yml.
-    _DORMANT = frozenset({"stringtie", "rnaspades"})
-
     def test_tool_fields(self):
         """Tools should have all required fields populated."""
         tools = load_tools()
         for tool in tools:
             assert tool.binary
             assert tool.version_cmd
-            if tool.name in self._DORMANT:
-                # Dormant tools: no subcommand requires them, but they stay
-                # installable (conda_package retained for environment.yml).
-                assert tool.required_by == ()
-                assert tool.conda_package
-            else:
-                assert len(tool.required_by) > 0
+            assert len(tool.required_by) > 0
 
     def test_minimap2_registered(self):
         """minimap2 (bioconda >= 2.29 for splice:sr) is registered for assemble."""
@@ -188,6 +237,47 @@ class TestRunChecks:
 
 
 class TestPythonChecks:
+    def test_module_check_covers_every_first_party_module(self):
+        """Every module under eukan/ is imported, not a hand-kept list of 30."""
+        root = Path(eukan.__file__).parent
+        n_files = sum(1 for p in root.rglob("*.py") if "__pycache__" not in p.parts)
+        result = _check_module_imports()
+        assert result.ok
+        assert result.detail == f"all {n_files} modules OK"
+
+    def test_module_check_reports_a_module_that_fails_to_import(self, monkeypatch):
+        """functional.kofam was not on the old list, so a broken one passed."""
+        real = importlib.import_module
+
+        def fake(name, *args, **kwargs):
+            if name == "eukan.functional.kofam":
+                raise ImportError("boom")
+            return real(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib, "import_module", fake)
+        result = _check_module_imports()
+        assert not result.ok
+        assert "eukan.functional.kofam: boom" in result.detail
+
+    def test_failed_probe_reports_why(self, monkeypatch):
+        """A failed probe used to report an empty detail (a bare assert)."""
+        monkeypatch.setattr(health, "load_tools", lambda: ())
+        result = health._check_python_dep("tool registry", health._probe_tool_registry)
+        assert not result.ok
+        assert result.detail == "only 0 tools loaded from tools.toml"
+
+    def test_probe_still_fails_under_python_O(self):
+        """`python -O` strips asserts, which turned every probe into a pass."""
+        code = (
+            "from eukan.infra import health\n"
+            "health.load_tools = lambda: ()\n"
+            "print(health._check_python_dep('r', health._probe_tool_registry).ok)\n"
+        )
+        out = subprocess.run(
+            [sys.executable, "-O", "-c", code], capture_output=True, text=True, check=True,
+        ).stdout
+        assert out.strip() == "False"
+
     def test_all_pass(self):
         """Python dep checks should pass in a working environment."""
         from eukan.infra.health import check_python_deps
@@ -237,23 +327,3 @@ class TestFormatResults:
             output = format_results([], [result])
             assert "license" in output.lower()
             assert "hint:" in output
-
-
-class TestGenerateEnv:
-    def test_generates_valid_yaml(self):
-        """Output should be valid YAML with expected structure."""
-        content = generate_environment_yml()
-        assert "name: eukan" in content
-        assert "bioconda" in content
-        assert "augustus" in content
-        assert "tools.toml" in content
-
-    def test_deduplicates_packages(self):
-        """spaln should appear only once despite spaln/makdbs sharing a package."""
-        content = generate_environment_yml()
-        assert content.count("- spaln") == 1
-
-    def test_includes_minimap2(self):
-        """minimap2 is emitted from tools.toml with its bioconda version pin."""
-        content = generate_environment_yml()
-        assert "minimap2>=2.29" in content

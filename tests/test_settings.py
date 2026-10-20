@@ -1,8 +1,24 @@
 """Tests for eukan.settings — pydantic-settings configuration."""
 
+import os
 from pathlib import Path
 
-from eukan.settings import AssemblyConfig, FunctionalConfig, Kingdom, PipelineConfig
+import pytest
+from pydantic import ValidationError
+
+from eukan.annotation.pipeline import run_annotation_pipeline
+from eukan.assembly.pipeline import run_assembly
+from eukan.functional.pipeline import run_functional_annotation
+from eukan.repeats.pipeline import run_repeats
+from eukan.settings import (
+    AssemblyConfig,
+    FunctionalConfig,
+    Kingdom,
+    PipelineConfig,
+    RepeatsConfig,
+    SubmissionConfig,
+)
+from eukan.submission.pipeline import run_prep_submission
 
 
 class TestPipelineConfig:
@@ -15,9 +31,18 @@ class TestPipelineConfig:
         assert config.genetic_code == "11"
         assert config.weights == [2, 1, 3]
         assert config.kingdom is None
+        assert config.orf_patch is None
         assert config.num_cpu >= 1
         assert config.name == "genome"
         assert len(config.shortname) == 5
+
+    def test_num_cpu_defaults_to_the_cpus_this_process_may_use(self, tmp_path, monkeypatch):
+        # A SLURM or docker cpuset limits the affinity mask, not the machine's count;
+        # the CLI's --numcpu default already counts the mask.
+        monkeypatch.setattr(os, "sched_getaffinity", lambda pid: {0, 1}, raising=False)
+        monkeypatch.setattr(os, "cpu_count", lambda: 64)
+        config = PipelineConfig(genome=tmp_path / "g.fa", proteins=[tmp_path / "p.faa"])
+        assert config.num_cpu == 2
 
     def test_name_derived_from_genome(self, tmp_path):
         """Name should default to genome stem."""
@@ -65,6 +90,7 @@ class TestPipelineConfig:
         (tmp_path / "hints_rnaseq.gff").write_text("# hints\n")
 
         config = PipelineConfig(genome=genome, proteins=[genome], work_dir=tmp_path)
+        config.discover()
         assert config.has_transcripts is True
         assert config.transcripts_fasta == tmp_path / "nr_transcripts.fasta"
         assert config.transcripts_gff == tmp_path / "nr_transcripts.gff3"
@@ -76,6 +102,7 @@ class TestPipelineConfig:
         genome.touch()
 
         config = PipelineConfig(genome=genome, proteins=[genome], work_dir=tmp_path)
+        config.discover()
         assert config.has_transcripts is False
         assert config.transcripts_fasta is None
 
@@ -94,7 +121,29 @@ class TestPipelineConfig:
             genome=genome, proteins=[genome], work_dir=tmp_path,
             transcripts_fasta=custom, transcripts_gff=custom, rnaseq_hints=custom,
         )
+        config.discover()
         assert config.transcripts_fasta == custom
+
+    def test_construction_does_not_discover(self, tmp_path, caplog):
+        """Building the config reads no files and logs nothing; discover() finds
+        the assembly outputs of a sibling assemble/ step dir."""
+        genome = tmp_path / "genome.fa"
+        assemble = tmp_path / "assemble"
+        assemble.mkdir()
+        for name in ("nr_transcripts.fasta", "nr_transcripts.gff3", "hints_rnaseq.gff"):
+            (assemble / name).write_text("x\n")
+
+        import logging
+        with caplog.at_level(logging.INFO, logger="eukan.settings"):
+            config = PipelineConfig(
+                genome=genome, proteins=[genome], work_dir=tmp_path / "annotate",
+                manifest_dir=tmp_path,
+            )
+        assert config.transcripts_fasta is None
+        assert caplog.text == ""
+        config.discover()
+        assert config.transcripts_fasta == assemble / "nr_transcripts.fasta"
+        assert config.has_transcripts is True
 
     def test_partial_assembly_outputs_warns(self, tmp_path, caplog):
         """Should warn when only some assembly outputs exist."""
@@ -106,6 +155,7 @@ class TestPipelineConfig:
         import logging
         with caplog.at_level(logging.WARNING, logger="eukan.settings"):
             config = PipelineConfig(genome=genome, proteins=[genome], work_dir=tmp_path)
+            config.discover()
         assert config.has_transcripts is False
         assert "Partial assembly outputs" in caplog.text
 
@@ -119,6 +169,15 @@ class TestPipelineConfig:
         config = PipelineConfig(genome=genome, proteins=[genome])
         assert config.genetic_code == "6"
         assert config.num_cpu == 4
+
+    def test_pyproject_in_cwd_is_not_read(self, tmp_path, monkeypatch):
+        """A [tool.eukan] table in the current directory's pyproject.toml is not a
+        settings source."""
+        (tmp_path / "pyproject.toml").write_text('[tool.eukan]\nkingdom = "fungus"\n')
+        monkeypatch.chdir(tmp_path)
+        genome = tmp_path / "genome.fa"
+        config = PipelineConfig(genome=genome, proteins=[genome], work_dir=tmp_path)
+        assert config.kingdom is None
 
     def test_constructor_overrides_env(self, tmp_path, monkeypatch):
         """Explicit constructor args should beat env vars."""
@@ -169,6 +228,33 @@ class TestAssemblyConfig:
         genome.touch()
         config = AssemblyConfig(genome=genome, memory_gb=12)
         assert config.memory_gb == 12
+
+    @pytest.mark.parametrize(("kwargs", "message"), [
+        ({"left_reads": "l.fq"}, "requires both --left and --right"),
+        ({"right_reads": "r.fq"}, "requires both --left and --right"),
+        ({"single_reads": "s.fq", "strand_specific": "RF"}, "RF/FR"),
+        ({"left_reads": "l.fq", "right_reads": "r.fq", "strand_specific": "F"}, "R/F"),
+    ])
+    def test_inconsistent_read_pairing_rejected(self, tmp_path, kwargs, message):
+        with pytest.raises(ValidationError, match=message):
+            AssemblyConfig(genome=tmp_path / "g.fa", work_dir=tmp_path, **kwargs)
+
+    def test_consistent_read_pairing_accepted(self, tmp_path):
+        genome = tmp_path / "g.fa"
+        AssemblyConfig(genome=genome, work_dir=tmp_path, single_reads="s.fq", strand_specific="R")
+        AssemblyConfig(
+            genome=genome, work_dir=tmp_path, left_reads="l.fq", right_reads="r.fq",
+            strand_specific="RF",
+        )
+        # No reads at all: that check is the CLI's.
+        AssemblyConfig(genome=genome, work_dir=tmp_path, strand_specific="RF")
+
+    def test_dump_and_repr_without_reads(self, tmp_path):
+        """Derived values are plain properties, so model_dump() and repr() don't
+        evaluate reads_args_*, which raise when no reads are set."""
+        config = AssemblyConfig(genome=tmp_path / "g.fa", work_dir=tmp_path)
+        assert "reads_args_minimap2" not in config.model_dump()
+        assert repr(config).startswith("AssemblyConfig(")
 
 
 class TestDefaultAssemblyMemoryGb:
@@ -237,3 +323,96 @@ class TestFunctionalConfig:
 
         config = FunctionalConfig(proteins=proteins)
         assert config.uniprot_db == Path("/custom/uniprot.faa")
+
+
+class TestTypedFields:
+    """Values are checked when the config is built, not by the step that first reads them."""
+
+    def test_unknown_genetic_code_fails_at_construction(self, tmp_path):
+        with pytest.raises(ValidationError, match="genetic_code"):
+            AssemblyConfig(genome=tmp_path / "g.fa", work_dir=tmp_path, genetic_code="99")
+
+    def test_non_numeric_genetic_code_fails_at_construction(self, tmp_path):
+        genome = tmp_path / "g.fa"
+        with pytest.raises(ValidationError, match="genetic_code"):
+            PipelineConfig(genome=genome, proteins=[genome], work_dir=tmp_path, genetic_code="abc")
+
+    def test_genetic_code_accepts_an_int_and_stays_a_string(self, tmp_path):
+        config = AssemblyConfig(genome=tmp_path / "g.fa", work_dir=tmp_path, genetic_code=6)
+        assert config.genetic_code == "6"
+        assert config.genetic_code_obj.ncbi_id == 6
+
+    def test_evalue_is_a_float(self, tmp_path):
+        config = FunctionalConfig(proteins=tmp_path / "p.faa", work_dir=tmp_path, evalue="1e-5")
+        assert config.evalue == 1e-5
+
+    def test_non_numeric_evalue_fails_at_construction(self, tmp_path):
+        with pytest.raises(ValidationError, match="evalue"):
+            FunctionalConfig(proteins=tmp_path / "p.faa", work_dir=tmp_path, evalue="abc")
+
+    def test_unknown_homology_db_rejected(self, tmp_path):
+        with pytest.raises(ValidationError, match="homology_db"):
+            FunctionalConfig(proteins=tmp_path / "p.faa", work_dir=tmp_path, homology_db="pfam")
+
+    def test_unknown_orf_patch_rejected(self, tmp_path):
+        genome = tmp_path / "g.fa"
+        with pytest.raises(ValidationError, match="Input should be 'supported' or 'all'"):
+            PipelineConfig(genome=genome, proteins=[genome], work_dir=tmp_path, orf_patch="on")
+
+
+class TestUnknownFields:
+    """A keyword that is not a field (a typo, a CLI option name, a removed
+    field) is an error instead of being dropped silently."""
+
+    @pytest.mark.parametrize(("cls", "required"), [
+        (PipelineConfig, {"genome": "g.fa", "proteins": ["p.faa"]}),
+        (AssemblyConfig, {"genome": "g.fa"}),
+        (RepeatsConfig, {"genome": "g.fa"}),
+        (FunctionalConfig, {"proteins": "p.faa"}),
+        (SubmissionConfig, {"template": "t.sbt", "organism": "Foo bar"}),
+    ])
+    def test_unknown_keyword_rejected(self, tmp_path, cls, required):
+        with pytest.raises(ValidationError, match="numcpu\n  Extra inputs are not permitted"):
+            cls(work_dir=tmp_path, numcpu=4, **required)
+
+    def test_unrelated_env_vars_ignored(self, tmp_path, monkeypatch):
+        # To PipelineConfig (prefix EUKAN_) both name fields that don't exist.
+        monkeypatch.setenv("EUKAN_NO_SUCH_FIELD", "1")
+        monkeypatch.setenv("EUKAN_ASSEMBLE_NUM_CPU", "3")
+        PipelineConfig(genome="g.fa", proteins=["p.faa"], work_dir=tmp_path)
+
+
+_DRIVERS = [
+    (run_annotation_pipeline, PipelineConfig, {"genome": "g.fa", "proteins": ["p.faa"]}),
+    (run_assembly, AssemblyConfig, {"genome": "g.fa"}),
+    (run_repeats, RepeatsConfig, {"genome": "g.fa"}),
+    (run_functional_annotation, FunctionalConfig, {"proteins": "p.faa"}),
+    (run_prep_submission, SubmissionConfig, {"template": "t.sbt", "genome": "g.fa", "gff3": "a.gff3"}),
+]
+
+
+class TestRunDirs:
+    """Building a config creates nothing; each pipeline driver creates work_dir and
+    manifest_dir first (ensure_dirs), so a config built by a test or a health probe
+    leaves the filesystem alone."""
+
+    @pytest.mark.parametrize(("cls", "required"), [(cls, req) for _, cls, req in _DRIVERS])
+    def test_building_a_config_creates_nothing(self, tmp_path, cls, required):
+        config = cls(work_dir=tmp_path / "run" / "step", manifest_dir=tmp_path / "run", **required)
+        assert list(tmp_path.iterdir()) == []
+        config.ensure_dirs()
+        assert config.work_dir.is_dir()
+        assert config.manifest_dir.is_dir()
+
+    @pytest.mark.parametrize(("driver", "cls", "required"), _DRIVERS)
+    def test_drivers_create_the_dirs_first(self, tmp_path, monkeypatch, driver, cls, required):
+        # None of the inputs exist: a driver that read one first would fail on it.
+        class DirsCreated(Exception):
+            pass
+
+        def ensure_dirs(self):
+            raise DirsCreated
+
+        monkeypatch.setattr(cls, "ensure_dirs", ensure_dirs)
+        with pytest.raises(DirsCreated):
+            driver(cls(work_dir=tmp_path / "step", manifest_dir=tmp_path, **required))
