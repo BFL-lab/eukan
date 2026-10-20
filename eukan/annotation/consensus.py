@@ -94,7 +94,8 @@ def build_consensus_models(
 
     orfs = config.work_dir / "orf_finder" / "transcript_orfs.gff3"
     if config.orf_patch is None:
-        log.info("ORF patch off; pass --orf-patch supported|all to reintroduce transcript ORFs")
+        if orfs.exists():  # a protein-only run has none to reintroduce
+            log.info("ORF patch off; pass --orf-patch supported|all to reintroduce transcript ORFs")
     elif config.orf_patch == "all":
         consdb = _patch_in_unmatched_orfs(consdb, orfs)
     else:

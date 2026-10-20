@@ -214,17 +214,19 @@ class TestOrfPatchModes:
         "orf_bare": (6000, 6299, None),
     }
 
-    def _patched(self, tmp_path, monkeypatch, orf_patch) -> set[str]:
-        """The ORFs final.gff3 holds after build_consensus_models (combinr stubbed)."""
+    def _patched(self, tmp_path, monkeypatch, orf_patch, *, with_orfs=True) -> set[str]:
+        """The ORFs final.gff3 holds after build_consensus_models (combinr stubbed).
+        Without *with_orfs*, orf_finder left no ORFs, as in a protein-only run."""
         def fake_combinr(config, sdir, evidence, *, transcripts=None):
             (sdir / "consensus_models.gff3").write_text(_CONSENSUS_GFF)
             return sdir / "consensus_models.gff3"
 
         monkeypatch.setattr(consensus, "run_combinr_consensus", fake_combinr)
-        (tmp_path / "orf_finder").mkdir()
-        (tmp_path / "orf_finder" / "transcript_orfs.gff3").write_text("".join(
-            _orf_gff(start, end, gid, cds=cds) for gid, (start, end, cds) in self.ORFS.items()
-        ))
+        if with_orfs:
+            (tmp_path / "orf_finder").mkdir()
+            (tmp_path / "orf_finder" / "transcript_orfs.gff3").write_text("".join(
+                _orf_gff(start, end, gid, cds=cds) for gid, (start, end, cds) in self.ORFS.items()
+            ))
         prot = tmp_path / "prot.gff3"
         prot.write_text(_PROT_GFF)
         genome = tmp_path / "genome.fa"
@@ -248,6 +250,12 @@ class TestOrfPatchModes:
             "ORF patch off; pass --orf-patch supported|all to reintroduce transcript ORFs"
             in caplog.text
         )
+
+    def test_off_says_nothing_without_transcript_orfs(self, tmp_path, monkeypatch, caplog):
+        """A protein-only run has no transcript ORFs to reintroduce."""
+        with caplog.at_level("INFO", logger="eukan.annotation.consensus"):
+            assert self._patched(tmp_path, monkeypatch, None, with_orfs=False) == set()
+        assert "ORF patch" not in caplog.text
 
     def test_all_adds_every_orf_clear_of_the_consensus(self, tmp_path, monkeypatch):
         assert self._patched(tmp_path, monkeypatch, "all") == set(self.ORFS)
