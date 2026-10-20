@@ -142,7 +142,7 @@ class TestPrettifyGFF3:
         # gffutils stores attribute values as lists.
         assert genes[0].attributes["ID"] == ["TEST_00001"]
         assert genes[1].attributes["ID"] == ["TEST_00002"]
-        assert all(f.source == "eukannotpass" for f in features)
+        assert all(f.source == "eukan" for f in features)
 
     def _cds_frames(self, db):
         return {

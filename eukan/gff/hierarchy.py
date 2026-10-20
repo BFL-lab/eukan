@@ -96,7 +96,7 @@ def prettify_gff3(
         gene.attributes["ID"] = gene_name
         gene.attributes["locus_tag"] = gene_name
         gene.attributes["Name"] = gene_name
-        gene.source = "eukannotpass"
+        gene.source = "eukan"
         yield gene
 
         for mRNA_num, mRNA in enumerate(
@@ -107,7 +107,7 @@ def prettify_gff3(
             mRNA.attributes.update(
                 ID=mRNA_name, Name=mRNA_name, Parent=gene_name, locus_tag=mRNA_name
             )
-            mRNA.source = "eukannotpass"
+            mRNA.source = "eukan"
             yield mRNA
 
             phases = _cds_phases(gff3, mRNA)
@@ -121,5 +121,5 @@ def prettify_gff3(
                     f.attributes.update(
                         ID=f_name, Parent=mRNA_name, locus_tag=f_name
                     )
-                    f.source = "eukannotpass"
+                    f.source = "eukan"
                     yield f
