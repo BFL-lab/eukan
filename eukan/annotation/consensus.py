@@ -27,7 +27,10 @@ def _patch_in_unmatched_orfs(consdb, orf_path: Path):
     missing = concordance.find_nonoverlapping_genes(orf_db, consdb)
     if not missing:
         return consdb
-    log.info("Reintroduced %d transcript ORFs not overlapping the consensus", len(missing))
+    log.info(
+        "Reintroduced %d transcript ORFs not overlapping the consensus",
+        sum(f.featuretype == "gene" for f in missing),
+    )
     return consdb.update(missing, merge_strategy="merge")
 
 

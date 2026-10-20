@@ -68,6 +68,17 @@ class TestPatchInUnmatchedOrfs:
 
         assert result is consdb
 
+    def test_log_counts_genes_not_features(self, tmp_path, caplog):
+        """One ORF gene (gene + mRNA + CDS) is one reintroduced ORF, not three."""
+        consdb = self._consdb(tmp_path)
+        orf = tmp_path / "transcript_orfs.gff3"
+        orf.write_text(_gene_gff("chr1", 1000, 1300, "orf1"))
+
+        with caplog.at_level("INFO", logger="eukan.annotation.consensus"):
+            _patch_in_unmatched_orfs(consdb, orf)
+
+        assert "Reintroduced 1 transcript ORFs" in caplog.text
+
     def test_orf_without_cds_not_added(self, tmp_path):
         consdb = self._consdb(tmp_path)
         orf = tmp_path / "transcript_orfs.gff3"
