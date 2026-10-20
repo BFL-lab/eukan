@@ -72,16 +72,20 @@ class IntervalIndex(Generic[IT]):
     and ``end`` attributes — e.g. ``gffutils.Feature`` and
     ``compare.models.Interval`` both qualify.
 
+    With ``ignore_strand=True`` the strand is left out of the key
+    (``(chrom, "")``), so a query overlaps intervals on either strand.
+
     Use :meth:`overlapping` to enumerate hits along with their overlap
     bp counts.
     """
 
-    __slots__ = ("_buckets",)
+    __slots__ = ("_buckets", "_ignore_strand")
 
-    def __init__(self, intervals: Iterable[IT]) -> None:
+    def __init__(self, intervals: Iterable[IT], *, ignore_strand: bool = False) -> None:
+        self._ignore_strand = ignore_strand
         groups: dict[tuple[str, str], list[IT]] = defaultdict(list)
         for iv in intervals:
-            groups[(iv.chrom, iv.strand)].append(iv)
+            groups[self._key(iv)].append(iv)
 
         self._buckets: dict[tuple[str, str], tuple[list[IT], list[int], list[int]]] = {}
         for key, ivs in groups.items():
@@ -90,14 +94,18 @@ class IntervalIndex(Generic[IT]):
             max_end_to = build_max_end_prefix(iv.end for iv in ivs)
             self._buckets[key] = (ivs, starts, max_end_to)
 
+    def _key(self, iv: _HasInterval) -> tuple[str, str]:
+        return (iv.chrom, "" if self._ignore_strand else iv.strand)
+
     def overlapping(self, query: _HasInterval) -> Iterator[tuple[IT, int]]:
-        """Yield ``(target, overlap_bp)`` for each strand-aware overlap.
+        """Yield ``(target, overlap_bp)`` for each overlap on the query's
+        strand (on either strand with ``ignore_strand``).
 
         Overlap bp is the inclusive intersection length, i.e.
         ``min(end_a, end_b) - max(start_a, start_b) + 1`` — at least 1
         for any returned target.
         """
-        entry = self._buckets.get((query.chrom, query.strand))
+        entry = self._buckets.get(self._key(query))
         if entry is None:
             return
         ivs, starts, max_end_to = entry

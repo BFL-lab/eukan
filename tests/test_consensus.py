@@ -13,13 +13,17 @@ from eukan.annotation.consensus import _patch_in_unmatched_orfs, _write_prettifi
 from eukan.gff import create_gff_db
 
 
-def _gene_gff(chrom: str, start: int, end: int, gid: str, *, cds: bool = True) -> str:
+def _gene_gff(
+    chrom: str, start: int, end: int, gid: str, *, cds: bool = True, strand: str = "+",
+) -> str:
     rows = [
-        f"{chrom}\tx\tgene\t{start}\t{end}\t.\t+\t.\tID={gid}",
-        f"{chrom}\tx\tmRNA\t{start}\t{end}\t.\t+\t.\tID={gid}.t1;Parent={gid}",
+        f"{chrom}\tx\tgene\t{start}\t{end}\t.\t{strand}\t.\tID={gid}",
+        f"{chrom}\tx\tmRNA\t{start}\t{end}\t.\t{strand}\t.\tID={gid}.t1;Parent={gid}",
     ]
     if cds:
-        rows.append(f"{chrom}\tx\tCDS\t{start}\t{end}\t.\t+\t0\tID={gid}.cds;Parent={gid}.t1")
+        rows.append(
+            f"{chrom}\tx\tCDS\t{start}\t{end}\t.\t{strand}\t0\tID={gid}.cds;Parent={gid}.t1"
+        )
     return "##gff-version 3\n" + "\n".join(rows) + "\n"
 
 
@@ -89,6 +93,17 @@ class TestPatchInUnmatchedOrfs:
         result = _patch_in_unmatched_orfs(consdb, orf)
 
         assert result is consdb
+
+    def test_antisense_orf_not_added(self, tmp_path):
+        """An ORF on the opposite strand of a consensus gene overlaps it too."""
+        consdb = self._consdb(tmp_path)
+        orf = tmp_path / "transcript_orfs.gff3"
+        orf.write_text(_gene_gff("chr1", 50, 250, "orf1", strand="-"))  # antisense to g1
+
+        result = _patch_in_unmatched_orfs(consdb, orf)
+
+        assert result is consdb
+        assert _gene_ids(consdb) == {"g1"}
 
     def test_log_counts_genes_not_features(self, tmp_path, caplog):
         """One ORF gene (gene + mRNA + CDS) is one reintroduced ORF, not three."""

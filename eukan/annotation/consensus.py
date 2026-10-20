@@ -17,7 +17,7 @@ log = get_logger(__name__)
 
 
 def _patch_in_unmatched_orfs(consdb, orf_path: Path):
-    """Add transcript ORFs that don't overlap any consensus gene.
+    """Add transcript ORFs that don't overlap any consensus gene, on either strand.
 
     Every row added says so in column 2 (:data:`ORF_PATCH_SOURCE`, which
     :func:`prettify_gff3` keeps) and every mRNA added carries
@@ -28,7 +28,7 @@ def _patch_in_unmatched_orfs(consdb, orf_path: Path):
     if not orf_path.exists():
         return consdb
     orf_db = create_gff_db(orf_path)
-    missing = concordance.find_nonoverlapping_genes(orf_db, consdb)
+    missing = concordance.find_nonoverlapping_genes(orf_db, consdb, ignore_strand=True)
     if not missing:
         return consdb
     for f in missing:

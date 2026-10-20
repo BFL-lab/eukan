@@ -137,12 +137,17 @@ def _has_cds_descendants(db: gffutils.FeatureDB, gene: gffutils.Feature) -> bool
 def find_nonoverlapping_genes(
     db_source: gffutils.FeatureDB,
     db_target: gffutils.FeatureDB,
+    *,
+    ignore_strand: bool = False,
 ) -> list[gffutils.Feature]:
     """Find ORF-containing genes in db_source that don't overlap any gene in db_target.
 
+    Only a target gene on the same strand counts as an overlap, unless
+    ``ignore_strand``, under which one on either strand does.
+
     Returns all features (gene + children) for non-overlapping, ORF-containing genes.
     """
-    target_index = IntervalIndex(db_target.features_of_type("gene"))
+    target_index = IntervalIndex(db_target.features_of_type("gene"), ignore_strand=ignore_strand)
     result: list[gffutils.Feature] = []
 
     for gene in db_source.features_of_type("gene"):

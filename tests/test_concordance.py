@@ -184,6 +184,26 @@ class TestFindNonoverlapping:
         result = find_nonoverlapping_genes(db_source, db_target)
         assert [f.id for f in result if f.featuretype == "gene"] == []
 
+    _ANTISENSE_SOURCE = (
+        "chr1\ttest\tgene\t100\t300\t.\t-\t.\tID=src\n"
+        "chr1\ttest\tmRNA\t100\t300\t.\t-\t.\tID=m;Parent=src\n"
+        "chr1\ttest\tCDS\t100\t300\t.\t-\t0\tID=c;Parent=m\n"
+    )
+    _SENSE_TARGET = "chr1\ttest\tgene\t200\t500\t.\t+\t.\tID=t1\n"
+
+    def test_overlap_is_same_strand_by_default(self, db_from_string):
+        result = find_nonoverlapping_genes(
+            db_from_string(self._ANTISENSE_SOURCE), db_from_string(self._SENSE_TARGET),
+        )
+        assert [f.id for f in result if f.featuretype == "gene"] == ["src"]
+
+    def test_ignore_strand_counts_an_antisense_overlap(self, db_from_string):
+        result = find_nonoverlapping_genes(
+            db_from_string(self._ANTISENSE_SOURCE), db_from_string(self._SENSE_TARGET),
+            ignore_strand=True,
+        )
+        assert result == []
+
 
 # ---------------------------------------------------------------------------
 # Concordant models
