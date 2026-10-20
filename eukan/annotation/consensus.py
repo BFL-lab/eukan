@@ -6,7 +6,7 @@ from pathlib import Path
 
 from eukan.annotation.combinr_consensus import run_combinr_consensus
 from eukan.gff import concordance, create_gff_db
-from eukan.gff.hierarchy import prettify_gff3
+from eukan.gff.hierarchy import ORF_PATCH_SOURCE, prettify_gff3
 from eukan.gff.io import count_gff3_features
 from eukan.infra.artifacts import Artifact
 from eukan.infra.logging import get_logger
@@ -19,6 +19,10 @@ log = get_logger(__name__)
 def _patch_in_unmatched_orfs(consdb, orf_path: Path):
     """Add transcript ORFs that don't overlap any consensus gene.
 
+    Every row added says so in column 2 (:data:`ORF_PATCH_SOURCE`, which
+    :func:`prettify_gff3` keeps) and every mRNA added carries
+    ``support=transcript_orf``, beside combinr's ``support=consensus``.
+
     Returns ``consdb``, updated in place when there are ORFs to add.
     """
     if not orf_path.exists():
@@ -27,6 +31,10 @@ def _patch_in_unmatched_orfs(consdb, orf_path: Path):
     missing = concordance.find_nonoverlapping_genes(orf_db, consdb)
     if not missing:
         return consdb
+    for f in missing:
+        f.source = ORF_PATCH_SOURCE
+        if f.featuretype == "mRNA":
+            f.attributes["support"] = ["transcript_orf"]
     log.info(
         "Reintroduced %d transcript ORFs not overlapping the consensus",
         sum(f.featuretype == "gene" for f in missing),

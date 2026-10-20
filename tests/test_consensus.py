@@ -27,6 +27,28 @@ def _gene_ids(db) -> set[str]:
     return {f.id for f in db.features_of_type("gene")}
 
 
+# One consensus gene as combinr writes it.
+_CONSENSUS_GFF = (
+    "##gff-version 3\n"
+    "chr1\tcombinr\tgene\t1\t300\t.\t+\t.\tID=g1\n"
+    "chr1\tcombinr\tmRNA\t1\t300\t.\t+\t.\tID=g1.t1;Parent=g1;support=consensus\n"
+    "chr1\tcombinr\texon\t1\t300\t.\t+\t.\tID=g1.exon1;Parent=g1.t1\n"
+    "chr1\tcombinr\tCDS\t1\t300\t.\t+\t0\tID=g1.cds1;Parent=g1.t1\n"
+)
+
+
+def _orf_gff(start: int, end: int, gid: str) -> str:
+    """One transcript ORF gene on chr1 as find_orfs writes it: gene and mRNA rows
+    derived by gffutils, exon and CDS rows from the assembly."""
+    rows = [
+        f"chr1\tgffutils_derived\tgene\t{start}\t{end}\t.\t+\t.\tID={gid}",
+        f"chr1\tgffutils_derived\tmRNA\t{start}\t{end}\t.\t+\t.\tParent={gid};ID={gid}_mRNA",
+        f"chr1\tcombinr-assembly\texon\t{start}\t{end}\t.\t+\t.\tID={gid}:exon:1;Parent={gid}_mRNA",
+        f"chr1\tcombinr-assembly\tCDS\t{start}\t{end}\t.\t+\t0\tID={gid}:CDS:1;Parent={gid}_mRNA",
+    ]
+    return "##gff-version 3\n" + "\n".join(rows) + "\n"
+
+
 class TestPatchInUnmatchedOrfs:
     def _consdb(self, tmp_path):
         path = tmp_path / "consensus_models.gff3"
@@ -87,6 +109,51 @@ class TestPatchInUnmatchedOrfs:
         result = _patch_in_unmatched_orfs(consdb, orf)
 
         assert result is consdb
+
+
+class TestPatchLabels:
+    """The patched genes stay recognisable: every row the patch adds says
+    eukan-orf-patch in column 2 and every mRNA it adds carries
+    support=transcript_orf, beside combinr's support=consensus."""
+
+    def _patched(self, tmp_path):
+        cons = tmp_path / "consensus_models.gff3"
+        cons.write_text(_CONSENSUS_GFF)
+        orf = tmp_path / "transcript_orfs.gff3"
+        orf.write_text(_orf_gff(1000, 1299, "orf1"))
+        return _patch_in_unmatched_orfs(create_gff_db(cons), orf)
+
+    def test_added_rows_are_labelled_and_consensus_rows_are_not(self, tmp_path):
+        db = self._patched(tmp_path)
+
+        assert {f.id: f.source for f in db.all_features()} == {
+            "g1": "combinr", "g1.t1": "combinr", "g1.exon1": "combinr", "g1.cds1": "combinr",
+            "orf1": "eukan-orf-patch", "orf1_mRNA": "eukan-orf-patch",
+            "orf1:exon:1": "eukan-orf-patch", "orf1:CDS:1": "eukan-orf-patch",
+        }
+
+    def test_support_attribute_on_added_mrnas_only(self, tmp_path):
+        db = self._patched(tmp_path)
+
+        assert {f.id: f.attributes.get("support") for f in db.all_features()} == {
+            "g1": None, "g1.t1": ["consensus"], "g1.exon1": None, "g1.cds1": None,
+            "orf1": None, "orf1_mRNA": ["transcript_orf"], "orf1:exon:1": None,
+            "orf1:CDS:1": None,
+        }
+
+    def test_labels_reach_final_gff3(self, tmp_path):
+        """Every final.gff3 row is eukan or, for a patched gene, eukan-orf-patch."""
+        _write_prettified_gff3(self._patched(tmp_path), "TEST", tmp_path / "final.gff3")
+
+        rows = [ln.split("\t") for ln in (tmp_path / "final.gff3").read_text().splitlines()]
+        assert [(c[2], c[1]) for c in rows] == [
+            ("gene", "eukan"), ("mRNA", "eukan"), ("exon", "eukan"), ("CDS", "eukan"),
+            ("gene", "eukan-orf-patch"), ("mRNA", "eukan-orf-patch"),
+            ("exon", "eukan-orf-patch"), ("CDS", "eukan-orf-patch"),
+        ]
+        consensus_mrna, patched_mrna = (c[8] for c in rows if c[2] == "mRNA")
+        assert "support=consensus" in consensus_mrna
+        assert "support=transcript_orf" in patched_mrna
 
 
 class TestWritePrettifiedGff3:

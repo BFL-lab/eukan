@@ -8,6 +8,10 @@ import gffutils
 
 from eukan.gff.transforms import derived_feature, swap_id_kind
 
+# Column 2 of the rows of a gene the transcript-ORF patch added
+# (eukan.annotation.consensus); every other final.gff3 row says "eukan".
+ORF_PATCH_SOURCE = "eukan-orf-patch"
+
 # ---------------------------------------------------------------------------
 # Feature hierarchy completion
 # ---------------------------------------------------------------------------
@@ -88,15 +92,18 @@ def prettify_gff3(
     Yields each gene, then each of its mRNAs followed by that mRNA's exons and
     then its CDSs (other child types, such as UTRs, are left out), with every
     CDS phase recomputed from the mRNA's 5'-most CDS (see :func:`_cds_phases`).
+    Column 2 is ``eukan`` on every row, except on the rows of a gene that came
+    in labelled :data:`ORF_PATCH_SOURCE`, which keep that label.
     """
     for gene_num, gene in enumerate(
         gff3.features_of_type("gene", order_by=("seqid", "start")), start=1
     ):
+        source = ORF_PATCH_SOURCE if gene.source == ORF_PATCH_SOURCE else "eukan"
         gene_name = f"{shortname}_{gene_num:05d}"
         gene.attributes["ID"] = gene_name
         gene.attributes["locus_tag"] = gene_name
         gene.attributes["Name"] = gene_name
-        gene.source = "eukan"
+        gene.source = source
         yield gene
 
         for mRNA_num, mRNA in enumerate(
@@ -107,7 +114,7 @@ def prettify_gff3(
             mRNA.attributes.update(
                 ID=mRNA_name, Name=mRNA_name, Parent=gene_name, locus_tag=mRNA_name
             )
-            mRNA.source = "eukan"
+            mRNA.source = source
             yield mRNA
 
             phases = _cds_phases(gff3, mRNA)
@@ -121,5 +128,5 @@ def prettify_gff3(
                     f.attributes.update(
                         ID=f_name, Parent=mRNA_name, locus_tag=f_name
                     )
-                    f.source = "eukan"
+                    f.source = source
                     yield f

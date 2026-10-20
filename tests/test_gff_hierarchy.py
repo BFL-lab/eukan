@@ -144,6 +144,26 @@ class TestPrettifyGFF3:
         assert genes[1].attributes["ID"] == ["TEST_00002"]
         assert all(f.source == "eukan" for f in features)
 
+    def test_orf_patch_genes_keep_their_label_and_all_else_is_eukan(self, db_from_string):
+        """Column 2 is eukan on every row except those of a gene the transcript-ORF
+        patch added (eukan.annotation.consensus), which keep eukan-orf-patch."""
+        gff = (
+            "chr1\tcombinr\tgene\t100\t400\t.\t+\t.\tID=gene1\n"
+            "chr1\tcombinr\tmRNA\t100\t400\t.\t+\t.\tID=mrna1;Parent=gene1\n"
+            "chr1\tcombinr\texon\t100\t400\t.\t+\t.\tID=exon1;Parent=mrna1\n"
+            "chr1\tcombinr\tCDS\t100\t400\t.\t+\t0\tID=cds1;Parent=mrna1\n"
+            "chr1\teukan-orf-patch\tgene\t600\t900\t.\t+\t.\tID=gene2\n"
+            "chr1\teukan-orf-patch\tmRNA\t600\t900\t.\t+\t.\tID=mrna2;Parent=gene2\n"
+            "chr1\teukan-orf-patch\texon\t600\t900\t.\t+\t.\tID=exon2;Parent=mrna2\n"
+            "chr1\teukan-orf-patch\tCDS\t600\t900\t.\t+\t0\tID=cds2;Parent=mrna2\n"
+        )
+        features = prettify_gff3(db_from_string(gff), "TEST")
+        assert [(f.featuretype, f.source) for f in features] == [
+            ("gene", "eukan"), ("mRNA", "eukan"), ("exon", "eukan"), ("CDS", "eukan"),
+            ("gene", "eukan-orf-patch"), ("mRNA", "eukan-orf-patch"),
+            ("exon", "eukan-orf-patch"), ("CDS", "eukan-orf-patch"),
+        ]
+
     def _cds_frames(self, db):
         return {
             (f.start, f.end): f.frame
