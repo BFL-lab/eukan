@@ -108,7 +108,7 @@ eukan/
 │   ├── training.py     # Training-set construction shared across predictors
 │   ├── snap.py         # SNAP and CodingQuarry gene prediction
 │   ├── combinr_consensus.py # Consensus engine: evidence roles/weights + external `combinr consensus` (weighted DP; folds in UTRs + alt isoforms)
-│   └── consensus.py    # Final model building: combinr consensus + ORF patch + prettification
+│   └── consensus.py    # Final model building: combinr consensus + opt-in ORF patch (--orf-patch supported|all) + prettification
 │
 ├── assembly/           # Transcriptome assembly pipeline
 │   ├── pipeline.py     # run_assembly(): STEPS tuple + _DOWNSTREAM cascade via force_steps_from_run_flags(downstream=)
@@ -165,7 +165,7 @@ eukan/
 4. AUGUSTUS training and prediction using protein + RNA-seq hints — auto-allows non-canonical splice sites from RNA-seq junction evidence (`splice_site_summary.json`, derived from the minimap2 read alignments; >= 10 junctions, >= 50 unique reads, >= 1% of all junctions); `--splice-permissive` drops the 1% share gate, keeping the floors
 5. SNAP training and prediction, plus CodingQuarry for fungi (and for protists in protein-only runs); with transcripts, non-fungal kingdoms skip SNAP and CodingQuarry
 6. Consensus model building, weighted by evidence type, via the external `combinr consensus` engine (weighted DP), genetic-code aware, which folds UTRs and alternative isoforms in from transcript evidence in a single pass. Protein (`prot.gff3`, CDS-format) and transcript (`nr_transcripts.gff3`, flat exon) evidence are converted to `Target=` match chains; ab initio predictions and the weights file are reused as-is. Isoform-grouping stringency is tunable via `--combinr-stringent-overlap`; the binary is resolved via `--combinr-path` or PATH. Every run also writes `combinr.evidence_report.txt` next to `consensus_models.gff3` in the `consensus_models/` step dir: per gene, the evidence supporting each exon and intron, EVM `.evm.out` style, keyed by combinr's gene IDs (not cross-referenceable by ID from `final.gff3`, whose genes get locus tags).
-7. Final GFF3 formatting with locus tags
+7. Optional transcript-ORF patch, then final GFF3 formatting with locus tags. With `--orf-patch supported|all` (off when not given) the ORFs from step 1 that overlap no consensus gene on either strand are added: `all` adds every one, `supported` only those whose CDS span overlaps a CDS row of the protein alignment (`prot.gff3`) on the same strand. Column 2 of `final.gff3` is `eukan`, except `eukan-orf-patch` on the patched genes' rows; patched mRNAs carry `support=transcript_orf` (combinr's carry `support=consensus`). `orf_patch` is one of the consensus step's resume scalars, and `orf_finder/transcript_orfs.gff3` is a consensus input only while the patch is on
 8. Optional functional annotation via `func-annot` (UniProt-or-KOfam plus Pfam, selected by `--homology-db`) → `final.mod.gff3`, with the annotated protein FASTA (`<stem>.mod.<ext>`) and the search cache (`<stem>.{phmmer,kofam}.search.json`) beside it under `func-annot/`. KOfam mode is an adaptation of KofamKOALA: per-KO bit-score thresholds from `ko_list`, full vs domain score selection per KO, EC numbers parsed out of `[EC:…]` tags into a dedicated `ec_number=` GFF3 attribute, KEGG accessions emitted as `Dbxref=KEGG:K…`
 9. Optional `prep-submission` runs NCBI's table2asn validator over `final.mod.gff3` to produce a `.sqn` plus `.val/.dr/.stats` reports for iterative GFF3 refinement
 
