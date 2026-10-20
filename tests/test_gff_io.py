@@ -2,6 +2,8 @@
 
 import warnings
 
+from Bio import BiopythonWarning
+
 from eukan.gff.io import extract_sequences, featuredb2gff3_file
 
 
@@ -63,7 +65,9 @@ class TestExtractSequences:
         )
 
         with warnings.catch_warnings():
-            warnings.simplefilter("error")
+            # Biopython's "Partial codon" warning only: a catch-all filter would also
+            # raise the ResourceWarning of any unclosed DB the GC collects meanwhile.
+            warnings.simplefilter("error", BiopythonWarning)
             records = list(extract_sequences(gff_path, genome_path, "protein", 1))
 
         assert str(records[0].seq) == "MKK"
