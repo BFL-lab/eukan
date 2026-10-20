@@ -31,6 +31,7 @@ class TestPipelineConfig:
         assert config.genetic_code == "11"
         assert config.weights == [2, 1, 3]
         assert config.kingdom is None
+        assert config.orf_patch is None
         assert config.num_cpu >= 1
         assert config.name == "genome"
         assert len(config.shortname) == 5
@@ -352,6 +353,11 @@ class TestTypedFields:
     def test_unknown_homology_db_rejected(self, tmp_path):
         with pytest.raises(ValidationError, match="homology_db"):
             FunctionalConfig(proteins=tmp_path / "p.faa", work_dir=tmp_path, homology_db="pfam")
+
+    def test_unknown_orf_patch_rejected(self, tmp_path):
+        genome = tmp_path / "g.fa"
+        with pytest.raises(ValidationError, match="Input should be 'supported' or 'all'"):
+            PipelineConfig(genome=genome, proteins=[genome], work_dir=tmp_path, orf_patch="on")
 
 
 class TestUnknownFields:

@@ -141,6 +141,13 @@ class PipelineConfig(_StepRunSettings):
     Raise it (e.g. 30) to stop short or tip-overlapping transcripts from welding
     collinear neighbours into one multi-isoform gene in dense / trans-spliced genomes.
     Does not affect the consensus region partitioner."""
+    orf_patch: Literal["supported", "all"] | None = None
+    """Patch transcript ORFs (``orf_finder``) that overlap no consensus gene, on either
+    strand, into the final models: under ``all`` every such ORF gene, under
+    ``supported`` only those whose CDS overlaps a CDS of the protein alignment on the
+    same strand. Each row added says ``eukan-orf-patch`` in column 2 and each mRNA
+    added carries ``support=transcript_orf``. Off (``None``) by default: the additions
+    have no ab initio support, and under ``all`` no homology support either."""
 
     # --- Optional transcript evidence (auto-discovered from work_dir if not set) ---
     transcripts_fasta: Path | None = None

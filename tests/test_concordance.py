@@ -14,6 +14,7 @@ from eukan.gff.concordance import (
     find_nonoverlapping_genes,
     merge_fully_overlapping_transcript_genes,
 )
+from eukan.gff.intervals import IntervalIndex
 
 
 def _feature(chrom, start, end, strand="+", featuretype="gene", id="g1", **attrs):
@@ -203,6 +204,32 @@ class TestFindNonoverlapping:
             ignore_strand=True,
         )
         assert result == []
+
+    def test_support_keeps_genes_whose_cds_span_overlaps_it(self, db_from_string):
+        db_source = db_from_string(
+            "chr1\ttest\tgene\t100\t300\t.\t+\t.\tID=g1\n"
+            "chr1\ttest\tmRNA\t100\t300\t.\t+\t.\tID=m1;Parent=g1\n"
+            "chr1\ttest\tCDS\t150\t200\t.\t+\t0\tID=c1a;Parent=m1\n"
+            "chr1\ttest\tCDS\t240\t250\t.\t+\t0\tID=c1b;Parent=m1\n"
+            "chr1\ttest\tgene\t700\t1000\t.\t+\t.\tID=g2\n"
+            "chr1\ttest\tmRNA\t700\t1000\t.\t+\t.\tID=m2;Parent=g2\n"
+            "chr1\ttest\tCDS\t800\t900\t.\t+\t0\tID=c2;Parent=m2\n"
+            "chr1\ttest\tgene\t1500\t1600\t.\t+\t.\tID=g3\n"
+            "chr1\ttest\tmRNA\t1500\t1600\t.\t+\t.\tID=m3;Parent=g3\n"
+            "chr1\ttest\tCDS\t1500\t1600\t.\t+\t0\tID=c3;Parent=m3\n"
+        )
+        support = IntervalIndex([
+            _feature("chr1", 210, 230),  # between g1's two CDSs: inside their span
+            _feature("chr1", 950, 990),  # over g2's 3' UTR only
+            _feature("chr1", 1550, 1560, strand="-"),  # g3's CDS, other strand
+        ])
+
+        result = find_nonoverlapping_genes(
+            db_source, db_from_string("chr2\ttest\tgene\t1\t10\t.\t+\t.\tID=t1\n"),
+            support=support,
+        )
+
+        assert [f.id for f in result if f.featuretype == "gene"] == ["g1"]
 
 
 # ---------------------------------------------------------------------------

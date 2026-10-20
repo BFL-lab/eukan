@@ -9,6 +9,7 @@ import sys
 import pytest
 from click.testing import CliRunner
 
+import eukan.annotation
 import eukan.assembly
 import eukan.functional
 from eukan.cli import cli
@@ -137,6 +138,37 @@ class TestOptionsAreConfigFields:
         assert (config.num_cpu, config.genetic_code) == (3, "6")
         assert (config.min_intron_len, config.max_intron_len) == (30, 900)
         assert config.adapter_sequences == ["ACGT"]
+
+
+class TestOrfPatchOption:
+    """annotate --orf-patch takes supported or all; left out, the patch is off."""
+
+    @pytest.fixture
+    def seen(self, run_dir, monkeypatch):
+        monkeypatch.delenv("EUKAN_ORF_PATCH", raising=False)
+        seen = []
+        monkeypatch.setattr(
+            eukan.annotation, "run_annotation_pipeline", lambda c, **k: seen.append(c),
+        )
+        return seen
+
+    @pytest.mark.parametrize(("args", "expected"), [
+        ([], None),
+        (["--orf-patch", "supported"], "supported"),
+        (["--orf-patch", "all"], "all"),
+    ])
+    def test_value_reaches_the_config(self, seen, args, expected):
+        result = CliRunner().invoke(cli, ["annotate", "-g", "g.fa", "-p", "g.fa", *args])
+        assert result.exit_code == 0, result.output
+        assert [c.orf_patch for c in seen] == [expected]
+
+    def test_other_values_are_rejected(self, seen):
+        result = CliRunner().invoke(
+            cli, ["annotate", "-g", "g.fa", "-p", "g.fa", "--orf-patch", "on"],
+        )
+        assert result.exit_code == 2
+        assert "Invalid value for '--orf-patch'" in result.output
+        assert seen == []
 
 
 class TestCodeTableEpilog:

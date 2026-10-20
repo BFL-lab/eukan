@@ -49,6 +49,12 @@ from eukan.infra.layout import step_work_dir
     "only when their span overlap is >= this percent of the shorter (default 0 = any "
     "overlap). Raise it (e.g. 30) to keep tip-overlapping collinear neighbours separate.",
 )
+@optgroup.option(
+    "--orf-patch", type=click.Choice(["supported", "all"]), default=None,
+    help="Patch transcript ORFs that overlap no consensus gene into the final models, "
+    "labelled eukan-orf-patch / support=transcript_orf: 'supported' only those whose CDS "
+    "overlaps a protein-alignment CDS on the same strand, 'all' every one (default: off).",
+)
 @code_option(default=11)
 @optgroup.group("Override options")
 @optgroup.option(

@@ -134,16 +134,28 @@ def _has_cds_descendants(db: gffutils.FeatureDB, gene: gffutils.Feature) -> bool
     )
 
 
+def _cds_span(db: gffutils.FeatureDB, gene: gffutils.Feature) -> gffutils.Feature:
+    """A stand-in feature from the first base of *gene*'s CDSs to the last."""
+    cds = list(db.children(gene, featuretype="CDS"))
+    return gffutils.Feature(
+        seqid=gene.chrom, strand=gene.strand,
+        start=min(c.start for c in cds), end=max(c.end for c in cds),
+    )
+
+
 def find_nonoverlapping_genes(
     db_source: gffutils.FeatureDB,
     db_target: gffutils.FeatureDB,
     *,
     ignore_strand: bool = False,
+    support: IntervalIndex | None = None,
 ) -> list[gffutils.Feature]:
     """Find ORF-containing genes in db_source that don't overlap any gene in db_target.
 
     Only a target gene on the same strand counts as an overlap, unless
-    ``ignore_strand``, under which one on either strand does.
+    ``ignore_strand``, under which one on either strand does. With *support*, a
+    gene is kept only when the span of its CDSs overlaps an interval of
+    *support* (on the same strand, unless that index ignores strand).
 
     Returns all features (gene + children) for non-overlapping, ORF-containing genes.
     """
@@ -156,6 +168,9 @@ def find_nonoverlapping_genes(
 
         # Keep only genes that contain an ORF (a CDS somewhere beneath them).
         if not _has_cds_descendants(db_source, gene):
+            continue
+
+        if support is not None and not support.has_overlap(_cds_span(db_source, gene)):
             continue
 
         result.append(gene)

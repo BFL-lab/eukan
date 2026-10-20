@@ -380,16 +380,18 @@ def _phase_snap_codingquarry(
 
 
 def _consensus_scalars(config: PipelineConfig) -> list[str]:
-    """Config values that change combinr consensus output, folded into the consensus
-    step's resume fingerprint so a change re-runs it on resume (in addition to the
-    explicit ``--run-consensus``). ``combinr_stringent_overlap`` tunes the
-    ``--alt-splice`` isoform grouping; weights and the genetic code feed the consensus
-    engine directly; ``combinr_path`` picks the binary that runs it."""
+    """Config values that change the consensus step's output, folded into its resume
+    fingerprint so a change re-runs it on resume (in addition to the explicit
+    ``--run-consensus``). ``combinr_stringent_overlap`` tunes the ``--alt-splice``
+    isoform grouping; weights and the genetic code feed the consensus engine directly;
+    ``combinr_path`` picks the binary that runs it; ``orf_patch`` picks which
+    transcript ORFs, if any, are patched in after it."""
     return [
         f"weights={config.weights}",
         f"genetic_code={config.genetic_code}",
         f"combinr_stringent_overlap={config.combinr_stringent_overlap}",
         f"combinr_path={config.combinr_path}",
+        f"orf_patch={config.orf_patch}",
     ]
 
 
@@ -409,10 +411,10 @@ def _phase_consensus(
         assert config.transcripts_gff is not None
         transcripts = config.transcripts_gff
 
-    # The consensus also patches in the transcript ORFs, whenever orf_finder left them.
-    inputs = [
-        config.genome, *consensus_args, config.work_dir / "orf_finder" / "transcript_orfs.gff3",
-    ]
+    inputs = [config.genome, *consensus_args]
+    if config.orf_patch is not None:
+        # The consensus then also patches in the transcript ORFs orf_finder left.
+        inputs.append(config.work_dir / "orf_finder" / "transcript_orfs.gff3")
     if transcripts is not None:
         inputs.append(transcripts)
     return _run_step(

@@ -3,14 +3,18 @@
 ``build_consensus_models`` itself is exercised end-to-end (combinr through the
 prettify tail) in test_combinr_consensus.py. This file covers the consensus-only
 ``_patch_in_unmatched_orfs`` step, which folds transcript ORFs that don't overlap
-any consensus gene back into the model set.
+any consensus gene back into the model set, and the ``--orf-patch`` modes that
+decide whether it runs and which ORFs it adds.
 """
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from eukan.annotation import consensus
 from eukan.annotation.consensus import _patch_in_unmatched_orfs, _write_prettified_gff3
 from eukan.gff import create_gff_db
+from eukan.settings import PipelineConfig
 
 
 def _gene_gff(
@@ -41,16 +45,19 @@ _CONSENSUS_GFF = (
 )
 
 
-def _orf_gff(start: int, end: int, gid: str) -> str:
+def _orf_gff(start: int, end: int, gid: str, *, cds: tuple[int, int] | None = None) -> str:
     """One transcript ORF gene on chr1 as find_orfs writes it: gene and mRNA rows
-    derived by gffutils, exon and CDS rows from the assembly."""
+    derived by gffutils, exon and CDS rows from the assembly. The CDS spans the
+    whole transcript unless *cds* gives its span."""
+    cds_start, cds_end = cds or (start, end)
     rows = [
         f"chr1\tgffutils_derived\tgene\t{start}\t{end}\t.\t+\t.\tID={gid}",
         f"chr1\tgffutils_derived\tmRNA\t{start}\t{end}\t.\t+\t.\tParent={gid};ID={gid}_mRNA",
         f"chr1\tcombinr-assembly\texon\t{start}\t{end}\t.\t+\t.\tID={gid}:exon:1;Parent={gid}_mRNA",
-        f"chr1\tcombinr-assembly\tCDS\t{start}\t{end}\t.\t+\t0\tID={gid}:CDS:1;Parent={gid}_mRNA",
+        f"chr1\tcombinr-assembly\tCDS\t{cds_start}\t{cds_end}\t.\t+\t0"
+        f"\tID={gid}:CDS:1;Parent={gid}_mRNA",
     ]
-    return "##gff-version 3\n" + "\n".join(rows) + "\n"
+    return "\n".join(rows) + "\n"
 
 
 class TestPatchInUnmatchedOrfs:
@@ -169,6 +176,84 @@ class TestPatchLabels:
         consensus_mrna, patched_mrna = (c[8] for c in rows if c[2] == "mRNA")
         assert "support=consensus" in consensus_mrna
         assert "support=transcript_orf" in patched_mrna
+
+
+# The protein alignment (prot.gff3) over the ORFs of TestOrfPatchModes.
+_PROT_GFF = (
+    "##gff-version 3\n"
+    # A CDS block on orf_supported's strand overlaps its CDS.
+    "chr1\tprot_align\tgene\t1100\t1200\t.\t+\t.\tID=pg1\n"
+    "chr1\tprot_align\tmRNA\t1100\t1200\t.\t+\t.\tID=pm1;Parent=pg1\n"
+    "chr1\tprot_align\tCDS\t1100\t1200\t.\t+\t0\tID=pc1;Parent=pm1\n"
+    # The only CDS block over orf_antisense is on the other strand.
+    "chr1\tprot_align\tgene\t2100\t2200\t.\t-\t.\tID=pg2\n"
+    "chr1\tprot_align\tmRNA\t2100\t2200\t.\t-\t.\tID=pm2;Parent=pg2\n"
+    "chr1\tprot_align\tCDS\t2100\t2200\t.\t-\t0\tID=pc2;Parent=pm2\n"
+    # orf_in_gap lies inside a spliced alignment, between two of its CDS blocks.
+    "chr1\tprot_align\tgene\t3000\t4000\t.\t+\t.\tID=pg3\n"
+    "chr1\tprot_align\tmRNA\t3000\t4000\t.\t+\t.\tID=pm3;Parent=pg3\n"
+    "chr1\tprot_align\tCDS\t3000\t3100\t.\t+\t0\tID=pc3a;Parent=pm3\n"
+    "chr1\tprot_align\tCDS\t3900\t4000\t.\t+\t0\tID=pc3b;Parent=pm3\n"
+    # A CDS block over orf_utr's 5' UTR, short of its CDS.
+    "chr1\tprot_align\tgene\t4900\t5050\t.\t+\t.\tID=pg4\n"
+    "chr1\tprot_align\tmRNA\t4900\t5050\t.\t+\t.\tID=pm4;Parent=pg4\n"
+    "chr1\tprot_align\tCDS\t4900\t5050\t.\t+\t0\tID=pc4;Parent=pm4\n"
+)
+
+
+class TestOrfPatchModes:
+    """build_consensus_models patches transcript ORFs in only under --orf-patch:
+    'all' adds every ORF gene clear of the consensus, 'supported' only those whose
+    CDS overlaps a CDS block of the protein alignment on the same strand."""
+
+    ORFS: ClassVar[dict[str, tuple[int, int, tuple[int, int] | None]]] = {
+        "orf_supported": (1000, 1299, None),
+        "orf_antisense": (2000, 2299, None),
+        "orf_in_gap": (3400, 3599, None),
+        "orf_utr": (5000, 5299, (5100, 5299)),
+        "orf_bare": (6000, 6299, None),
+    }
+
+    def _patched(self, tmp_path, monkeypatch, orf_patch) -> set[str]:
+        """The ORFs final.gff3 holds after build_consensus_models (combinr stubbed)."""
+        def fake_combinr(config, sdir, evidence, *, transcripts=None):
+            (sdir / "consensus_models.gff3").write_text(_CONSENSUS_GFF)
+            return sdir / "consensus_models.gff3"
+
+        monkeypatch.setattr(consensus, "run_combinr_consensus", fake_combinr)
+        (tmp_path / "orf_finder").mkdir()
+        (tmp_path / "orf_finder" / "transcript_orfs.gff3").write_text("".join(
+            _orf_gff(start, end, gid, cds=cds) for gid, (start, end, cds) in self.ORFS.items()
+        ))
+        prot = tmp_path / "prot.gff3"
+        prot.write_text(_PROT_GFF)
+        genome = tmp_path / "genome.fa"
+        genome.write_text(">chr1\nACGT\n")
+        config = PipelineConfig(
+            genome=genome, proteins=[genome], work_dir=tmp_path, orf_patch=orf_patch,
+        )
+
+        final = consensus.build_consensus_models(config, prot, tmp_path / "augustus.gff3")
+
+        starts = {
+            int(c[3]) for c in (ln.split("\t") for ln in final.read_text().splitlines())
+            if c[2] == "gene" and c[1] == "eukan-orf-patch"
+        }
+        return {gid for gid, (start, _end, _cds) in self.ORFS.items() if start in starts}
+
+    def test_off_adds_nothing_and_says_how_to_turn_it_on(self, tmp_path, monkeypatch, caplog):
+        with caplog.at_level("INFO", logger="eukan.annotation.consensus"):
+            assert self._patched(tmp_path, monkeypatch, None) == set()
+        assert (
+            "ORF patch off; pass --orf-patch supported|all to reintroduce transcript ORFs"
+            in caplog.text
+        )
+
+    def test_all_adds_every_orf_clear_of_the_consensus(self, tmp_path, monkeypatch):
+        assert self._patched(tmp_path, monkeypatch, "all") == set(self.ORFS)
+
+    def test_supported_adds_only_orfs_on_a_same_strand_protein_cds(self, tmp_path, monkeypatch):
+        assert self._patched(tmp_path, monkeypatch, "supported") == {"orf_supported"}
 
 
 class TestWritePrettifiedGff3:

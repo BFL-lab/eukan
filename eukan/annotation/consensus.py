@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import gffutils
+
 from eukan.annotation.combinr_consensus import run_combinr_consensus
 from eukan.gff import concordance, create_gff_db
 from eukan.gff.hierarchy import ORF_PATCH_SOURCE, prettify_gff3
+from eukan.gff.intervals import IntervalIndex
 from eukan.gff.io import count_gff3_features
+from eukan.gff.rows import iter_gff3_rows
 from eukan.infra.artifacts import Artifact
 from eukan.infra.logging import get_logger
 from eukan.infra.steps import step_dir
@@ -16,8 +20,11 @@ from eukan.settings import PipelineConfig
 log = get_logger(__name__)
 
 
-def _patch_in_unmatched_orfs(consdb, orf_path: Path):
+def _patch_in_unmatched_orfs(consdb, orf_path: Path, protein_alignments: Path | None = None):
     """Add transcript ORFs that don't overlap any consensus gene, on either strand.
+
+    With *protein_alignments* (``--orf-patch supported``), only those whose CDS
+    span overlaps one of its CDS rows on the same strand.
 
     Every row added says so in column 2 (:data:`ORF_PATCH_SOURCE`, which
     :func:`prettify_gff3` keeps) and every mRNA added carries
@@ -28,7 +35,15 @@ def _patch_in_unmatched_orfs(consdb, orf_path: Path):
     if not orf_path.exists():
         return consdb
     orf_db = create_gff_db(orf_path)
-    missing = concordance.find_nonoverlapping_genes(orf_db, consdb, ignore_strand=True)
+    support = None
+    if protein_alignments is not None:
+        support = IntervalIndex(
+            gffutils.Feature(seqid=c[0], strand=c[6], start=int(c[3]), end=int(c[4]))
+            for c in iter_gff3_rows(protein_alignments) if c[2] == "CDS"
+        )
+    missing = concordance.find_nonoverlapping_genes(
+        orf_db, consdb, ignore_strand=True, support=support,
+    )
     if not missing:
         return consdb
     for f in missing:
@@ -60,7 +75,8 @@ def build_consensus_models(
     Phases:
       1. Consensus building into consensus_models.gff3 via combinr consensus
          (which folds UTRs and isoforms in itself via --alt-splice).
-      2. Patch in transcript ORFs that don't overlap any consensus gene
+      2. Under --orf-patch, patch in transcript ORFs that overlap no consensus
+         gene (``supported``: only those on a protein alignment's CDS)
       3. Recompute CDS phases, assign locus tags, write final.gff3
 
     ``transcripts`` is the transcript-alignments evidence: the assembled
@@ -76,9 +92,15 @@ def build_consensus_models(
     )
     consdb = create_gff_db(sdir / "consensus_models.gff3")
 
-    consdb = _patch_in_unmatched_orfs(
-        consdb, config.work_dir / "orf_finder" / "transcript_orfs.gff3",
-    )
+    orfs = config.work_dir / "orf_finder" / "transcript_orfs.gff3"
+    if config.orf_patch is None:
+        log.info("ORF patch off; pass --orf-patch supported|all to reintroduce transcript ORFs")
+    elif config.orf_patch == "all":
+        consdb = _patch_in_unmatched_orfs(consdb, orfs)
+    else:
+        # The protein alignment among the evidence, picked as combinr's staging picks it.
+        prot = next(ev for ev in evidence if ev.name == "prot.gff3")
+        consdb = _patch_in_unmatched_orfs(consdb, orfs, protein_alignments=prot)
 
     final_path = config.work_dir / Artifact.FINAL_GFF3.value
     _write_prettified_gff3(consdb, config.shortname, final_path)

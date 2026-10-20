@@ -178,6 +178,10 @@ Pipeline parameters:
                                   combinr --stringent-overlap for the consensus --alt-splice isoform
                                   grouping: min span overlap (% of the shorter isoform) for two
                                   isoforms to attach to one gene (0 = any overlap). [default: 0]
+  --orf-patch [supported|all]     Patch transcript ORFs that overlap no consensus gene into the
+                                  final models, labelled eukan-orf-patch / support=transcript_orf:
+                                  'supported' only those whose CDS overlaps a protein-alignment CDS
+                                  on the same strand, 'all' every one (default: off).
   -c, --code INTEGER              NCBI genetic code table number. [default: 11]
 
 Override options:
@@ -587,7 +591,7 @@ The annotation pipeline (`eukan annotate`) runs the following steps:
 4. **AUGUSTUS**:  Train species-specific parameters from concordant GeneMark/protein models, then predict genes using protein + RNA-seq hints. Non-canonical splice sites (e.g., AT-AC) are allowed automatically when supported by sufficient junction evidence from the minimap2 read alignments (>= 10 junctions, >= 50 unique reads, and >= 1% of all junctions); `--splice-permissive` drops the 1% share requirement so rarer types pass.
 5. **SNAP**:  Train and predict (all kingdoms). **CodingQuarry** also runs for fungus/protist genomes.
 6. **combinr consensus**:  Build weighted consensus gene models from all evidence sources, folding in UTRs and alternative isoforms from the transcript evidence in a single pass. Next to the models, `consensus_models/combinr.evidence_report.txt` lists for each gene the evidence supporting every exon and intron (EVM `.evm.out` style); it uses combinr's gene IDs from `consensus_models/consensus_models.gff3`, which `final.gff3` replaces with locus tags.
-7. **Final output**:  Assign sequential locus tags and correct CDS phases. Non-overlapping transcript ORFs not captured by the consensus are patched into the final model set.
+7. **Final output**:  Assign sequential locus tags and correct CDS phases. Column 2 of `final.gff3` is `eukan`. With `--orf-patch`, transcript ORFs that overlap no consensus gene on either strand are also patched into the final model set: under `supported` only those whose CDS overlaps a CDS of the protein alignment on the same strand, under `all` every one. Their rows say `eukan-orf-patch` in column 2 and their mRNAs carry `support=transcript_orf` (the consensus mRNAs carry combinr's `support=consensus`). The patch is off by default: the patched genes have no ab initio support, and under `all` no homology support either.
 
 Output: `final.gff3` in the working directory.
 

@@ -1179,6 +1179,7 @@ class TestAnnotationInputFingerprints:
         ("kingdom", Kingdom.fungus, ["genemark", "codingquarry", "consensus_models"]),
         ("kingdom", Kingdom.plant, []),
         ("combinr_path", Path("/opt/combinr/combinr"), ["consensus_models"]),
+        ("orf_patch", "all", ["consensus_models"]),
     ])
     def test_changed_scalar_reruns_the_steps_that_read_it(
         self, tmp_path, monkeypatch, field, value, reruns,
@@ -1188,6 +1189,20 @@ class TestAnnotationInputFingerprints:
         fake.run()
         fake.config = fake.config.model_copy(update={field: value})
         assert fake.run() == reruns
+
+    def test_transcript_orfs_rerun_the_consensus_only_under_orf_patch(
+        self, tmp_path, monkeypatch,
+    ):
+        fake = _FakeAnnotation(monkeypatch, tmp_path)
+        orfs = tmp_path / "orf_finder" / "transcript_orfs.gff3"
+        orfs.parent.mkdir()
+        fake.run()
+        orfs.write_text(_GFF3)
+        assert fake.run() == []  # the patch is off: the consensus does not read them
+        fake.config = fake.config.model_copy(update={"orf_patch": "all"})
+        assert fake.run() == ["consensus_models"]
+        orfs.write_text(_GFF3.replace("ID=g1", "ID=g2"))
+        assert fake.run() == ["consensus_models"]
 
 
 class TestTrinityTrackRerun:
