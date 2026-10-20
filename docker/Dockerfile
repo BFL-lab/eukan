@@ -244,7 +244,12 @@ RUN find /opt/conda/envs/eukan -type d -name "__pycache__" -exec rm -rf {} + 2>/
     # (AUGUSTUS species training writes to config/, spaln --spsp writes to
     # share/spaln/). Doing this in the builder avoids a 191 MB chown layer
     # in the runtime stage since COPY --link preserves these as-is.
-    && chmod -R a+rwX /opt/conda/envs/eukan/config /opt/conda/envs/eukan/share/spaln
+    # /bin/chmod, the base's own: under the conda SHELL a bare `chmod` is the
+    # env's coreutils 9.12, whose -R sets every entry below the named dirs
+    # with fchmodat(AT_SYMLINK_NOFOLLOW). This base's glibc 2.31 does not
+    # implement that (bookworm's 2.36 does), and chmod skips each such entry
+    # as an unchangeable symlink, so only the two named dirs changed, exit 0.
+    && /bin/chmod -R a+rwX /opt/conda/envs/eukan/config /opt/conda/envs/eukan/share/spaln
 
 # ============================= RUNTIME STAGE =================================
 FROM debian:bookworm-slim AS runtime
